@@ -126,7 +126,7 @@ func TestEnterprise236SchemaMatchesFrozenContract(t *testing.T) {
 func TestEnterpriseReplaceScheduledSubscriptionIsAtomicAndAudited(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
-	repo := enterprise.NewRepository(integrationDB)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 	firstUpstreamID, _ := insertEnterpriseUpstreamSubscription(t, ctx, fixture.enterpriseID)
 	secondUpstreamID, _ := insertEnterpriseUpstreamSubscription(t, ctx, fixture.enterpriseID)
 
@@ -171,7 +171,7 @@ func TestEnterpriseReplaceScheduledSubscriptionIsAtomicAndAudited(t *testing.T) 
 func TestEnterpriseObservedWindowCASIsIdempotentAndNeverRegresses(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
-	repo := enterprise.NewRepository(integrationDB)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 	next := fixture.anchor.Add(7 * 24 * time.Hour)
 	_, err := integrationDB.ExecContext(ctx,
 		"UPDATE user_subscriptions SET weekly_window_start = $2 WHERE id = $1",
@@ -232,12 +232,25 @@ func TestEnterpriseObservedWindowCASIsIdempotentAndNeverRegresses(t *testing.T) 
 func TestEnterpriseKeyAssignmentSegmentsAndGenerationRevocation(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
-	repo := enterprise.NewRepository(integrationDB)
 	secondSubscriptionID, secondGroupID := insertEnterpriseUpstreamSubscription(t, ctx, fixture.enterpriseID)
+	var invalidatedGroupID int64
+	var invalidatedStatuses []string
+	invalidator := &enterpriseAuthCacheInvalidatorStub{onInvalidate: func(ctx context.Context) {
+		var status string
+		require.NoError(t, integrationDB.QueryRowContext(ctx,
+			"SELECT group_id, status FROM api_keys WHERE id = $1", fixture.apiKeyID).Scan(&invalidatedGroupID, &status))
+		invalidatedStatuses = append(invalidatedStatuses, status)
+	}}
+	repo := enterprise.NewRepository(integrationDB, invalidator)
 
-	_, err := integrationDB.ExecContext(ctx,
-		"UPDATE api_keys SET group_id = $2 WHERE id = $1", fixture.apiKeyID, secondGroupID)
-	require.NoError(t, err)
+	var apiKey string
+	var previousAssignmentID int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT key FROM api_keys WHERE id = $1", fixture.apiKeyID).Scan(&apiKey))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT id FROM enterprise_key_assignments
+		WHERE api_key_id = $1 AND status = 'active'
+	`, fixture.apiKeyID).Scan(&previousAssignmentID))
 	assignment, err := repo.RebindKeyAssignment(ctx, enterprise.RebindKeyAssignmentParams{
 		EnterpriseID:           fixture.enterpriseID,
 		EmployeeID:             fixture.employeeID,
@@ -248,6 +261,13 @@ func TestEnterpriseKeyAssignmentSegmentsAndGenerationRevocation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, secondSubscriptionID, assignment.UpstreamSubscriptionID)
 	require.Equal(t, secondGroupID, assignment.UpstreamGroupID)
+	var currentGroupID int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT group_id FROM api_keys WHERE id = $1", fixture.apiKeyID).Scan(&currentGroupID))
+	require.Equal(t, secondGroupID, currentGroupID)
+	require.Equal(t, []string{apiKey}, invalidator.keys)
+	require.Equal(t, secondGroupID, invalidatedGroupID)
+	require.Equal(t, []string{"active"}, invalidatedStatuses)
 
 	rows, err := integrationDB.QueryContext(ctx, `
 		SELECT status, upstream_user_subscription_id, upstream_group_id,
@@ -277,6 +297,32 @@ func TestEnterpriseKeyAssignmentSegmentsAndGenerationRevocation(t *testing.T) {
 	require.NoError(t, rows.Err())
 	require.Equal(t, []string{"ended", "active"}, statuses)
 	require.Equal(t, previousEndedAt, currentAssignedAt)
+	var auditCount int
+	var auditPreviousID, auditNewID, auditSubscriptionID, auditGroupID int64
+	var auditBoundary time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+		       MAX((payload->>'previous_assignment_id')::bigint),
+		       MAX((payload->>'new_assignment_id')::bigint),
+		       MAX((payload->>'upstream_subscription_id')::bigint),
+		       MAX((payload->>'upstream_group_id')::bigint),
+		       MAX((payload->>'assignment_segment_boundary')::timestamptz)
+		FROM enterprise_audit_events
+		WHERE enterprise_id = $1 AND event_type = 'key.assignment_segment_rebound'
+	`, fixture.enterpriseID).Scan(
+		&auditCount,
+		&auditPreviousID,
+		&auditNewID,
+		&auditSubscriptionID,
+		&auditGroupID,
+		&auditBoundary,
+	))
+	require.Equal(t, 1, auditCount)
+	require.Equal(t, previousAssignmentID, auditPreviousID)
+	require.Equal(t, assignment.ID, auditNewID)
+	require.Equal(t, secondSubscriptionID, auditSubscriptionID)
+	require.Equal(t, secondGroupID, auditGroupID)
+	require.Equal(t, previousEndedAt, auditBoundary)
 
 	require.NoError(t, repo.RevokeKeyGeneration(ctx, enterprise.RevokeKeyGenerationParams{
 		EnterpriseID: fixture.enterpriseID,
@@ -287,6 +333,8 @@ func TestEnterpriseKeyAssignmentSegmentsAndGenerationRevocation(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
 		"SELECT status FROM api_keys WHERE id = $1", fixture.apiKeyID).Scan(&keyStatus))
 	require.Equal(t, "disabled", keyStatus)
+	require.Equal(t, []string{apiKey, apiKey}, invalidator.keys)
+	require.Equal(t, []string{"active", "disabled"}, invalidatedStatuses)
 
 	_, err = repo.RebindKeyAssignment(ctx, enterprise.RebindKeyAssignmentParams{
 		EnterpriseID:           fixture.enterpriseID,
@@ -296,6 +344,116 @@ func TestEnterpriseKeyAssignmentSegmentsAndGenerationRevocation(t *testing.T) {
 		ActorRef:               "test:key-reassign",
 	})
 	require.ErrorIs(t, err, enterprise.ErrKeyGenerationRevoked)
+}
+
+func TestEnterpriseControlledExternalAttributionRejectsAssignmentFromAnotherSubscription(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	secondSubscriptionID, _ := insertEnterpriseUpstreamSubscription(t, ctx, fixture.enterpriseID)
+	updateEnterpriseSubscriptionSource(t, ctx, fixture, secondSubscriptionID)
+	usageID := insertUsageLogForSubscription(t, ctx, fixture, secondSubscriptionID, "0.1000000000")
+
+	_, err := repo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
+		EnterpriseID:       fixture.enterpriseID,
+		SubscriptionID:     fixture.subscriptionID,
+		UsageLogID:         usageID,
+		WeeklyWindowAnchor: fixture.anchor,
+		Classification:     "controlled_external",
+	})
+	require.ErrorIs(t, err, enterprise.ErrUsageAttributionMismatch)
+}
+
+func TestEnterpriseControlledExternalAttributionRejectsAssignedAPIKey(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	usageID := insertUsageLog(t, ctx, fixture, "0.1000000000")
+
+	_, err := repo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
+		EnterpriseID:       fixture.enterpriseID,
+		SubscriptionID:     fixture.subscriptionID,
+		UsageLogID:         usageID,
+		WeeklyWindowAnchor: fixture.anchor,
+		Classification:     "controlled_external",
+	})
+	require.ErrorIs(t, err, enterprise.ErrUsageAttributionMismatch)
+
+	var count int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM enterprise_usage_attributions WHERE usage_log_id = $1", usageID).Scan(&count))
+	require.Zero(t, count)
+}
+
+func TestEnterpriseRevokeKeyGenerationRecoversDisabledKeyAndIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	var committedAssignmentStatuses []string
+	invalidator := &enterpriseAuthCacheInvalidatorStub{onInvalidate: func(ctx context.Context) {
+		var status string
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			SELECT status FROM enterprise_key_assignments WHERE api_key_id = $1
+		`, fixture.apiKeyID).Scan(&status))
+		committedAssignmentStatuses = append(committedAssignmentStatuses, status)
+	}}
+	repo := enterprise.NewRepository(integrationDB, invalidator)
+	var apiKey string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT key FROM api_keys WHERE id = $1", fixture.apiKeyID).Scan(&apiKey))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		UPDATE api_keys SET status = 'disabled' WHERE id = $1 RETURNING id
+	`, fixture.apiKeyID).Scan(&fixture.apiKeyID))
+
+	require.NoError(t, repo.RevokeKeyGeneration(ctx, enterprise.RevokeKeyGenerationParams{
+		EnterpriseID: fixture.enterpriseID,
+		APIKeyID:     fixture.apiKeyID,
+		ActorRef:     "test:key-revoke-recovery",
+	}))
+
+	var status string
+	var endedAt, revokedAt time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status, ended_at, revoked_at
+		FROM enterprise_key_assignments
+		WHERE api_key_id = $1
+	`, fixture.apiKeyID).Scan(&status, &endedAt, &revokedAt))
+	require.Equal(t, "revoked", status)
+	require.Equal(t, endedAt, revokedAt)
+
+	require.NoError(t, repo.RevokeKeyGeneration(ctx, enterprise.RevokeKeyGenerationParams{
+		EnterpriseID: fixture.enterpriseID,
+		APIKeyID:     fixture.apiKeyID,
+		ActorRef:     "test:key-revoke-retry",
+	}))
+
+	var retryEndedAt, retryRevokedAt time.Time
+	var auditCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT ended_at, revoked_at
+		FROM enterprise_key_assignments
+		WHERE api_key_id = $1
+	`, fixture.apiKeyID).Scan(&retryEndedAt, &retryRevokedAt))
+	require.Equal(t, endedAt, retryEndedAt)
+	require.Equal(t, revokedAt, retryRevokedAt)
+	require.Equal(t, []string{apiKey, apiKey}, invalidator.keys)
+	require.Equal(t, []string{"revoked", "revoked"}, committedAssignmentStatuses)
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM enterprise_audit_events
+		WHERE enterprise_id = $1 AND event_type = 'key.generation_revoked' AND entity_id = $2
+	`, fixture.enterpriseID, fixture.apiKeyID).Scan(&auditCount))
+	require.Equal(t, 1, auditCount)
+}
+
+type enterpriseAuthCacheInvalidatorStub struct {
+	keys         []string
+	onInvalidate func(context.Context)
+}
+
+func (s *enterpriseAuthCacheInvalidatorStub) InvalidateAuthCacheByKey(ctx context.Context, key string) {
+	s.keys = append(s.keys, key)
+	if s.onInvalidate != nil {
+		s.onInvalidate(ctx)
+	}
 }
 
 func TestEnterpriseDepartmentActiveNamesAreUniquePerEnterprise(t *testing.T) {
@@ -323,7 +481,7 @@ func TestEnterpriseDepartmentActiveNamesAreUniquePerEnterprise(t *testing.T) {
 func TestUsageCleanupSkipsEnterpriseAttributedUsageWithoutFailingBatch(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
-	enterpriseRepo := enterprise.NewRepository(integrationDB)
+	enterpriseRepo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 	attributedUsageID := insertUsageLog(t, ctx, fixture, "0.1000000000")
 	unattributedUsageID := insertUsageLog(t, ctx, fixture, "0.2000000000")
 	attributedAt := fixture.anchor.Add(10 * time.Minute)
@@ -359,6 +517,53 @@ func TestUsageCleanupSkipsEnterpriseAttributedUsageWithoutFailingBatch(t *testin
 		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = $1)", unattributedUsageID).Scan(&unattributedExists))
 	require.True(t, attributedExists)
 	require.False(t, unattributedExists)
+}
+
+func TestDashboardAggregationCleanupSkipsEnterpriseAttributedUsageWithoutFailingBatch(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	enterpriseRepo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	attributedUsageID := insertUsageLog(t, ctx, fixture, "0.1000000000")
+	unattributedUsageID := insertUsageLog(t, ctx, fixture, "0.2000000000")
+	attributedAt := fixture.anchor.Add(10 * time.Minute)
+	unattributedAt := fixture.anchor.Add(11 * time.Minute)
+	cutoff := fixture.anchor.Add(30 * time.Minute)
+	_, err := integrationDB.ExecContext(ctx,
+		"UPDATE usage_logs SET created_at = $2 WHERE id = $1", attributedUsageID, attributedAt)
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx,
+		"UPDATE usage_logs SET created_at = $2 WHERE id = $1", unattributedUsageID, unattributedAt)
+	require.NoError(t, err)
+	_, err = enterpriseRepo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
+		EnterpriseID:       fixture.enterpriseID,
+		SubscriptionID:     fixture.subscriptionID,
+		EmployeeID:         &fixture.employeeID,
+		UsageLogID:         attributedUsageID,
+		WeeklyWindowAnchor: fixture.anchor,
+		Classification:     "employee",
+	})
+	require.NoError(t, err)
+
+	cleanupRepo := newDashboardAggregationRepositoryWithSQL(integrationDB)
+	cleanupRepo.clock = func() time.Time { return fixture.anchor.Add(2 * time.Hour) }
+	require.NoError(t, cleanupRepo.CleanupUsageLogs(ctx, cutoff))
+
+	var attributedExists, unattributedExists, attributionExists bool
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = $1)", attributedUsageID).Scan(&attributedExists))
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = $1)", unattributedUsageID).Scan(&unattributedExists))
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM enterprise_usage_attributions WHERE usage_log_id = $1)", attributedUsageID).
+		Scan(&attributionExists))
+	require.True(t, attributedExists)
+	require.False(t, unattributedExists)
+	require.True(t, attributionExists)
+
+	var rollupStateCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM usage_group_rollup_state WHERE id = 1").Scan(&rollupStateCount))
+	require.Equal(t, 1, rollupStateCount)
 }
 
 func insertEnterpriseUpstreamSubscription(t *testing.T, ctx context.Context, enterpriseID int64) (int64, int64) {

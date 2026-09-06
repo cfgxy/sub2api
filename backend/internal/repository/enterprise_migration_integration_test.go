@@ -42,6 +42,64 @@ var enterprise235FunctionNames = []string{
 	"protect_enterprise_key_assignment_history",
 }
 
+const enterprisePreflightMigration = "234_enterprise_foundation_preflight.sql"
+
+func TestEnterprisePreflightRejectsPreexistingEmptyTargetTable(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsBefore(t, enterprisePreflightMigration)))
+	_, err := db.ExecContext(ctx, "CREATE TABLE enterprises (id BIGSERIAL PRIMARY KEY)")
+	require.NoError(t, err)
+
+	err = applyMigrationsFS(ctx, db, migrationsThrough(t, "236_enterprise_frozen_contract.sql"))
+	require.ErrorContains(t, err, "pre-existing enterprise table")
+	require.True(t, relationExists(t, ctx, db, "enterprises"))
+	for _, table := range []string{
+		"enterprise_employees",
+		"enterprise_subscriptions",
+		"enterprise_subscription_windows",
+		"enterprise_key_assignments",
+		"enterprise_weekly_allocations",
+		"enterprise_allocation_revisions",
+		"enterprise_usage_attributions",
+		"enterprise_audit_events",
+		"enterprise_departments",
+	} {
+		require.False(t, relationExists(t, ctx, db, table), table)
+	}
+	require.Zero(t, migrationRecordCount(t, ctx, db, enterprisePreflightMigration))
+	require.Zero(t, migrationRecordCount(t, ctx, db, "235_enterprise_foundation.sql"))
+}
+
+func TestEnterprisePreflightAllowsCleanDatabaseThrough236(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "236_enterprise_frozen_contract.sql")))
+
+	for _, migration := range []string{
+		enterprisePreflightMigration,
+		"235_enterprise_foundation.sql",
+		"236_enterprise_frozen_contract.sql",
+	} {
+		require.Equal(t, 1, migrationRecordCount(t, ctx, db, migration), migration)
+	}
+	require.True(t, relationExists(t, ctx, db, "enterprise_departments"))
+}
+
+func TestEnterprisePreflightBackfillsDatabaseWith235And236AlreadyApplied(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db,
+		migrationsThroughExcluding(t, "236_enterprise_frozen_contract.sql", enterprisePreflightMigration)))
+	require.Zero(t, migrationRecordCount(t, ctx, db, enterprisePreflightMigration))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, "235_enterprise_foundation.sql"))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, "236_enterprise_frozen_contract.sql"))
+
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterprisePreflightMigration)))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, enterprisePreflightMigration))
+	require.True(t, relationExists(t, ctx, db, "enterprise_departments"))
+}
+
 func TestEnterprise236MigratesIndependent235Database(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
@@ -129,12 +187,39 @@ func newIndependentMigrationDatabase(t *testing.T, ctx context.Context) *sql.DB 
 }
 
 func migrationsThrough(t *testing.T, last string) fstest.MapFS {
+	return migrationsThroughExcluding(t, last)
+}
+
+func migrationsThroughExcluding(t *testing.T, last string, excluded ...string) fstest.MapFS {
+	t.Helper()
+	files, err := fs.Glob(dbmigrations.FS, "*.sql")
+	require.NoError(t, err)
+	excludedSet := make(map[string]struct{}, len(excluded))
+	for _, name := range excluded {
+		excludedSet[name] = struct{}{}
+	}
+	result := fstest.MapFS{}
+	for _, name := range files {
+		if name > last {
+			continue
+		}
+		if _, skip := excludedSet[name]; skip {
+			continue
+		}
+		data, readErr := fs.ReadFile(dbmigrations.FS, name)
+		require.NoError(t, readErr)
+		result[name] = &fstest.MapFile{Data: data}
+	}
+	return result
+}
+
+func migrationsBefore(t *testing.T, first string) fstest.MapFS {
 	t.Helper()
 	files, err := fs.Glob(dbmigrations.FS, "*.sql")
 	require.NoError(t, err)
 	result := fstest.MapFS{}
 	for _, name := range files {
-		if name > last {
+		if name >= first {
 			continue
 		}
 		data, readErr := fs.ReadFile(dbmigrations.FS, name)
@@ -209,4 +294,12 @@ func constraintExists(t *testing.T, ctx context.Context, db *sql.DB, name string
 	require.NoError(t, db.QueryRowContext(ctx,
 		"SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = $1)", name).Scan(&exists))
 	return exists
+}
+
+func migrationRecordCount(t *testing.T, ctx context.Context, db *sql.DB, name string) int {
+	t.Helper()
+	var count int
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM schema_migrations WHERE filename = $1", name).Scan(&count))
+	return count
 }

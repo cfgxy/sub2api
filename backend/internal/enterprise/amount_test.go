@@ -23,7 +23,7 @@ func TestNormalizeAmountRejectsHugeScientificExponentQuickly(t *testing.T) {
 }
 
 func TestAllocationRepositoryRejectsBlankActorAndReasonBeforeDatabaseAccess(t *testing.T) {
-	repo := NewRepository(nil)
+	repo := NewRepository(nil, noopAuthCacheInvalidator{})
 	_, err := repo.CreateAllocation(context.Background(), CreateAllocationParams{
 		Amount:   "1",
 		Reason:   "reason",
@@ -38,6 +38,16 @@ func TestAllocationRepositoryRejectsBlankActorAndReasonBeforeDatabaseAccess(t *t
 	})
 	require.True(t, errors.Is(err, ErrReasonRequired))
 }
+
+func TestNewRepositoryRequiresAuthCacheInvalidator(t *testing.T) {
+	require.Panics(t, func() {
+		NewRepository(nil, nil)
+	})
+}
+
+type noopAuthCacheInvalidator struct{}
+
+func (noopAuthCacheInvalidator) InvalidateAuthCacheByKey(context.Context, string) {}
 
 func TestNormalizeAmountRejectsNegativeOrExcessPrecision(t *testing.T) {
 	for _, value := range []string{"-0.00000001", "1.000000001", "not-a-number"} {

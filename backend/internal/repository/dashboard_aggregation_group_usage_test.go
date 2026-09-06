@@ -14,6 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type nonTransactionalSQLExecutor struct {
+	sqlExecutor
+}
+
 func TestDashboardAggregationRepositorySyncGroupUsageRollupsNoopsAtCurrentDate(t *testing.T) {
 	setGroupUsageRollupTestTimezone(t)
 	db, mock := newSQLMock(t)
@@ -207,6 +211,28 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsNonPartitionedInvalidates
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
 			AddRow(service.GroupUsageDate(todayStart), time.Unix(0, 0).UTC(), "Asia/Shanghai"))
 	mock.ExpectCommit()
+
+	require.NoError(t, repo.CleanupUsageLogs(context.Background(), cutoff))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardAggregationRepositoryCleanupUsageLogsNonTransactionalSkipsEnterpriseAttributions(t *testing.T) {
+	setGroupUsageRollupTestTimezone(t)
+	db, mock := newSQLMock(t)
+	repo := newDashboardAggregationRepositoryWithSQL(nonTransactionalSQLExecutor{sqlExecutor: db})
+	cutoff := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	fixedNow := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
+	repo.clock = func() time.Time { return fixedNow }
+	todayStart := service.GroupUsageTodayStart(fixedNow)
+
+	mock.ExpectQuery(`SELECT EXISTS`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectExec(`(?s)WITH victims AS .*NOT EXISTS \(.*enterprise_usage_attributions.*usage_log_id = usage_logs.id.*\).*DELETE FROM usage_logs`).
+		WithArgs(cutoff, usageLogsCleanupBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
+			AddRow(service.GroupUsageDate(todayStart), time.Unix(0, 0).UTC(), "Asia/Shanghai"))
 
 	require.NoError(t, repo.CleanupUsageLogs(context.Background(), cutoff))
 	require.NoError(t, mock.ExpectationsWereMet())

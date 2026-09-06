@@ -22,7 +22,12 @@ var (
 )
 
 type Repository struct {
-	db *sql.DB
+	db                   *sql.DB
+	authCacheInvalidator AuthCacheInvalidator
+}
+
+type AuthCacheInvalidator interface {
+	InvalidateAuthCacheByKey(ctx context.Context, key string)
 }
 
 type Allocation struct {
@@ -159,8 +164,11 @@ type AuditEvent struct {
 	CreatedAt  time.Time
 }
 
-func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
+func NewRepository(db *sql.DB, authCacheInvalidator AuthCacheInvalidator) *Repository {
+	if authCacheInvalidator == nil {
+		panic("enterprise auth cache invalidator is required")
+	}
+	return &Repository{db: db, authCacheInvalidator: authCacheInvalidator}
 }
 
 func (r *Repository) CreateAllocation(ctx context.Context, params CreateAllocationParams) (*Allocation, error) {
@@ -537,11 +545,11 @@ func (r *Repository) RebindKeyAssignment(
 
 	var enterpriseUserID, keyUserID, upstreamUserID, upstreamGroupID int64
 	var keyGroupID sql.NullInt64
-	var keyStatus string
+	var keyStatus, apiKey string
 	if err = tx.QueryRowContext(ctx, `
-		SELECT enterprise.dedicated_upstream_user_id,
-		       api_key.user_id, api_key.group_id, api_key.status,
-		       upstream_subscription.user_id, upstream_subscription.group_id
+			SELECT enterprise.dedicated_upstream_user_id,
+			       api_key.user_id, api_key.group_id, api_key.status, api_key.key,
+			       upstream_subscription.user_id, upstream_subscription.group_id
 		FROM enterprises AS enterprise
 		JOIN api_keys AS api_key ON api_key.id = $2 AND api_key.deleted_at IS NULL
 		JOIN user_subscriptions AS upstream_subscription
@@ -553,13 +561,13 @@ func (r *Repository) RebindKeyAssignment(
 		&keyUserID,
 		&keyGroupID,
 		&keyStatus,
+		&apiKey,
 		&upstreamUserID,
 		&upstreamGroupID,
 	); err != nil {
 		return nil, err
 	}
-	if keyUserID != enterpriseUserID || upstreamUserID != enterpriseUserID ||
-		!keyGroupID.Valid || keyGroupID.Int64 != upstreamGroupID {
+	if keyUserID != enterpriseUserID || upstreamUserID != enterpriseUserID {
 		return nil, ErrEnterpriseOwnership
 	}
 	if keyStatus != "active" {
@@ -577,6 +585,17 @@ func (r *Repository) RebindKeyAssignment(
 	}
 	if wasRevoked {
 		return nil, ErrKeyGenerationRevoked
+	}
+
+	groupChanged := !keyGroupID.Valid || keyGroupID.Int64 != upstreamGroupID
+	if groupChanged {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE api_keys
+			SET group_id = $2, updated_at = clock_timestamp()
+			WHERE id = $1
+		`, params.APIKeyID, upstreamGroupID); err != nil {
+			return nil, err
+		}
 	}
 
 	var segmentBoundary time.Time
@@ -608,6 +627,9 @@ func (r *Repository) RebindKeyAssignment(
 		activeAssignment.UpstreamGroupID == upstreamGroupID:
 		if err = tx.Commit(); err != nil {
 			return nil, err
+		}
+		if groupChanged {
+			r.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey)
 		}
 		return &activeAssignment, nil
 	case err == nil:
@@ -671,6 +693,9 @@ func (r *Repository) RebindKeyAssignment(
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	if groupChanged {
+		r.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey)
+	}
 	return assignment, nil
 }
 
@@ -686,29 +711,28 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var keyStatus string
+	var keyStatus, apiKey string
 	var keyUserID, enterpriseUserID int64
 	if err = tx.QueryRowContext(ctx, `
-		SELECT api_key.status, api_key.user_id, enterprise.dedicated_upstream_user_id
+			SELECT api_key.status, api_key.key, api_key.user_id, enterprise.dedicated_upstream_user_id
 		FROM api_keys AS api_key
 		JOIN enterprises AS enterprise ON enterprise.id = $1
 		WHERE api_key.id = $2 AND api_key.deleted_at IS NULL
 		FOR UPDATE OF api_key, enterprise
-	`, params.EnterpriseID, params.APIKeyID).Scan(&keyStatus, &keyUserID, &enterpriseUserID); err != nil {
+		`, params.EnterpriseID, params.APIKeyID).Scan(&keyStatus, &apiKey, &keyUserID, &enterpriseUserID); err != nil {
 		return err
 	}
 	if keyUserID != enterpriseUserID {
 		return ErrEnterpriseOwnership
 	}
-	if keyStatus == "disabled" {
-		return tx.Commit()
-	}
-
-	if _, err = tx.ExecContext(ctx, `
-		UPDATE api_keys SET status = 'disabled', updated_at = clock_timestamp()
-		WHERE id = $1
-	`, params.APIKeyID); err != nil {
-		return err
+	wasDisabled := keyStatus == "disabled"
+	if !wasDisabled {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE api_keys SET status = 'disabled', updated_at = clock_timestamp()
+			WHERE id = $1
+		`, params.APIKeyID); err != nil {
+			return err
+		}
 	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_key_assignments
@@ -721,6 +745,12 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 	}
 	if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
 		return rowsErr
+	} else if affected == 0 && wasDisabled {
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		r.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey)
+		return nil
 	} else if affected != 1 {
 		return ErrKeyGenerationRevoked
 	}
@@ -732,7 +762,11 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 	`, params.EnterpriseID, params.APIKeyID, params.ActorRef); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	r.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey)
+	return nil
 }
 
 func (r *Repository) CreateUsageAttribution(
@@ -765,7 +799,18 @@ func (r *Repository) CreateUsageAttribution(
 		 AND usage_log.created_at < subscription_window.window_end
 		WHERE usage_log.id = $4
 		  AND (
-			($6::text = 'controlled_external' AND $3::bigint IS NULL)
+				(
+					$6::text = 'controlled_external'
+					AND $3::bigint IS NULL
+					AND NOT EXISTS (
+						SELECT 1
+						FROM enterprise_key_assignments AS assignment
+						WHERE assignment.enterprise_id = $1
+						  AND assignment.api_key_id = usage_log.api_key_id
+						  AND assignment.assigned_at <= usage_log.created_at
+						  AND (assignment.ended_at IS NULL OR usage_log.created_at < assignment.ended_at)
+					)
+				)
 			OR (
 				$6::text = 'employee' AND $3::bigint IS NOT NULL AND EXISTS (
 					SELECT 1

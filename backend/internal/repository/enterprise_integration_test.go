@@ -29,6 +29,10 @@ type enterpriseFixture struct {
 	anchor                 time.Time
 }
 
+type enterpriseNoopAuthCacheInvalidator struct{}
+
+func (enterpriseNoopAuthCacheInvalidator) InvalidateAuthCacheByKey(context.Context, string) {}
+
 func TestEnterpriseSchemaConstraints(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
@@ -83,7 +87,7 @@ func TestEnterpriseSchemaConstraints(t *testing.T) {
 func TestEnterpriseUsageAttributionUsageLogForeignKeyAndIdempotency(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
-	repo := enterprise.NewRepository(integrationDB)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 
 	expectEnterpriseConstraintName(t, ctx, "enterprise_usage_attributions_usage_log_id_fkey", `
 		INSERT INTO enterprise_usage_attributions (
@@ -128,7 +132,7 @@ func TestEnterpriseAllocationRepositoryConcurrentRevision(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	fixture := seedEnterpriseFixture(t, ctx)
-	repo := enterprise.NewRepository(integrationDB)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 
 	allocation, err := repo.CreateAllocation(ctx, enterprise.CreateAllocationParams{
 		EnterpriseID:       fixture.enterpriseID,
@@ -207,7 +211,7 @@ func TestEnterpriseAllocationRepositoryConcurrentRevision(t *testing.T) {
 func TestEnterpriseAllocationRevisionFailureRollsBackUpdate(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
-	repo := enterprise.NewRepository(integrationDB)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 	allocation, err := repo.CreateAllocation(ctx, enterprise.CreateAllocationParams{
 		EnterpriseID:       fixture.enterpriseID,
 		SubscriptionID:     fixture.subscriptionID,
@@ -258,7 +262,7 @@ func TestEnterpriseAllocationRevisionFailureRollsBackUpdate(t *testing.T) {
 func TestEnterpriseAllocationUsageSummaryAddsDecimalsWithoutFloatDrift(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
-	repo := enterprise.NewRepository(integrationDB)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 	_, err := repo.CreateAllocation(ctx, enterprise.CreateAllocationParams{
 		EnterpriseID:       fixture.enterpriseID,
 		SubscriptionID:     fixture.subscriptionID,
@@ -435,6 +439,16 @@ func insertAPIKeyForUser(t *testing.T, ctx context.Context, userID, groupID int6
 }
 
 func insertUsageLog(t *testing.T, ctx context.Context, fixture enterpriseFixture, actualCost string) int64 {
+	return insertUsageLogForSubscription(t, ctx, fixture, fixture.upstreamSubscriptionID, actualCost)
+}
+
+func insertUsageLogForSubscription(
+	t *testing.T,
+	ctx context.Context,
+	fixture enterpriseFixture,
+	upstreamSubscriptionID int64,
+	actualCost string,
+) int64 {
 	t.Helper()
 	var userID int64
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
@@ -443,8 +457,29 @@ func insertUsageLog(t *testing.T, ctx context.Context, fixture enterpriseFixture
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		INSERT INTO usage_logs (user_id, api_key_id, account_id, subscription_id, model, actual_cost)
 		VALUES ($1, $2, $3, $4, 'enterprise-test', $5::numeric) RETURNING id
-	`, userID, fixture.apiKeyID, fixture.accountID, fixture.upstreamSubscriptionID, actualCost).Scan(&usageLogID))
+	`, userID, fixture.apiKeyID, fixture.accountID, upstreamSubscriptionID, actualCost).Scan(&usageLogID))
 	return usageLogID
+}
+
+func updateEnterpriseSubscriptionSource(
+	t *testing.T,
+	ctx context.Context,
+	fixture enterpriseFixture,
+	upstreamSubscriptionID int64,
+) {
+	t.Helper()
+	_, err := integrationDB.ExecContext(ctx, `
+		UPDATE enterprise_subscriptions
+		SET upstream_user_subscription_id = $2
+		WHERE id = $1
+	`, fixture.subscriptionID, upstreamSubscriptionID)
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, `
+		UPDATE enterprise_subscription_windows
+		SET upstream_user_subscription_id = $2
+		WHERE subscription_id = $1
+	`, fixture.subscriptionID, upstreamSubscriptionID)
+	require.NoError(t, err)
 }
 
 func expectEnterpriseConstraintError(t *testing.T, ctx context.Context, query string, args ...any) {
