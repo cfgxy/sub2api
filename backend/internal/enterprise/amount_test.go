@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeAmountPreservesTenDecimalPlaces(t *testing.T) {
-	amount, err := NormalizeAmount("1234567890.1234567891")
+func TestNormalizeAmountPreservesEightDecimalPlaces(t *testing.T) {
+	amount, err := NormalizeAmount("123456789012.12345678")
 	require.NoError(t, err)
-	require.Equal(t, "1234567890.1234567891", amount)
+	require.Equal(t, "123456789012.12345678", amount)
 }
 
 func TestNormalizeAmountRejectsHugeScientificExponentQuickly(t *testing.T) {
@@ -40,8 +40,28 @@ func TestAllocationRepositoryRejectsBlankActorAndReasonBeforeDatabaseAccess(t *t
 }
 
 func TestNormalizeAmountRejectsNegativeOrExcessPrecision(t *testing.T) {
-	for _, value := range []string{"-0.0000000001", "1.00000000001", "not-a-number"} {
+	for _, value := range []string{"-0.00000001", "1.000000001", "not-a-number"} {
 		_, err := NormalizeAmount(value)
 		require.Error(t, err, value)
+	}
+}
+
+func TestNormalizeAmountRejectsNumericTwentyEightOverflow(t *testing.T) {
+	for _, value := range []string{"1000000000000", "999999999999.999999999"} {
+		_, err := NormalizeAmount(value)
+		require.ErrorIs(t, err, ErrInvalidAmount, value)
+	}
+}
+
+func TestNormalizeAmountCanonicalizesDecimalInputsWithoutFloatDrift(t *testing.T) {
+	for input, expected := range map[string]string{
+		"0.1":                   "0.10000000",
+		"0.2":                   "0.20000000",
+		"0.3":                   "0.30000000",
+		"999999999999.99999999": "999999999999.99999999",
+	} {
+		amount, err := NormalizeAmount(input)
+		require.NoError(t, err, input)
+		require.Equal(t, expected, amount, input)
 	}
 }

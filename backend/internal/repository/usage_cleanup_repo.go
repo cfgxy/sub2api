@@ -295,11 +295,16 @@ func (r *usageCleanupRepository) DeleteUsageLogsBatch(ctx context.Context, filte
 		return r.deleteUsageLogsBatchWithRollupInvalidation(ctx, db, whereClause, args)
 	}
 	query := fmt.Sprintf(`
-		WITH target AS (
-			SELECT id
-			FROM usage_logs
-			WHERE %s
-			ORDER BY created_at ASC, id ASC
+			WITH target AS (
+				SELECT id
+				FROM usage_logs
+				WHERE %s
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM enterprise_usage_attributions
+					WHERE enterprise_usage_attributions.usage_log_id = usage_logs.id
+				  )
+				ORDER BY created_at ASC, id ASC
 			LIMIT $%d
 		)
 		DELETE FROM usage_logs
@@ -341,6 +346,11 @@ func (r *usageCleanupRepository) deleteUsageLogsBatchWithRollupInvalidation(ctx 
 			SELECT id
 			FROM usage_logs
 			WHERE %s
+			  AND NOT EXISTS (
+				SELECT 1
+				FROM enterprise_usage_attributions
+				WHERE enterprise_usage_attributions.usage_log_id = usage_logs.id
+			  )
 			ORDER BY created_at ASC, id ASC
 			LIMIT $%d
 		)

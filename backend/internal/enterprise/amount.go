@@ -15,13 +15,13 @@ func NormalizeAmount(value string) (string, error) {
 		return "", ErrInvalidAmount
 	}
 	amount, err := decimal.NewFromString(value)
-	if err != nil || amount.IsNegative() || amount.Exponent() < -10 {
+	if err != nil || amount.IsNegative() || amount.Exponent() < -8 {
 		return "", ErrInvalidAmount
 	}
 
-	normalized := amount.StringFixed(10)
+	normalized := amount.StringFixed(8)
 	integerDigits := strings.TrimLeft(strings.SplitN(normalized, ".", 2)[0], "0")
-	if len(integerDigits) > 10 {
+	if len(integerDigits) > 12 {
 		return "", ErrInvalidAmount
 	}
 	return normalized, nil
