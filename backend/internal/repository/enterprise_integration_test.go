@@ -400,6 +400,10 @@ func seedEnterpriseFixture(t *testing.T, ctx context.Context) enterpriseFixture 
 		INSERT INTO accounts (name, platform, type) VALUES ($1, 'anthropic', 'apikey') RETURNING id
 	`, "enterprise-account-"+suffix).Scan(&accountID))
 
+	t.Cleanup(func() {
+		cleanupEnterpriseFixture(t, enterpriseID, userID, suffix)
+	})
+
 	return enterpriseFixture{
 		enterpriseID:           enterpriseID,
 		employeeID:             employeeID,
@@ -411,6 +415,43 @@ func seedEnterpriseFixture(t *testing.T, ctx context.Context) enterpriseFixture 
 		groupID:                groupID,
 		anchor:                 anchor,
 	}
+}
+
+func cleanupEnterpriseFixture(t *testing.T, enterpriseID, userID int64, suffix string) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := integrationDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{"DELETE FROM enterprise_usage_attributions WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM usage_logs WHERE user_id = $1", []any{userID}},
+		{"DELETE FROM enterprise_allocation_revisions WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_weekly_allocations WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_audit_events WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_key_assignments WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_subscription_windows WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_subscriptions WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_employees WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_departments WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprises WHERE id = $1", []any{enterpriseID}},
+		{"DELETE FROM api_keys WHERE user_id = $1", []any{userID}},
+		{`WITH deleted AS (
+			DELETE FROM user_subscriptions WHERE user_id = $1 RETURNING group_id
+		)
+		DELETE FROM groups WHERE id IN (SELECT group_id FROM deleted)`, []any{userID}},
+		{"DELETE FROM accounts WHERE name = $1", []any{"enterprise-account-" + suffix}},
+		{"DELETE FROM users WHERE id = $1", []any{userID}},
+	}
+	for _, statement := range statements {
+		_, err = tx.ExecContext(ctx, statement.query, statement.args...)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
 }
 
 func insertAPIKey(t *testing.T, ctx context.Context, enterpriseID int64) int64 {

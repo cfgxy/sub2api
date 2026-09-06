@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"testing"
 	"time"
 
@@ -385,6 +386,158 @@ func TestEnterpriseControlledExternalAttributionRejectsAssignedAPIKey(t *testing
 	require.Zero(t, count)
 }
 
+func TestEnterpriseFirstAssignmentAndControlledExternalAttributionSerializeByAPIKey(t *testing.T) {
+	t.Run("assignment commits first", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		fixture, usageID := seedFirstAssignmentRaceFixture(t, ctx)
+		assignmentSubscriptionID, _ := insertEnterpriseUpstreamSubscription(t, ctx, fixture.enterpriseID)
+		repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+
+		blocker, err := integrationDB.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = blocker.Rollback() })
+		_, err = blocker.ExecContext(ctx, "SELECT id FROM api_keys WHERE id = $1 FOR UPDATE", fixture.apiKeyID)
+		require.NoError(t, err)
+
+		type assignmentResult struct {
+			assignment *enterprise.KeyAssignment
+			err        error
+		}
+		assignmentDone := make(chan assignmentResult, 1)
+		go func() {
+			assignment, assignmentErr := repo.RebindKeyAssignment(ctx, enterprise.RebindKeyAssignmentParams{
+				EnterpriseID:           fixture.enterpriseID,
+				EmployeeID:             fixture.employeeID,
+				APIKeyID:               fixture.apiKeyID,
+				UpstreamSubscriptionID: assignmentSubscriptionID,
+				ActorRef:               "test:assignment-first",
+			})
+			assignmentDone <- assignmentResult{assignment: assignment, err: assignmentErr}
+		}()
+		select {
+		case result := <-assignmentDone:
+			require.FailNow(t, "assignment bypassed api key lock", "result=%+v", result)
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		type attributionResult struct {
+			attribution *enterprise.UsageAttribution
+			err         error
+		}
+		attributionDone := make(chan attributionResult, 1)
+		go func() {
+			attribution, attributionErr := repo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
+				EnterpriseID:       fixture.enterpriseID,
+				SubscriptionID:     fixture.subscriptionID,
+				UsageLogID:         usageID,
+				WeeklyWindowAnchor: fixture.anchor,
+				Classification:     "controlled_external",
+			})
+			attributionDone <- attributionResult{attribution: attribution, err: attributionErr}
+		}()
+		select {
+		case result := <-attributionDone:
+			require.FailNow(t, "attribution bypassed api key lock", "result=%+v", result)
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		require.NoError(t, blocker.Commit())
+		assignmentResultValue := <-assignmentDone
+		require.NoError(t, assignmentResultValue.err)
+		require.NotNil(t, assignmentResultValue.assignment)
+		attributionResultValue := <-attributionDone
+		require.ErrorIs(t, attributionResultValue.err, enterprise.ErrUsageAttributionMismatch)
+		require.Nil(t, attributionResultValue.attribution)
+	})
+
+	t.Run("attribution commits first", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		fixture, usageID := seedFirstAssignmentRaceFixture(t, ctx)
+		assignmentSubscriptionID, _ := insertEnterpriseUpstreamSubscription(t, ctx, fixture.enterpriseID)
+		repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+
+		blocker, err := integrationDB.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = blocker.Rollback() })
+		_, err = blocker.ExecContext(ctx, "SELECT id FROM api_keys WHERE id = $1 FOR UPDATE", fixture.apiKeyID)
+		require.NoError(t, err)
+
+		type attributionResult struct {
+			attribution *enterprise.UsageAttribution
+			err         error
+		}
+		attributionDone := make(chan attributionResult, 1)
+		go func() {
+			attribution, attributionErr := repo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
+				EnterpriseID:       fixture.enterpriseID,
+				SubscriptionID:     fixture.subscriptionID,
+				UsageLogID:         usageID,
+				WeeklyWindowAnchor: fixture.anchor,
+				Classification:     "controlled_external",
+			})
+			attributionDone <- attributionResult{attribution: attribution, err: attributionErr}
+		}()
+		select {
+		case result := <-attributionDone:
+			require.FailNow(t, "attribution bypassed api key lock", "result=%+v", result)
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		type assignmentResult struct {
+			assignment *enterprise.KeyAssignment
+			err        error
+		}
+		assignmentDone := make(chan assignmentResult, 1)
+		go func() {
+			assignment, assignmentErr := repo.RebindKeyAssignment(ctx, enterprise.RebindKeyAssignmentParams{
+				EnterpriseID:           fixture.enterpriseID,
+				EmployeeID:             fixture.employeeID,
+				APIKeyID:               fixture.apiKeyID,
+				UpstreamSubscriptionID: assignmentSubscriptionID,
+				ActorRef:               "test:attribution-first",
+			})
+			assignmentDone <- assignmentResult{assignment: assignment, err: assignmentErr}
+		}()
+		select {
+		case result := <-assignmentDone:
+			require.FailNow(t, "assignment bypassed api key lock", "result=%+v", result)
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		require.NoError(t, blocker.Commit())
+		attributionResultValue := <-attributionDone
+		require.NoError(t, attributionResultValue.err)
+		require.NotNil(t, attributionResultValue.attribution)
+		require.Equal(t, "controlled_external", attributionResultValue.attribution.Classification)
+		assignmentResultValue := <-assignmentDone
+		require.ErrorIs(t, assignmentResultValue.err, enterprise.ErrUsageAttributionMismatch)
+		require.Nil(t, assignmentResultValue.assignment)
+
+		var activeAssignments int
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM enterprise_key_assignments
+			WHERE api_key_id = $1 AND status = 'active'
+		`, fixture.apiKeyID).Scan(&activeAssignments))
+		require.Zero(t, activeAssignments)
+	})
+}
+
+func seedFirstAssignmentRaceFixture(t *testing.T, ctx context.Context) (enterpriseFixture, int64) {
+	t.Helper()
+	fixture := seedEnterpriseFixture(t, ctx)
+	_, err := integrationDB.ExecContext(ctx,
+		"DELETE FROM enterprise_key_assignments WHERE api_key_id = $1", fixture.apiKeyID)
+	require.NoError(t, err)
+	usageID := insertUsageLog(t, ctx, fixture, "0.1000000000")
+	usageAt := time.Now().UTC().Add(2 * time.Minute)
+	_, err = integrationDB.ExecContext(ctx,
+		"UPDATE usage_logs SET created_at = $2 WHERE id = $1", usageID, usageAt)
+	require.NoError(t, err)
+	return fixture, usageID
+}
+
 func TestEnterpriseRevokeKeyGenerationRecoversDisabledKeyAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
@@ -564,6 +717,105 @@ func TestDashboardAggregationCleanupSkipsEnterpriseAttributedUsageWithoutFailing
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM usage_group_rollup_state WHERE id = 1").Scan(&rollupStateCount))
 	require.Equal(t, 1, rollupStateCount)
+}
+
+func TestDashboardAggregationPartitionCleanupPreservesAttributedUsage(t *testing.T) {
+	ctx := context.Background()
+	const schema = "shan151_partition_cleanup"
+	_, err := integrationDB.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+	})
+	_, err = integrationDB.ExecContext(ctx, `
+		CREATE SCHEMA `+schema+`;
+		CREATE TABLE `+schema+`.usage_logs (
+			id BIGINT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		) PARTITION BY RANGE (created_at);
+		CREATE TABLE `+schema+`.usage_logs_200001 PARTITION OF `+schema+`.usage_logs
+			FOR VALUES FROM ('2000-01-01') TO ('2000-02-01');
+		ALTER TABLE `+schema+`.usage_logs_200001
+			ADD CONSTRAINT usage_logs_200001_id_key UNIQUE (id);
+		CREATE TABLE `+schema+`.enterprise_usage_attributions (
+			usage_log_id BIGINT NOT NULL UNIQUE
+				REFERENCES `+schema+`.usage_logs_200001(id) ON DELETE RESTRICT
+		);
+		CREATE TABLE `+schema+`.usage_group_rollup_state (
+			id SMALLINT PRIMARY KEY,
+			closed_before DATE NOT NULL,
+			retained_from TIMESTAMPTZ NOT NULL,
+			timezone_name TEXT NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		INSERT INTO `+schema+`.usage_group_rollup_state (
+			id, closed_before, retained_from, timezone_name
+		) VALUES (1, '2000-02-01', '2000-01-01', 'UTC');
+			INSERT INTO `+schema+`.usage_logs (id, created_at) VALUES
+				(1, '2000-01-10'),
+				(2, '2000-01-11');
+	`)
+	require.NoError(t, err)
+
+	dsn, err := url.Parse(integrationDSN)
+	require.NoError(t, err)
+	query := dsn.Query()
+	query.Set("search_path", schema)
+	dsn.RawQuery = query.Encode()
+	db, err := sql.Open("postgres", dsn.String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, db.PingContext(ctx))
+
+	attributionTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = attributionTx.ExecContext(ctx,
+		"INSERT INTO enterprise_usage_attributions (usage_log_id) VALUES (1)")
+	require.NoError(t, err)
+
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	cleanupDone := make(chan error, 1)
+	go func() {
+		cleanupDone <- repo.dropUsageLogsPartitions(
+			ctx,
+			time.Date(2000, 2, 1, 0, 0, 0, 0, time.UTC),
+		)
+	}()
+	require.Eventually(t, func() bool {
+		var waiting bool
+		queryErr := db.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks
+				WHERE relation = 'usage_logs_200001'::regclass
+				  AND mode = 'ExclusiveLock'
+				  AND NOT granted
+			)
+		`).Scan(&waiting)
+		return queryErr == nil && waiting
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, attributionTx.Commit())
+	select {
+	case cleanupErr := <-cleanupDone:
+		require.NoError(t, cleanupErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("分区清理未在归因提交后完成")
+	}
+
+	var partitionExists, attributedExists, unattributedExists bool
+	var closedBefore string
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT to_regclass('usage_logs_200001') IS NOT NULL").Scan(&partitionExists))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = 1)").Scan(&attributedExists))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = 2)").Scan(&unattributedExists))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT closed_before::text FROM usage_group_rollup_state WHERE id = 1").Scan(&closedBefore))
+	require.True(t, partitionExists)
+	require.True(t, attributedExists)
+	require.False(t, unattributedExists)
+	require.Equal(t, "2000-01-11", closedBefore)
 }
 
 func insertEnterpriseUpstreamSubscription(t *testing.T, ctx context.Context, enterpriseID int64) (int64, int64) {

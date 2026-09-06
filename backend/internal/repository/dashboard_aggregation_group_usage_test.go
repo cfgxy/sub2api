@@ -268,6 +268,10 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionedSortsAndInvali
 		mock.ExpectBegin()
 		mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+		mock.ExpectExec(`LOCK TABLE "` + partition.name + `" IN EXCLUSIVE MODE`).
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery(`(?s)SELECT EXISTS .*FROM "` + partition.name + `" AS usage_log.*enterprise_usage_attributions`).
+			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 		mock.ExpectExec(`UPDATE usage_group_rollup_state`).
 			WithArgs(partition.start, "Asia/Shanghai").
 			WillReturnResult(sqlmock.NewResult(0, 1))
@@ -327,6 +331,10 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionFailureRollsBack
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectExec(`LOCK TABLE "usage_logs_202604" IN EXCLUSIVE MODE`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`(?s)SELECT EXISTS .*FROM "usage_logs_202604" AS usage_log.*enterprise_usage_attributions`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`UPDATE usage_group_rollup_state`).
 		WithArgs(aprilStart, "Asia/Shanghai").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -336,6 +344,36 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionFailureRollsBack
 
 	err := repo.CleanupUsageLogs(context.Background(), cutoff)
 	require.ErrorIs(t, err, dropErr)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardAggregationRepositoryCleanupAttributedPartitionInvalidationFailureRollsBack(t *testing.T) {
+	setGroupUsageRollupTestTimezone(t)
+	db, mock := newSQLMock(t)
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	cutoff := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
+	deletedAt := time.Date(2026, 4, 3, 2, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(`SELECT EXISTS`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT c.relname`).
+		WillReturnRows(sqlmock.NewRows([]string{"relname"}).AddRow("usage_logs_202604"))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectExec(`LOCK TABLE "usage_logs_202604" IN EXCLUSIVE MODE`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`(?s)SELECT EXISTS .*FROM "usage_logs_202604" AS usage_log.*enterprise_usage_attributions`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`(?s)WITH deleted AS .*DELETE FROM "usage_logs_202604".*NOT EXISTS.*enterprise_usage_attributions.*SELECT MIN\(created_at\) FROM deleted`).
+		WillReturnRows(sqlmock.NewRows([]string{"min"}).AddRow(deletedAt))
+	mock.ExpectExec(`UPDATE usage_group_rollup_state`).
+		WithArgs(deletedAt, "Asia/Shanghai").
+		WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
+
+	err := repo.CleanupUsageLogs(context.Background(), cutoff)
+	require.ErrorIs(t, err, sql.ErrConnDone)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

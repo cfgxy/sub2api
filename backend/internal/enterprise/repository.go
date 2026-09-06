@@ -547,24 +547,27 @@ func (r *Repository) RebindKeyAssignment(
 	var keyGroupID sql.NullInt64
 	var keyStatus, apiKey string
 	if err = tx.QueryRowContext(ctx, `
-			SELECT enterprise.dedicated_upstream_user_id,
-			       api_key.user_id, api_key.group_id, api_key.status, api_key.key,
-			       upstream_subscription.user_id, upstream_subscription.group_id
-		FROM enterprises AS enterprise
-		JOIN api_keys AS api_key ON api_key.id = $2 AND api_key.deleted_at IS NULL
-		JOIN user_subscriptions AS upstream_subscription
-		  ON upstream_subscription.id = $3 AND upstream_subscription.deleted_at IS NULL
-		WHERE enterprise.id = $1
-		FOR UPDATE OF enterprise, api_key, upstream_subscription
-	`, params.EnterpriseID, params.APIKeyID, params.UpstreamSubscriptionID).Scan(
-		&enterpriseUserID,
-		&keyUserID,
-		&keyGroupID,
-		&keyStatus,
-		&apiKey,
-		&upstreamUserID,
-		&upstreamGroupID,
-	); err != nil {
+		SELECT user_id, group_id, status, key
+		FROM api_keys
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR UPDATE
+	`, params.APIKeyID).Scan(&keyUserID, &keyGroupID, &keyStatus, &apiKey); err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRowContext(ctx, `
+		SELECT dedicated_upstream_user_id
+		FROM enterprises
+		WHERE id = $1
+		FOR UPDATE
+	`, params.EnterpriseID).Scan(&enterpriseUserID); err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRowContext(ctx, `
+		SELECT user_id, group_id
+		FROM user_subscriptions
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR UPDATE
+	`, params.UpstreamSubscriptionID).Scan(&upstreamUserID, &upstreamGroupID); err != nil {
 		return nil, err
 	}
 	if keyUserID != enterpriseUserID || upstreamUserID != enterpriseUserID {
@@ -601,6 +604,24 @@ func (r *Repository) RebindKeyAssignment(
 	var segmentBoundary time.Time
 	if err = tx.QueryRowContext(ctx, "SELECT clock_timestamp()").Scan(&segmentBoundary); err != nil {
 		return nil, err
+	}
+	var overlapsExternalAttribution bool
+	if err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM enterprise_usage_attributions AS attribution
+			JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+			WHERE attribution.enterprise_id = $1
+			  AND attribution.classification = 'controlled_external'
+			  AND usage_log.api_key_id = $2
+			  AND usage_log.created_at >= $3
+		)
+	`, params.EnterpriseID, params.APIKeyID, segmentBoundary).
+		Scan(&overlapsExternalAttribution); err != nil {
+		return nil, err
+	}
+	if overlapsExternalAttribution {
+		return nil, ErrUsageAttributionMismatch
 	}
 
 	var activeAssignment KeyAssignment
@@ -773,9 +794,31 @@ func (r *Repository) CreateUsageAttribution(
 	ctx context.Context,
 	params CreateUsageAttributionParams,
 ) (*UsageAttribution, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var apiKeyID int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT api_key.id
+		FROM usage_logs AS usage_log
+		JOIN api_keys AS api_key
+		  ON api_key.id = usage_log.api_key_id
+		 AND api_key.deleted_at IS NULL
+		WHERE usage_log.id = $1
+		FOR UPDATE OF api_key
+	`, params.UsageLogID).Scan(&apiKeyID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUsageAttributionMismatch
+		}
+		return nil, err
+	}
+
 	attribution := &UsageAttribution{}
 	var employeeID sql.NullInt64
-	err := r.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO enterprise_usage_attributions (
 			enterprise_id, subscription_id, employee_id, usage_log_id,
 			weekly_window_anchor, classification
@@ -839,18 +882,18 @@ func (r *Repository) CreateUsageAttribution(
 		&attribution.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		existing, existingErr := r.GetUsageAttributionByUsageLogID(ctx, params.UsageLogID)
+		existing, existingErr := getUsageAttributionByUsageLogID(ctx, tx, params.UsageLogID)
 		if existingErr == nil && existing.EnterpriseID == params.EnterpriseID &&
 			existing.SubscriptionID == params.SubscriptionID &&
 			existing.WeeklyWindowAnchor.Equal(params.WeeklyWindowAnchor) &&
 			existing.Classification == params.Classification &&
 			sameNullableInt64(existing.EmployeeID, params.EmployeeID) {
+			if err = tx.Commit(); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
-		if existingErr == nil {
-			return nil, ErrUsageAttributionMismatch
-		}
-		if errors.Is(existingErr, sql.ErrNoRows) {
+		if existingErr == nil || errors.Is(existingErr, sql.ErrNoRows) {
 			return nil, ErrUsageAttributionMismatch
 		}
 		return nil, existingErr
@@ -859,6 +902,9 @@ func (r *Repository) CreateUsageAttribution(
 		return nil, err
 	}
 	attribution.EmployeeID = nullInt64Pointer(employeeID)
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
 	return attribution, nil
 }
 
@@ -866,9 +912,21 @@ func (r *Repository) GetUsageAttributionByUsageLogID(
 	ctx context.Context,
 	usageLogID int64,
 ) (*UsageAttribution, error) {
+	return getUsageAttributionByUsageLogID(ctx, r.db, usageLogID)
+}
+
+type queryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func getUsageAttributionByUsageLogID(
+	ctx context.Context,
+	queryer queryRower,
+	usageLogID int64,
+) (*UsageAttribution, error) {
 	attribution := &UsageAttribution{}
 	var employeeID sql.NullInt64
-	err := r.db.QueryRowContext(ctx, `
+	err := queryer.QueryRowContext(ctx, `
 		SELECT id, enterprise_id, subscription_id, employee_id, usage_log_id,
 		       weekly_window_anchor, classification, created_at
 		FROM enterprise_usage_attributions
