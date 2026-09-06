@@ -755,6 +755,14 @@ func TestDashboardAggregationPartitionCleanupSerializesAfterUsageRead(t *testing
 		attributionDone <- createErr
 	}()
 	requireDatabaseLock(t, ctx, schema, "enterprise_subscriptions", "shan151-attribution", "AccessShareLock", false)
+	var attributionExists bool
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM shan151_partition_cleanup.enterprise_usage_attributions
+			WHERE usage_log_id = 1
+		)
+	`).Scan(&attributionExists))
+	require.False(t, attributionExists)
 
 	cleanupDone := make(chan error, 1)
 	go func() {
@@ -796,7 +804,7 @@ func TestDashboardAggregationPartitionCleanupFailureRollsBackDataAndWatermark(t 
 		END;
 		$$;
 		CREATE TRIGGER reject_rollup_invalidation
-			BEFORE UPDATE ON usage_group_rollup_state
+			AFTER UPDATE ON usage_group_rollup_state
 			FOR EACH ROW EXECUTE FUNCTION reject_rollup_invalidation();
 	`)
 	require.NoError(t, err)
