@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -74,12 +75,18 @@ func TestEnterprise236SchemaMatchesFrozenContract(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
-			FROM pg_constraint
-			WHERE conname = 'enterprise_usage_attributions_usage_log_id_fkey'
-			  AND contype = 'f'
+			FROM pg_constraint AS c
+			WHERE c.conname = 'enterprise_usage_attributions_usage_log_id_fkey'
+			  AND c.contype = 'f'
+			  AND c.confrelid = 'usage_logs'::regclass
 		)
 	`).Scan(&usageLogFK))
 	require.True(t, usageLogFK)
+	var usageLogsKind string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT relkind::text FROM pg_class WHERE oid = 'usage_logs'::regclass
+	`).Scan(&usageLogsKind))
+	require.Equal(t, "r", usageLogsKind)
 
 	triggerNames := []string{
 		"validate_enterprise_subscription_owner",
@@ -719,103 +726,249 @@ func TestDashboardAggregationCleanupSkipsEnterpriseAttributedUsageWithoutFailing
 	require.Equal(t, 1, rollupStateCount)
 }
 
-func TestDashboardAggregationPartitionCleanupPreservesAttributedUsage(t *testing.T) {
-	ctx := context.Background()
+func TestDashboardAggregationPartitionCleanupSerializesAfterUsageRead(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	const schema = "shan151_partition_cleanup"
-	_, err := integrationDB.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+	setupPartitionCleanupSchema(t, ctx, schema)
+
+	attributionDB := openPartitionCleanupDB(t, ctx, schema, "shan151-attribution")
+	cleanupDB := openPartitionCleanupDB(t, ctx, schema, "shan151-cleanup")
+	blockerDB := openPartitionCleanupDB(t, ctx, schema, "shan151-blocker")
+
+	blocker, err := blockerDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blocker.Rollback() })
+	_, err = blocker.ExecContext(ctx, "LOCK TABLE enterprise_subscriptions IN ACCESS EXCLUSIVE MODE")
+	require.NoError(t, err)
+
+	attributionDone := make(chan error, 1)
+	go func() {
+		repo := enterprise.NewRepository(attributionDB, enterpriseNoopAuthCacheInvalidator{})
+		_, createErr := repo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
+			EnterpriseID:       300,
+			SubscriptionID:     400,
+			UsageLogID:         1,
+			WeeklyWindowAnchor: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+			Classification:     "controlled_external",
+		})
+		attributionDone <- createErr
+	}()
+	requireDatabaseLock(t, ctx, schema, "enterprise_subscriptions", "shan151-attribution", "AccessShareLock", false)
+
+	cleanupDone := make(chan error, 1)
+	go func() {
+		repo := newDashboardAggregationRepositoryWithSQL(cleanupDB)
+		cleanupDone <- repo.dropUsageLogsPartitions(ctx, time.Date(2000, 2, 1, 0, 0, 0, 0, time.UTC))
+	}()
+	requireDatabaseLock(t, ctx, schema, "usage_logs_200001", "shan151-cleanup", "ExclusiveLock", false)
+	require.NoError(t, blocker.Commit())
+
+	select {
+	case attributionErr := <-attributionDone:
+		require.NoError(t, attributionErr)
+	case <-ctx.Done():
+		t.Fatal("归因事务未完成")
+	}
+	select {
+	case cleanupErr := <-cleanupDone:
+		require.NoError(t, cleanupErr)
+	case <-ctx.Done():
+		t.Fatal("分区清理事务未完成")
+	}
+
+	assertPartitionCleanupState(t, ctx, cleanupDB, true, false, "2000-01-11")
+}
+
+func TestDashboardAggregationPartitionCleanupFailureRollsBackDataAndWatermark(t *testing.T) {
+	ctx := context.Background()
+	const schema = "shan151_partition_cleanup_rollback"
+	setupPartitionCleanupSchema(t, ctx, schema)
+	db := openPartitionCleanupDB(t, ctx, schema, "shan151-cleanup-rollback")
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO enterprise_usage_attributions (
+			enterprise_id, subscription_id, usage_log_id, weekly_window_anchor, classification
+		) VALUES (300, 400, 1, '2000-01-01', 'controlled_external');
+		CREATE FUNCTION reject_rollup_invalidation() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected rollup invalidation failure';
+		END;
+		$$;
+		CREATE TRIGGER reject_rollup_invalidation
+			BEFORE UPDATE ON usage_group_rollup_state
+			FOR EACH ROW EXECUTE FUNCTION reject_rollup_invalidation();
+	`)
+	require.NoError(t, err)
+
+	repo := newDashboardAggregationRepositoryWithSQL(db)
+	err = repo.dropUsageLogsPartitions(ctx, time.Date(2000, 2, 1, 0, 0, 0, 0, time.UTC))
+	require.ErrorContains(t, err, "injected rollup invalidation failure")
+	assertPartitionCleanupState(t, ctx, db, true, true, "2000-02-01")
+}
+
+func setupPartitionCleanupSchema(t *testing.T, ctx context.Context, schema string) {
+	t.Helper()
+	quotedSchema := pq.QuoteIdentifier(schema)
+	_, err := integrationDB.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = integrationDB.ExecContext(context.Background(), "DROP SCHEMA IF EXISTS "+schema+" CASCADE")
+		_, _ = integrationDB.ExecContext(context.Background(), "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE")
 	})
 	_, err = integrationDB.ExecContext(ctx, `
-		CREATE SCHEMA `+schema+`;
-		CREATE TABLE `+schema+`.usage_logs (
+		CREATE SCHEMA `+quotedSchema+`;
+		CREATE TABLE `+quotedSchema+`.api_keys (
+			id BIGINT PRIMARY KEY,
+			deleted_at TIMESTAMPTZ
+		);
+		CREATE TABLE `+quotedSchema+`.usage_logs (
 			id BIGINT NOT NULL,
+			user_id BIGINT NOT NULL,
+			api_key_id BIGINT NOT NULL,
+			subscription_id BIGINT NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL
 		) PARTITION BY RANGE (created_at);
-		CREATE TABLE `+schema+`.usage_logs_200001 PARTITION OF `+schema+`.usage_logs
+		CREATE TABLE `+quotedSchema+`.usage_logs_200001 PARTITION OF `+quotedSchema+`.usage_logs
 			FOR VALUES FROM ('2000-01-01') TO ('2000-02-01');
-		ALTER TABLE `+schema+`.usage_logs_200001
+		ALTER TABLE `+quotedSchema+`.usage_logs_200001
 			ADD CONSTRAINT usage_logs_200001_id_key UNIQUE (id);
-		CREATE TABLE `+schema+`.enterprise_usage_attributions (
-			usage_log_id BIGINT NOT NULL UNIQUE
-				REFERENCES `+schema+`.usage_logs_200001(id) ON DELETE RESTRICT
+		CREATE TABLE `+quotedSchema+`.enterprises (
+			id BIGINT PRIMARY KEY,
+			dedicated_upstream_user_id BIGINT NOT NULL
 		);
-		CREATE TABLE `+schema+`.usage_group_rollup_state (
+		CREATE TABLE `+quotedSchema+`.enterprise_subscriptions (
+			id BIGINT PRIMARY KEY,
+			enterprise_id BIGINT NOT NULL,
+			upstream_user_subscription_id BIGINT NOT NULL
+		);
+		CREATE TABLE `+quotedSchema+`.enterprise_subscription_windows (
+			enterprise_id BIGINT NOT NULL,
+			subscription_id BIGINT NOT NULL,
+			upstream_user_subscription_id BIGINT NOT NULL,
+			observed_weekly_window_start TIMESTAMPTZ NOT NULL,
+			window_start TIMESTAMPTZ NOT NULL,
+			window_end TIMESTAMPTZ NOT NULL
+		);
+		CREATE TABLE `+quotedSchema+`.enterprise_key_assignments (
+			enterprise_id BIGINT NOT NULL,
+			employee_id BIGINT,
+			api_key_id BIGINT NOT NULL,
+			upstream_user_subscription_id BIGINT NOT NULL,
+			assigned_at TIMESTAMPTZ NOT NULL,
+			ended_at TIMESTAMPTZ
+		);
+		CREATE TABLE `+quotedSchema+`.enterprise_usage_attributions (
+			id BIGSERIAL PRIMARY KEY,
+			enterprise_id BIGINT NOT NULL,
+			subscription_id BIGINT NOT NULL,
+			employee_id BIGINT,
+			usage_log_id BIGINT NOT NULL UNIQUE,
+			weekly_window_anchor TIMESTAMPTZ NOT NULL,
+			classification TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE TABLE `+quotedSchema+`.usage_group_rollup_state (
 			id SMALLINT PRIMARY KEY,
 			closed_before DATE NOT NULL,
 			retained_from TIMESTAMPTZ NOT NULL,
 			timezone_name TEXT NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO `+schema+`.usage_group_rollup_state (
+		INSERT INTO `+quotedSchema+`.api_keys (id) VALUES (10);
+		INSERT INTO `+quotedSchema+`.enterprises (id, dedicated_upstream_user_id) VALUES (300, 100);
+		INSERT INTO `+quotedSchema+`.enterprise_subscriptions (
+			id, enterprise_id, upstream_user_subscription_id
+		) VALUES (400, 300, 200);
+		INSERT INTO `+quotedSchema+`.enterprise_subscription_windows (
+			enterprise_id, subscription_id, upstream_user_subscription_id,
+			observed_weekly_window_start, window_start, window_end
+		) VALUES (300, 400, 200, '2000-01-01', '2000-01-01', '2000-02-01');
+		INSERT INTO `+quotedSchema+`.usage_group_rollup_state (
 			id, closed_before, retained_from, timezone_name
 		) VALUES (1, '2000-02-01', '2000-01-01', 'UTC');
-			INSERT INTO `+schema+`.usage_logs (id, created_at) VALUES
-				(1, '2000-01-10'),
-				(2, '2000-01-11');
+		INSERT INTO `+quotedSchema+`.usage_logs (
+			id, user_id, api_key_id, subscription_id, created_at
+		) VALUES
+			(1, 100, 10, 200, '2000-01-10'),
+			(2, 100, 10, 200, '2000-01-11');
 	`)
 	require.NoError(t, err)
+}
 
+func openPartitionCleanupDB(t *testing.T, ctx context.Context, schema, applicationName string) *sql.DB {
+	t.Helper()
 	dsn, err := url.Parse(integrationDSN)
 	require.NoError(t, err)
 	query := dsn.Query()
 	query.Set("search_path", schema)
+	query.Set("application_name", applicationName)
+	query.Set("options", "-c deadlock_timeout=50ms")
 	dsn.RawQuery = query.Encode()
 	db, err := sql.Open("postgres", dsn.String())
 	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, db.PingContext(ctx))
+	return db
+}
 
-	attributionTx, err := db.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	_, err = attributionTx.ExecContext(ctx,
-		"INSERT INTO enterprise_usage_attributions (usage_log_id) VALUES (1)")
-	require.NoError(t, err)
-
-	repo := newDashboardAggregationRepositoryWithSQL(db)
-	cleanupDone := make(chan error, 1)
-	go func() {
-		cleanupDone <- repo.dropUsageLogsPartitions(
-			ctx,
-			time.Date(2000, 2, 1, 0, 0, 0, 0, time.UTC),
-		)
-	}()
+func requireDatabaseLock(
+	t *testing.T,
+	ctx context.Context,
+	schema, table, applicationName, mode string,
+	granted bool,
+) {
+	t.Helper()
 	require.Eventually(t, func() bool {
-		var waiting bool
-		queryErr := db.QueryRowContext(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM pg_locks
-				WHERE relation = 'usage_logs_200001'::regclass
-				  AND mode = 'ExclusiveLock'
-				  AND NOT granted
-			)
-		`).Scan(&waiting)
-		return queryErr == nil && waiting
+		return hasDatabaseLock(ctx, schema, table, applicationName, mode, granted)
 	}, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, attributionTx.Commit())
-	select {
-	case cleanupErr := <-cleanupDone:
-		require.NoError(t, cleanupErr)
-	case <-time.After(5 * time.Second):
-		t.Fatal("分区清理未在归因提交后完成")
-	}
+}
 
-	var partitionExists, attributedExists, unattributedExists bool
-	var closedBefore string
+func hasDatabaseLock(
+	ctx context.Context,
+	schema, table, applicationName, mode string,
+	granted bool,
+) bool {
+	var found bool
+	err := integrationDB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_locks AS lock
+			JOIN pg_stat_activity AS activity ON activity.pid = lock.pid
+			WHERE lock.relation = to_regclass($1)
+			  AND activity.application_name = $2
+			  AND lock.mode = $3
+			  AND lock.granted = $4
+		)
+	`, fmt.Sprintf("%s.%s", schema, table), applicationName, mode, granted).Scan(&found)
+	return err == nil && found
+}
+
+func assertPartitionCleanupState(
+	t *testing.T,
+	ctx context.Context,
+	db *sql.DB,
+	attributedExists, unattributedExists bool,
+	closedBefore string,
+) {
+	t.Helper()
+	var partitionExists, actualAttributedExists, actualUnattributedExists, attributionExists bool
+	var actualClosedBefore string
 	require.NoError(t, db.QueryRowContext(ctx,
 		"SELECT to_regclass('usage_logs_200001') IS NOT NULL").Scan(&partitionExists))
 	require.NoError(t, db.QueryRowContext(ctx,
-		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = 1)").Scan(&attributedExists))
+		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = 1)").Scan(&actualAttributedExists))
 	require.NoError(t, db.QueryRowContext(ctx,
-		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = 2)").Scan(&unattributedExists))
+		"SELECT EXISTS (SELECT 1 FROM usage_logs WHERE id = 2)").Scan(&actualUnattributedExists))
 	require.NoError(t, db.QueryRowContext(ctx,
-		"SELECT closed_before::text FROM usage_group_rollup_state WHERE id = 1").Scan(&closedBefore))
+		"SELECT EXISTS (SELECT 1 FROM enterprise_usage_attributions WHERE usage_log_id = 1)").Scan(&attributionExists))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT closed_before::text FROM usage_group_rollup_state WHERE id = 1").Scan(&actualClosedBefore))
 	require.True(t, partitionExists)
-	require.True(t, attributedExists)
-	require.False(t, unattributedExists)
-	require.Equal(t, "2000-01-11", closedBefore)
+	require.Equal(t, attributedExists, actualAttributedExists)
+	require.Equal(t, unattributedExists, actualUnattributedExists)
+	require.True(t, attributionExists)
+	require.Equal(t, closedBefore, actualClosedBefore)
 }
 
 func insertEnterpriseUpstreamSubscription(t *testing.T, ctx context.Context, enterpriseID int64) (int64, int64) {

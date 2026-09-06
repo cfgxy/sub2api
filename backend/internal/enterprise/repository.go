@@ -809,6 +809,7 @@ func (r *Repository) CreateUsageAttribution(
 		 AND api_key.deleted_at IS NULL
 		WHERE usage_log.id = $1
 		FOR UPDATE OF api_key
+		FOR KEY SHARE OF usage_log
 	`, params.UsageLogID).Scan(&apiKeyID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrUsageAttributionMismatch
