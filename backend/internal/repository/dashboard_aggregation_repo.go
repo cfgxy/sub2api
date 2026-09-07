@@ -261,11 +261,16 @@ func (r *dashboardAggregationRepository) cleanupUsageLogsBatches(ctx context.Con
 
 		res, err := r.sql.ExecContext(ctx, `
 			WITH victims AS (
-				SELECT ctid
-				FROM usage_logs
-				WHERE created_at < $1
-				ORDER BY created_at ASC, id ASC
-				LIMIT $2
+					SELECT ctid
+					FROM usage_logs
+					WHERE created_at < $1
+					  AND NOT EXISTS (
+						SELECT 1
+						FROM enterprise_usage_attributions
+						WHERE enterprise_usage_attributions.usage_log_id = usage_logs.id
+					  )
+					ORDER BY created_at ASC, id ASC
+					LIMIT $2
 			)
 			DELETE FROM usage_logs
 			WHERE ctid IN (SELECT ctid FROM victims)
@@ -298,11 +303,16 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB
 	}
 	rows, err := tx.QueryContext(ctx, `
 		WITH victims AS (
-			SELECT ctid
-			FROM usage_logs
-			WHERE created_at < $1
-			ORDER BY created_at ASC, id ASC
-			LIMIT $2
+				SELECT ctid
+				FROM usage_logs
+				WHERE created_at < $1
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM enterprise_usage_attributions
+					WHERE enterprise_usage_attributions.usage_log_id = usage_logs.id
+				  )
+				ORDER BY created_at ASC, id ASC
+				LIMIT $2
 		)
 		DELETE FROM usage_logs
 		WHERE ctid IN (SELECT ctid FROM victims)
@@ -656,10 +666,48 @@ func dropUsageLogsPartitionWithRollupInvalidation(ctx context.Context, db *sql.D
 	if err := lockGroupUsageRollupState(ctx, tx); err != nil {
 		return rollback(err)
 	}
+	partition := pq.QuoteIdentifier(name)
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("LOCK TABLE %s IN EXCLUSIVE MODE", partition)); err != nil {
+		return rollback(err)
+	}
+	var hasAttributedUsage bool
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM %s AS usage_log
+			JOIN enterprise_usage_attributions AS attribution
+			  ON attribution.usage_log_id = usage_log.id
+		)
+	`, partition)).Scan(&hasAttributedUsage); err != nil {
+		return rollback(err)
+	}
+	if hasAttributedUsage {
+		var earliestDeletedAt sql.NullTime
+		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+			WITH deleted AS (
+				DELETE FROM %s AS usage_log
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM enterprise_usage_attributions AS attribution
+					WHERE attribution.usage_log_id = usage_log.id
+				)
+				RETURNING created_at
+			)
+			SELECT MIN(created_at) FROM deleted
+		`, partition)).Scan(&earliestDeletedAt); err != nil {
+			return rollback(err)
+		}
+		if earliestDeletedAt.Valid {
+			if err := invalidateGroupUsageRollupsAt(ctx, tx, earliestDeletedAt.Time); err != nil {
+				return rollback(err)
+			}
+		}
+		return tx.Commit()
+	}
 	if err := invalidateGroupUsageRollupsAt(ctx, tx, monthStart); err != nil {
 		return rollback(err)
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", pq.QuoteIdentifier(name))); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", partition)); err != nil {
 		return rollback(err)
 	}
 	return tx.Commit()
