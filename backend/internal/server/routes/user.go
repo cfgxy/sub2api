@@ -135,6 +135,8 @@ func RegisterUserRoutes(
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
 		}
 
+		RegisterEnterpriseAllocationRoutes(authenticated, h.EnterpriseAllocation)
+
 		// 渠道监控（用户只读）
 		monitors := authenticated.Group("/channel-monitors")
 		{
@@ -155,4 +157,13 @@ func RegisterUserRoutes(
 			monitorV2.GET("/users", h.ChannelMonitorV2.Users)
 		}
 	}
+}
+
+func RegisterEnterpriseAllocationRoutes(
+	authenticated *gin.RouterGroup,
+	h *handler.EnterpriseAllocationHandler,
+) {
+	enterpriseSubscriptions := authenticated.Group("/enterprise/subscriptions")
+	enterpriseSubscriptions.PUT("/:subscription_id/allocations/:employee_id", h.Set)
+	enterpriseSubscriptions.GET("/:subscription_id/allocations/:employee_id", h.Summary)
 }

@@ -18,6 +18,7 @@ import (
 )
 
 type enterpriseFixture struct {
+	enterpriseUserID       int64
 	enterpriseID           int64
 	employeeID             int64
 	secondEmployee         int64
@@ -84,17 +85,10 @@ func TestEnterpriseSchemaConstraints(t *testing.T) {
 		fixture.upstreamSubscriptionID, fixture.groupID)
 }
 
-func TestEnterpriseUsageAttributionUsageLogForeignKeyAndIdempotency(t *testing.T) {
+func TestEnterpriseUsageAttributionSettlementIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
 	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
-
-	expectEnterpriseConstraintName(t, ctx, "enterprise_usage_attributions_usage_log_id_fkey", `
-		INSERT INTO enterprise_usage_attributions (
-			enterprise_id, subscription_id, employee_id, usage_log_id,
-			weekly_window_anchor, classification
-		) VALUES ($1, $2, $3, 999999999, $4, 'employee')
-	`, fixture.enterpriseID, fixture.subscriptionID, fixture.employeeID, fixture.anchor)
 
 	usageID := insertUsageLog(t, ctx, fixture, "0.1000000000")
 	attribution, err := repo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
@@ -120,12 +114,12 @@ func TestEnterpriseUsageAttributionUsageLogForeignKeyAndIdempotency(t *testing.T
 	})
 	require.NoError(t, err)
 	require.Equal(t, attribution.ID, replayed.ID)
-	expectEnterpriseConstraintName(t, ctx, "enterprise_usage_attributions_usage_log_id_key", `
-		INSERT INTO enterprise_usage_attributions (
-			enterprise_id, subscription_id, employee_id, usage_log_id,
-			weekly_window_anchor, classification
-		) VALUES ($1, $2, $3, $4, $5, 'employee')
-	`, fixture.enterpriseID, fixture.subscriptionID, fixture.employeeID, usageID, fixture.anchor)
+	var count int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM enterprise_usage_attributions
+		WHERE usage_log_id = $1 AND window_type = '7d'
+	`, usageID).Scan(&count))
+	require.Equal(t, 1, count)
 }
 
 func TestEnterpriseAllocationRepositoryConcurrentRevision(t *testing.T) {
@@ -259,6 +253,243 @@ func TestEnterpriseAllocationRevisionFailureRollsBackUpdate(t *testing.T) {
 	require.Equal(t, 1, revisionCount)
 }
 
+func TestEnterpriseAllocationEnforcesScopedWindowLimit(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	setEnterpriseAllocationLimits(t, ctx, repo, fixture, "10", "20", "initial caps")
+
+	first, err := repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.employeeID, WindowType: enterprise.WindowType5h,
+		WindowAnchor: fixture.anchor, Amount: "6", Reason: "initial split",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "6.00000000", first.Amount)
+
+	_, err = repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.secondEmployee, WindowType: enterprise.WindowType5h,
+		WindowAnchor: fixture.anchor, Amount: "5", Reason: "would exceed 5h cap",
+	})
+	require.ErrorIs(t, err, enterprise.ErrAllocationLimitExceeded)
+	first, err = repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.employeeID, WindowType: enterprise.WindowType5h,
+		WindowAnchor: fixture.anchor, Amount: "5", ExpectedVersion: first.Version,
+		Reason: "rebalance allocation",
+	})
+	require.NoError(t, err)
+	_, err = repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.secondEmployee, WindowType: enterprise.WindowType5h,
+		WindowAnchor: fixture.anchor, Amount: "5", Reason: "use remaining capacity",
+	})
+	require.NoError(t, err)
+	var revisionReason, revisionActor string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT reason, actor_ref FROM enterprise_allocation_revisions
+		WHERE allocation_id = $1 AND version = 2
+	`, first.ID).Scan(&revisionReason, &revisionActor))
+	require.Equal(t, "rebalance allocation", revisionReason)
+	require.Equal(t, fmt.Sprintf("user:%d", fixture.enterpriseUserID), revisionActor)
+
+	_, err = repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.secondEmployee, WindowType: enterprise.WindowType7d,
+		WindowAnchor: fixture.anchor, Amount: "14", Reason: "independent 7d split",
+	})
+	require.NoError(t, err)
+
+	setEnterpriseAllocationLimits(t, ctx, repo, fixture, "5", "20", "lower 5h cap")
+	first, err = repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.employeeID, WindowType: enterprise.WindowType5h,
+		WindowAnchor: fixture.anchor, Amount: "4", ExpectedVersion: first.Version,
+		Reason: "converge after lower limit",
+	})
+	require.NoError(t, err)
+	_, err = repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.employeeID, WindowType: enterprise.WindowType5h,
+		WindowAnchor: fixture.anchor, Amount: "4", ExpectedVersion: first.Version,
+		Reason: "must strictly decrease while over cap",
+	})
+	require.ErrorIs(t, err, enterprise.ErrAllocationLimitExceeded)
+}
+
+func TestEnterpriseAllocationRejectsCrossScopeAndInvalidInput(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	other := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	setEnterpriseAllocationLimits(t, ctx, repo, fixture, "10", "20", "scope caps")
+
+	base := enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+		SubscriptionID: fixture.subscriptionID, EmployeeID: fixture.employeeID,
+		WindowType: enterprise.WindowType7d, WindowAnchor: fixture.anchor,
+		Amount: "1", Reason: "scope test",
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*enterprise.SetAllocationParams)
+		target error
+	}{
+		"cross enterprise user": {func(p *enterprise.SetAllocationParams) { p.RequesterUserID = other.enterpriseUserID }, enterprise.ErrEnterpriseAccessDenied},
+		"cross subscription":    {func(p *enterprise.SetAllocationParams) { p.SubscriptionID = other.subscriptionID }, enterprise.ErrEnterpriseAccessDenied},
+		"cross employee":        {func(p *enterprise.SetAllocationParams) { p.EmployeeID = other.employeeID }, enterprise.ErrEnterpriseAccessDenied},
+		"invalid window":        {func(p *enterprise.SetAllocationParams) { p.WindowType = "1d" }, enterprise.ErrInvalidWindowType},
+		"noncanonical anchor":   {func(p *enterprise.SetAllocationParams) { p.WindowAnchor = p.WindowAnchor.Add(time.Second) }, enterprise.ErrInvalidWindowAnchor},
+		"negative":              {func(p *enterprise.SetAllocationParams) { p.Amount = "-1" }, enterprise.ErrInvalidAmount},
+		"reason":                {func(p *enterprise.SetAllocationParams) { p.Reason = " " }, enterprise.ErrReasonRequired},
+	} {
+		t.Run(name, func(t *testing.T) {
+			params := base
+			tc.mutate(&params)
+			_, setErr := repo.SetAllocation(ctx, params)
+			require.ErrorIs(t, setErr, tc.target)
+		})
+	}
+}
+
+func TestEnterpriseAllocationConcurrentEmployeesCannotOverallocate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	setEnterpriseAllocationLimits(t, ctx, repo, fixture, "10", "20", "concurrent caps")
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, employeeID := range []int64{fixture.employeeID, fixture.secondEmployee} {
+		employeeID := employeeID
+		go func() {
+			<-start
+			_, setErr := repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+				RequesterUserID: fixture.enterpriseUserID,
+				EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+				EmployeeID: employeeID, WindowType: enterprise.WindowType5h,
+				WindowAnchor: fixture.anchor, Amount: "6", Reason: "concurrent split",
+			})
+			results <- setErr
+		}()
+	}
+	close(start)
+
+	var succeeded, rejected int
+	for range 2 {
+		switch setErr := <-results; {
+		case setErr == nil:
+			succeeded++
+		case errors.Is(setErr, enterprise.ErrAllocationLimitExceeded):
+			rejected++
+		default:
+			require.NoError(t, setErr)
+		}
+	}
+	require.Equal(t, 1, succeeded)
+	require.Equal(t, 1, rejected)
+
+	var total string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(amount), 0)::text
+		FROM enterprise_weekly_allocations
+		WHERE enterprise_id = $1 AND subscription_id = $2
+		  AND window_type = '5h' AND window_anchor = $3
+	`, fixture.enterpriseID, fixture.subscriptionID, fixture.anchor).Scan(&total))
+	require.Equal(t, "6.00000000", total)
+}
+
+func TestEnterpriseAllocationWindowUsageSurvivesRotationAndDelayedBilling(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	setEnterpriseAllocationLimits(t, ctx, repo, fixture, "10", "20", "usage caps")
+	allocation, err := repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+		SubscriptionID: fixture.subscriptionID, EmployeeID: fixture.employeeID,
+		WindowType: enterprise.WindowType5h, WindowAnchor: fixture.anchor,
+		Amount: "5", Reason: "usage window",
+	})
+	require.NoError(t, err)
+
+	var usageID int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT nextval('usage_logs_id_seq')`).Scan(&usageID))
+	requestAt := fixture.anchor.Add(time.Hour)
+	attributions, err := repo.CreateUsageAttributionSnapshot(ctx, enterprise.CreateUsageAttributionSnapshotParams{
+		RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+		SubscriptionID: fixture.subscriptionID, EmployeeID: &fixture.employeeID,
+		APIKeyID: fixture.apiKeyID, UsageLogID: usageID,
+		UpstreamSubscriptionID: fixture.upstreamSubscriptionID,
+		RequestAt:              requestAt, Classification: "employee",
+	})
+	require.NoError(t, err)
+	require.Len(t, attributions, 2)
+	replayed, err := repo.CreateUsageAttributionSnapshot(ctx, enterprise.CreateUsageAttributionSnapshotParams{
+		RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+		SubscriptionID: fixture.subscriptionID, EmployeeID: &fixture.employeeID,
+		APIKeyID: fixture.apiKeyID, UsageLogID: usageID,
+		UpstreamSubscriptionID: fixture.upstreamSubscriptionID,
+		RequestAt:              requestAt, Classification: "employee",
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int64{attributions[0].ID, attributions[1].ID}, []int64{replayed[0].ID, replayed[1].ID})
+	_, err = repo.CreateUsageAttributionSnapshot(ctx, enterprise.CreateUsageAttributionSnapshotParams{
+		RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+		SubscriptionID: fixture.subscriptionID, EmployeeID: &fixture.employeeID,
+		APIKeyID: fixture.apiKeyID, UsageLogID: usageID,
+		UpstreamSubscriptionID: fixture.upstreamSubscriptionID,
+		RequestAt:              requestAt.Add(time.Second), Classification: "employee",
+	})
+	require.ErrorIs(t, err, enterprise.ErrUsageAttributionMismatch)
+	newKeyID := insertAPIKeyForUser(t, ctx, fixture.enterpriseUserID, fixture.groupID, fmt.Sprintf("rotation-%d", time.Now().UnixNano()))
+	_, err = integrationDB.ExecContext(ctx, `
+		UPDATE enterprise_key_assignments SET status = 'ended', ended_at = $2 WHERE api_key_id = $1 AND status = 'active'
+	`, fixture.apiKeyID, fixture.anchor.Add(2*time.Hour))
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, `
+		INSERT INTO usage_logs (
+			id, user_id, api_key_id, account_id, subscription_id, model, actual_cost, created_at
+		) VALUES ($1, $2, $3, $4, $5, 'enterprise-delayed-test', 2.5, $6)
+	`, usageID, fixture.enterpriseUserID, fixture.apiKeyID, fixture.accountID,
+		fixture.upstreamSubscriptionID, fixture.anchor.Add(6*time.Hour))
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, `
+		INSERT INTO enterprise_key_assignments (
+			enterprise_id, employee_id, api_key_id, upstream_user_subscription_id,
+			upstream_group_id, generation, status, actor_ref, assigned_at
+		) VALUES ($1, $2, $3, $4, $5, 1, 'active', 'test:rotation', $6)
+	`, fixture.enterpriseID, fixture.employeeID, newKeyID, fixture.upstreamSubscriptionID,
+		fixture.groupID, fixture.anchor.Add(2*time.Hour))
+	require.NoError(t, err)
+
+	summary, err := repo.GetAllocationUsageSummary(ctx, enterprise.AllocationUsageSummaryQuery{
+		RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+		SubscriptionID: fixture.subscriptionID, EmployeeID: fixture.employeeID,
+		WindowType: enterprise.WindowType5h, WindowAnchor: fixture.anchor,
+	})
+	require.NoError(t, err)
+	require.Equal(t, allocation.Amount, summary.Allocation)
+	require.Equal(t, "2.50000000", summary.ActualCost)
+
+	var storedGeneration int64
+	var storedRequestAt time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT assignment_generation, request_at
+		FROM enterprise_usage_attributions
+		WHERE usage_log_id = $1 AND window_type = '5h'
+	`, usageID).Scan(&storedGeneration, &storedRequestAt))
+	require.Equal(t, int64(1), storedGeneration)
+	require.Equal(t, requestAt, storedRequestAt)
+}
+
 func TestEnterpriseAllocationUsageSummaryAddsDecimalsWithoutFloatDrift(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
@@ -276,12 +507,11 @@ func TestEnterpriseAllocationUsageSummaryAddsDecimalsWithoutFloatDrift(t *testin
 
 	for _, actualCost := range []string{"0.1000000000", "0.2000000000"} {
 		usageLogID := insertUsageLog(t, ctx, fixture, actualCost)
-		_, err = integrationDB.ExecContext(ctx, `
-			INSERT INTO enterprise_usage_attributions (
-				enterprise_id, subscription_id, employee_id, usage_log_id,
-				weekly_window_anchor, classification
-			) VALUES ($1, $2, $3, $4, $5, 'employee')
-		`, fixture.enterpriseID, fixture.subscriptionID, fixture.employeeID, usageLogID, fixture.anchor)
+		_, err = repo.CreateUsageAttribution(ctx, enterprise.CreateUsageAttributionParams{
+			EnterpriseID: fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+			EmployeeID: &fixture.employeeID, UsageLogID: usageLogID,
+			WeeklyWindowAnchor: fixture.anchor, Classification: "employee",
+		})
 		require.NoError(t, err)
 	}
 
@@ -405,6 +635,7 @@ func seedEnterpriseFixture(t *testing.T, ctx context.Context) enterpriseFixture 
 	})
 
 	return enterpriseFixture{
+		enterpriseUserID:       userID,
 		enterpriseID:           enterpriseID,
 		employeeID:             employeeID,
 		secondEmployee:         secondEmployeeID,
@@ -481,6 +712,21 @@ func insertAPIKeyForUser(t *testing.T, ctx context.Context, userID, groupID int6
 
 func insertUsageLog(t *testing.T, ctx context.Context, fixture enterpriseFixture, actualCost string) int64 {
 	return insertUsageLogForSubscription(t, ctx, fixture, fixture.upstreamSubscriptionID, actualCost)
+}
+
+func setEnterpriseAllocationLimits(
+	t *testing.T,
+	ctx context.Context,
+	repo *enterprise.Repository,
+	fixture enterpriseFixture,
+	limit5h, limit7d, reason string,
+) {
+	t.Helper()
+	require.NoError(t, repo.SetAllocationLimits(ctx, enterprise.SetAllocationLimitsParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		WindowAnchor: fixture.anchor, Limit5h: limit5h, Limit7d: limit7d, Reason: reason,
+	}))
 }
 
 func insertUsageLogForSubscription(

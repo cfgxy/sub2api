@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -16,6 +19,86 @@ import (
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEnterprise237RollbackFailsClosedWith5hState(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_subscription_allocations.sql")))
+	seedEnterprise237MigrationAllocation(t, ctx, db, "5h")
+
+	_, err := db.ExecContext(ctx, readEnterprise237Rollback(t))
+	require.ErrorContains(t, err, "cannot rollback SHAN-154 while 5h allocation state exists")
+}
+
+func TestEnterprise237RollbackRestoresPure7dSchemaAndData(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_subscription_allocations.sql")))
+	allocationID := seedEnterprise237MigrationAllocation(t, ctx, db, "7d")
+
+	_, err := db.ExecContext(ctx, readEnterprise237Rollback(t))
+	require.NoError(t, err)
+	var legacyAnchorExists, windowTypeExists bool
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'enterprise_weekly_allocations'
+			  AND column_name = 'weekly_window_anchor'
+		), EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'enterprise_weekly_allocations'
+			  AND column_name = 'window_type'
+		)
+	`).Scan(&legacyAnchorExists, &windowTypeExists))
+	require.True(t, legacyAnchorExists)
+	require.False(t, windowTypeExists)
+	var amount string
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT amount::text FROM enterprise_weekly_allocations WHERE id = $1", allocationID).Scan(&amount))
+	require.Equal(t, "3.00000000", amount)
+}
+
+func seedEnterprise237MigrationAllocation(t *testing.T, ctx context.Context, db *sql.DB, windowType string) int64 {
+	t.Helper()
+	anchor := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	var userID, groupID, upstreamSubscriptionID, enterpriseID, employeeID, subscriptionID, allocationID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+		fmt.Sprintf("shan154-migration-%d@example.com", time.Now().UnixNano())).Scan(&userID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO groups (name) VALUES ($1) RETURNING id",
+		fmt.Sprintf("shan154-migration-%d", time.Now().UnixNano())).Scan(&groupID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO user_subscriptions (user_id, group_id, starts_at, expires_at, status, weekly_window_start)
+		VALUES ($1, $2, $3::timestamptz, $3::timestamptz + INTERVAL '1 year', 'active', $3::timestamptz) RETURNING id
+	`, userID, groupID, anchor).Scan(&upstreamSubscriptionID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO enterprises (name, dedicated_upstream_user_id) VALUES ('Migration Test', $1) RETURNING id",
+		userID).Scan(&enterpriseID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO enterprise_employees (enterprise_id, email) VALUES ($1, $2) RETURNING id",
+		enterpriseID, fmt.Sprintf("employee-%d@example.com", time.Now().UnixNano())).Scan(&employeeID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprise_subscriptions (
+			enterprise_id, upstream_user_subscription_id, status, observed_weekly_window_start, activated_at, actor_ref
+		) VALUES ($1, $2, 'active', $3, $3, 'test:migration') RETURNING id
+	`, enterpriseID, upstreamSubscriptionID, anchor).Scan(&subscriptionID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprise_weekly_allocations (
+			enterprise_id, subscription_id, window_type, window_anchor, employee_id, amount
+		) VALUES ($1, $2, $3, $4, $5, 3) RETURNING id
+	`, enterpriseID, subscriptionID, windowType, anchor, employeeID).Scan(&allocationID))
+	return allocationID
+}
+
+func readEnterprise237Rollback(t *testing.T) string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "migrations", "rollback", "237_enterprise_subscription_allocations.sql"))
+	require.NoError(t, err)
+	return string(content)
+}
 
 var enterprise235TriggerNames = []string{
 	"validate_enterprise_subscription_owner",

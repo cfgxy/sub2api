@@ -8,6 +8,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/enterprise"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
@@ -105,6 +106,7 @@ var ProviderSet = wire.NewSet(
 	NewAffiliateRepository,
 	NewUserPlatformQuotaRepository,     // T14: user × platform quota
 	NewUserPlatformQuotaServiceAdapter, // T14: adapter → service.UserPlatformQuotaRepository
+	ProvideEnterpriseRepository,
 
 	// Cache implementations
 	NewGatewayCache,
@@ -169,6 +171,10 @@ var ProviderSet = wire.NewSet(
 	ProvideSQLDB,
 	ProvideRedis,
 )
+
+func ProvideEnterpriseRepository(db *sql.DB, apiKeyService *service.APIKeyService) *enterprise.Repository {
+	return enterprise.NewRepository(db, apiKeyService)
+}
 
 // ProvideEnt 为依赖注入提供 Ent 客户端。
 //

@@ -5,20 +5,31 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
 
 var (
-	ErrAllocationVersionConflict = errors.New("enterprise allocation version conflict")
-	ErrActorRefRequired          = errors.New("enterprise actor ref is required")
-	ErrReasonRequired            = errors.New("enterprise allocation reason is required")
-	ErrEnterpriseOwnership       = errors.New("enterprise upstream ownership mismatch")
-	ErrObservedWindowConflict    = errors.New("enterprise observed window conflict")
-	ErrObservedWindowMismatch    = errors.New("enterprise observed window does not match upstream")
-	ErrKeyGenerationRevoked      = errors.New("enterprise api key generation was revoked")
-	ErrKeyAlreadyAssigned        = errors.New("enterprise api key is assigned to another employee")
-	ErrUsageAttributionMismatch  = errors.New("enterprise usage attribution snapshot mismatch")
+	ErrAllocationVersionConflict  = errors.New("enterprise allocation version conflict")
+	ErrActorRefRequired           = errors.New("enterprise actor ref is required")
+	ErrReasonRequired             = errors.New("enterprise allocation reason is required")
+	ErrEnterpriseOwnership        = errors.New("enterprise upstream ownership mismatch")
+	ErrObservedWindowConflict     = errors.New("enterprise observed window conflict")
+	ErrObservedWindowMismatch     = errors.New("enterprise observed window does not match upstream")
+	ErrKeyGenerationRevoked       = errors.New("enterprise api key generation was revoked")
+	ErrKeyAlreadyAssigned         = errors.New("enterprise api key is assigned to another employee")
+	ErrUsageAttributionMismatch   = errors.New("enterprise usage attribution snapshot mismatch")
+	ErrInvalidWindowType          = errors.New("invalid enterprise allocation window type")
+	ErrInvalidWindowAnchor        = errors.New("invalid enterprise allocation window anchor")
+	ErrEnterpriseAccessDenied     = errors.New("enterprise allocation access denied")
+	ErrAllocationLimitUnavailable = errors.New("enterprise allocation limit is unavailable")
+	ErrAllocationLimitExceeded    = errors.New("enterprise allocation limit exceeded")
+)
+
+const (
+	WindowType5h = "5h"
+	WindowType7d = "7d"
 )
 
 type Repository struct {
@@ -31,15 +42,17 @@ type AuthCacheInvalidator interface {
 }
 
 type Allocation struct {
-	ID                 int64
-	EnterpriseID       int64
-	SubscriptionID     int64
-	WeeklyWindowAnchor time.Time
-	EmployeeID         int64
-	Amount             string
-	Version            int64
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                 int64     `json:"id"`
+	EnterpriseID       int64     `json:"enterprise_id"`
+	SubscriptionID     int64     `json:"subscription_id"`
+	WeeklyWindowAnchor time.Time `json:"-"`
+	WindowType         string    `json:"window_type"`
+	WindowAnchor       time.Time `json:"window_anchor"`
+	EmployeeID         int64     `json:"employee_id"`
+	Amount             string    `json:"amount"`
+	Version            int64     `json:"version"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type CreateAllocationParams struct {
@@ -61,17 +74,42 @@ type ReviseAllocationParams struct {
 }
 
 type AllocationUsageSummaryQuery struct {
+	RequesterUserID    int64
 	EnterpriseID       int64
 	SubscriptionID     int64
 	WeeklyWindowAnchor time.Time
 	EmployeeID         int64
+	WindowType         string
+	WindowAnchor       time.Time
+}
+
+type SetAllocationParams struct {
+	RequesterUserID int64
+	EnterpriseID    int64
+	SubscriptionID  int64
+	EmployeeID      int64
+	WindowType      string
+	WindowAnchor    time.Time
+	Amount          string
+	ExpectedVersion int64
+	Reason          string
+}
+
+type SetAllocationLimitsParams struct {
+	RequesterUserID int64
+	EnterpriseID    int64
+	SubscriptionID  int64
+	WindowAnchor    time.Time
+	Limit5h         string
+	Limit7d         string
+	Reason          string
 }
 
 type AllocationUsageSummary struct {
-	Allocation string
-	ActualCost string
-	Remaining  string
-	Overage    string
+	Allocation string `json:"allocation"`
+	ActualCost string `json:"actual_cost"`
+	Remaining  string `json:"remaining"`
+	Overage    string `json:"overage"`
 }
 
 type ReplaceScheduledSubscriptionParams struct {
@@ -132,15 +170,32 @@ type CreateUsageAttributionParams struct {
 	Classification     string
 }
 
+type CreateUsageAttributionSnapshotParams struct {
+	RequesterUserID        int64
+	EnterpriseID           int64
+	SubscriptionID         int64
+	EmployeeID             *int64
+	APIKeyID               int64
+	UsageLogID             int64
+	UpstreamSubscriptionID int64
+	RequestAt              time.Time
+	Classification         string
+}
+
 type UsageAttribution struct {
-	ID                 int64
-	EnterpriseID       int64
-	SubscriptionID     int64
-	EmployeeID         *int64
-	UsageLogID         int64
-	WeeklyWindowAnchor time.Time
-	Classification     string
-	CreatedAt          time.Time
+	ID                   int64
+	EnterpriseID         int64
+	SubscriptionID       int64
+	EmployeeID           *int64
+	APIKeyID             int64
+	UsageLogID           int64
+	AssignmentGeneration int64
+	WindowType           string
+	WindowAnchor         time.Time
+	WeeklyWindowAnchor   time.Time
+	RequestAt            time.Time
+	Classification       string
+	CreatedAt            time.Time
 }
 
 type AllocationRevision struct {
@@ -171,6 +226,234 @@ func NewRepository(db *sql.DB, authCacheInvalidator AuthCacheInvalidator) *Repos
 	return &Repository{db: db, authCacheInvalidator: authCacheInvalidator}
 }
 
+func ValidateAllocationWindow(windowType string, windowAnchor time.Time) error {
+	if windowType != WindowType5h && windowType != WindowType7d {
+		return ErrInvalidWindowType
+	}
+	if windowAnchor.IsZero() {
+		return ErrInvalidWindowAnchor
+	}
+	return nil
+}
+
+func (r *Repository) SetAllocationLimits(ctx context.Context, params SetAllocationLimitsParams) error {
+	reason, err := NormalizeAllocationReason(params.Reason)
+	if err != nil {
+		return err
+	}
+	limit5h, err := NormalizeAmount(params.Limit5h)
+	if err != nil {
+		return err
+	}
+	limit7d, err := NormalizeAmount(params.Limit7d)
+	if err != nil {
+		return err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var windowID int64
+	if err = tx.QueryRowContext(ctx, `
+		UPDATE enterprise_subscription_windows AS subscription_window
+		SET allocation_limit_5h = $1::numeric,
+		    allocation_limit_7d = $2::numeric,
+		    allocation_limit_reason = $3,
+		    allocation_limit_actor_ref = $4
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN enterprises AS enterprise ON enterprise.id = enterprise_subscription.enterprise_id
+		WHERE subscription_window.enterprise_id = $5
+		  AND subscription_window.subscription_id = $6
+		  AND subscription_window.window_start = $7
+		  AND enterprise_subscription.id = subscription_window.subscription_id
+		  AND enterprise_subscription.enterprise_id = subscription_window.enterprise_id
+		  AND enterprise.dedicated_upstream_user_id = $8
+		RETURNING subscription_window.id
+	`, limit5h, limit7d, reason, fmt.Sprintf("user:%d", params.RequesterUserID),
+		params.EnterpriseID, params.SubscriptionID, params.WindowAnchor.UTC(), params.RequesterUserID).Scan(&windowID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEnterpriseAccessDenied
+		}
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"window_anchor": params.WindowAnchor.UTC(),
+		"limit_5h":      limit5h,
+		"limit_7d":      limit7d,
+		"reason":        reason,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (
+			enterprise_id, event_type, entity_type, entity_id, payload, actor_ref
+		) VALUES ($1, 'allocation.limits_changed', 'enterprise_subscription_window', $2, $3::jsonb, $4)
+	`, params.EnterpriseID, windowID, payload, fmt.Sprintf("user:%d", params.RequesterUserID)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationParams) (*Allocation, error) {
+	var err error
+	params.Reason, err = NormalizeAllocationReason(params.Reason)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateAllocationWindow(params.WindowType, params.WindowAnchor); err != nil {
+		return nil, err
+	}
+	amount, err := NormalizeAmount(params.Amount)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var limit string
+	var canonicalAnchor time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT CASE $1::text
+			WHEN '5h' THEN subscription_window.allocation_limit_5h::text
+			WHEN '7d' THEN subscription_window.allocation_limit_7d::text
+		END,
+		CASE $1::text
+			WHEN '5h' THEN subscription_window.window_start
+				+ FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - subscription_window.window_start)) / 18000)
+				  * INTERVAL '5 hours'
+			WHEN '7d' THEN subscription_window.window_start
+		END
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN enterprises AS enterprise
+		  ON enterprise.id = enterprise_subscription.enterprise_id
+		JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		JOIN enterprise_subscription_windows AS subscription_window
+		  ON subscription_window.enterprise_id = enterprise_subscription.enterprise_id
+		 AND subscription_window.subscription_id = enterprise_subscription.id
+		 AND subscription_window.observed_weekly_window_start = enterprise_subscription.observed_weekly_window_start
+		 AND CURRENT_TIMESTAMP >= subscription_window.window_start
+		 AND CURRENT_TIMESTAMP < subscription_window.window_end
+		JOIN enterprise_employees AS employee
+		  ON employee.enterprise_id = enterprise_subscription.enterprise_id
+		 AND employee.id = $5
+		 AND employee.status = 'active'
+		WHERE enterprise_subscription.enterprise_id = $2
+		  AND enterprise_subscription.id = $3
+		  AND enterprise.dedicated_upstream_user_id = $4
+		  AND enterprise.status = 'active'
+		FOR UPDATE OF enterprise_subscription, subscription_window
+	`, params.WindowType, params.EnterpriseID, params.SubscriptionID,
+		params.RequesterUserID, params.EmployeeID).Scan(&limit, &canonicalAnchor)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEnterpriseAccessDenied
+	}
+	if err != nil {
+		return nil, err
+	}
+	canonicalAnchor = canonicalAnchor.UTC()
+	if !params.WindowAnchor.UTC().Equal(canonicalAnchor) {
+		return nil, ErrInvalidWindowAnchor
+	}
+
+	var allowed bool
+	if err = tx.QueryRowContext(ctx, `
+		WITH totals AS (
+			SELECT COALESCE(SUM(amount), 0) AS current_total,
+			       COALESCE(SUM(amount) FILTER (WHERE employee_id <> $7), 0) + $2::numeric AS proposed_total
+			FROM enterprise_weekly_allocations
+			WHERE enterprise_id = $3
+			  AND subscription_id = $4
+			  AND window_type = $5
+			  AND window_anchor = $6
+		)
+		SELECT $1::numeric > 0 AND (
+			proposed_total <= $1::numeric
+			OR (current_total > $1::numeric AND proposed_total < current_total)
+		)
+		FROM totals
+	`, limit, amount, params.EnterpriseID, params.SubscriptionID,
+		params.WindowType, canonicalAnchor, params.EmployeeID).Scan(&allowed); err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrAllocationLimitExceeded
+	}
+
+	allocation := &Allocation{}
+	var previousAmount sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, amount::text, version, created_at, updated_at
+		FROM enterprise_weekly_allocations
+		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
+		  AND window_type = $4 AND window_anchor = $5
+		FOR UPDATE
+	`, params.EnterpriseID, params.SubscriptionID, params.EmployeeID,
+		params.WindowType, canonicalAnchor).Scan(
+		&allocation.ID, &previousAmount, &allocation.Version, &allocation.CreatedAt, &allocation.UpdatedAt,
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if params.ExpectedVersion != 0 {
+			return nil, ErrAllocationVersionConflict
+		}
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO enterprise_weekly_allocations (
+				enterprise_id, subscription_id, employee_id, window_type, window_anchor, amount, version
+			) VALUES ($1, $2, $3, $4, $5, $6::numeric, 1)
+			RETURNING id, version, created_at, updated_at
+		`, params.EnterpriseID, params.SubscriptionID, params.EmployeeID, params.WindowType,
+			canonicalAnchor, amount).Scan(
+			&allocation.ID, &allocation.Version, &allocation.CreatedAt, &allocation.UpdatedAt,
+		)
+	case err != nil:
+		return nil, err
+	case allocation.Version != params.ExpectedVersion:
+		return nil, ErrAllocationVersionConflict
+	default:
+		err = tx.QueryRowContext(ctx, `
+			UPDATE enterprise_weekly_allocations
+			SET amount = $1::numeric, version = version + 1, updated_at = NOW()
+			WHERE id = $2 AND version = $3
+			RETURNING version, updated_at
+		`, amount, allocation.ID, params.ExpectedVersion).Scan(&allocation.Version, &allocation.UpdatedAt)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	allocation.EnterpriseID = params.EnterpriseID
+	allocation.SubscriptionID = params.SubscriptionID
+	allocation.EmployeeID = params.EmployeeID
+	allocation.WindowType = params.WindowType
+	allocation.WindowAnchor = canonicalAnchor
+	allocation.WeeklyWindowAnchor = allocation.WindowAnchor
+	allocation.Amount = amount
+	actorRef := fmt.Sprintf("user:%d", params.RequesterUserID)
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO enterprise_allocation_revisions (
+			enterprise_id, allocation_id, version, previous_amount, new_amount, reason, actor_ref
+		) VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6, $7)
+	`, allocation.EnterpriseID, allocation.ID, allocation.Version, previousAmount,
+		allocation.Amount, params.Reason, actorRef); err != nil {
+		return nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return allocation, nil
+}
+
 func (r *Repository) CreateAllocation(ctx context.Context, params CreateAllocationParams) (*Allocation, error) {
 	params.ActorRef = strings.TrimSpace(params.ActorRef)
 	if params.ActorRef == "" {
@@ -193,10 +476,10 @@ func (r *Repository) CreateAllocation(ctx context.Context, params CreateAllocati
 
 	allocation := &Allocation{}
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO enterprise_weekly_allocations (
-			enterprise_id, subscription_id, weekly_window_anchor, employee_id, amount, version
-		) VALUES ($1, $2, $3, $4, $5::numeric, 1)
-		RETURNING id, enterprise_id, subscription_id, weekly_window_anchor, employee_id,
+			INSERT INTO enterprise_weekly_allocations (
+				enterprise_id, subscription_id, window_type, window_anchor, employee_id, amount, version
+			) VALUES ($1, $2, '7d', $3, $4, $5::numeric, 1)
+			RETURNING id, enterprise_id, subscription_id, window_anchor, employee_id,
 		          amount::text, version, created_at, updated_at
 	`, params.EnterpriseID, params.SubscriptionID, params.WeeklyWindowAnchor, params.EmployeeID, amount).Scan(
 		&allocation.ID,
@@ -250,7 +533,7 @@ func (r *Repository) ReviseAllocation(ctx context.Context, params ReviseAllocati
 	allocation := &Allocation{}
 	var previousAmount string
 	err = tx.QueryRowContext(ctx, `
-		SELECT id, enterprise_id, subscription_id, weekly_window_anchor, employee_id,
+			SELECT id, enterprise_id, subscription_id, window_anchor, employee_id,
 		       amount::text, version, created_at, updated_at
 		FROM enterprise_weekly_allocations
 		WHERE id = $1
@@ -282,7 +565,7 @@ func (r *Repository) ReviseAllocation(ctx context.Context, params ReviseAllocati
 		    version = version + 1,
 		    updated_at = NOW()
 		WHERE id = $2 AND version = $3
-		RETURNING id, enterprise_id, subscription_id, weekly_window_anchor, employee_id,
+			RETURNING id, enterprise_id, subscription_id, window_anchor, employee_id,
 		          amount::text, version, created_at, updated_at
 	`, amount, params.AllocationID, params.ExpectedVersion).Scan(
 		&allocation.ID,
@@ -317,17 +600,34 @@ func (r *Repository) ReviseAllocation(ctx context.Context, params ReviseAllocati
 }
 
 func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query AllocationUsageSummaryQuery) (*AllocationUsageSummary, error) {
+	if query.WindowType == "" {
+		query.WindowType = WindowType7d
+		query.WindowAnchor = query.WeeklyWindowAnchor
+	}
+	if err := ValidateAllocationWindow(query.WindowType, query.WindowAnchor); err != nil {
+		return nil, err
+	}
 	summary := &AllocationUsageSummary{}
 	err := r.db.QueryRowContext(ctx, `
 		WITH usage_total AS (
-			SELECT COALESCE(SUM(usage_logs.actual_cost), 0)::NUMERIC(20,8) AS actual_cost
-			FROM enterprise_usage_attributions
-			JOIN usage_logs ON usage_logs.id = enterprise_usage_attributions.usage_log_id
-			WHERE enterprise_usage_attributions.enterprise_id = $1
-			  AND enterprise_usage_attributions.subscription_id = $2
-			  AND enterprise_usage_attributions.weekly_window_anchor = $3
-			  AND enterprise_usage_attributions.employee_id = $4
-			  AND enterprise_usage_attributions.classification = 'employee'
+			SELECT COALESCE(SUM(usage_log.actual_cost), 0)::NUMERIC(20,8) AS actual_cost
+			FROM enterprise_usage_attributions AS attribution
+			JOIN enterprise_subscriptions AS subscription
+			  ON subscription.enterprise_id = attribution.enterprise_id
+			 AND subscription.id = attribution.subscription_id
+			JOIN enterprises AS enterprise
+			  ON enterprise.id = attribution.enterprise_id
+			JOIN usage_logs AS usage_log
+			  ON usage_log.id = attribution.usage_log_id
+			 AND usage_log.api_key_id = attribution.api_key_id
+			 AND usage_log.user_id = enterprise.dedicated_upstream_user_id
+			 AND usage_log.subscription_id = subscription.upstream_user_subscription_id
+			WHERE attribution.enterprise_id = $1
+			  AND attribution.subscription_id = $2
+			  AND attribution.window_anchor = $3
+			  AND attribution.employee_id = $4
+			  AND attribution.window_type = $5
+			  AND attribution.classification = 'employee'
 		)
 		SELECT allocation.amount::text,
 		       usage_total.actual_cost::text,
@@ -337,9 +637,15 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 		CROSS JOIN usage_total
 		WHERE allocation.enterprise_id = $1
 		  AND allocation.subscription_id = $2
-		  AND allocation.weekly_window_anchor = $3
+		  AND allocation.window_anchor = $3
 		  AND allocation.employee_id = $4
-	`, query.EnterpriseID, query.SubscriptionID, query.WeeklyWindowAnchor, query.EmployeeID).Scan(
+		  AND allocation.window_type = $5
+		  AND ($6 = 0 OR EXISTS (
+				SELECT 1 FROM enterprises
+				WHERE id = $1 AND dedicated_upstream_user_id = $6 AND status = 'active'
+		  ))
+	`, query.EnterpriseID, query.SubscriptionID, query.WindowAnchor.UTC(), query.EmployeeID,
+		query.WindowType, query.RequesterUserID).Scan(
 		&summary.Allocation,
 		&summary.ActualCost,
 		&summary.Remaining,
@@ -790,6 +1096,115 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 	return nil
 }
 
+func (r *Repository) CreateUsageAttributionSnapshot(
+	ctx context.Context,
+	params CreateUsageAttributionSnapshotParams,
+) ([]UsageAttribution, error) {
+	if params.Classification != "employee" || params.EmployeeID == nil || params.RequestAt.IsZero() {
+		return nil, ErrUsageAttributionMismatch
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var generation int64
+	var anchor5h, anchor7d time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT assignment.generation,
+		       subscription_window.window_start
+		         + FLOOR(EXTRACT(EPOCH FROM ($7::timestamptz - subscription_window.window_start)) / 18000)
+		           * INTERVAL '5 hours',
+		       subscription_window.window_start
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN enterprises AS enterprise
+		  ON enterprise.id = enterprise_subscription.enterprise_id
+		 AND enterprise.dedicated_upstream_user_id = $6
+		 AND enterprise.status = 'active'
+		JOIN enterprise_subscription_windows AS subscription_window
+		  ON subscription_window.enterprise_id = enterprise_subscription.enterprise_id
+		 AND subscription_window.subscription_id = enterprise_subscription.id
+		 AND subscription_window.observed_weekly_window_start = enterprise_subscription.observed_weekly_window_start
+		 AND $7::timestamptz >= subscription_window.window_start
+		 AND $7::timestamptz < subscription_window.window_end
+		JOIN enterprise_key_assignments AS assignment
+		  ON assignment.enterprise_id = enterprise_subscription.enterprise_id
+		 AND assignment.employee_id = $3
+		 AND assignment.api_key_id = $4
+		 AND assignment.upstream_user_subscription_id = $5
+		 AND assignment.assigned_at <= $7::timestamptz
+		 AND (assignment.ended_at IS NULL OR $7::timestamptz < assignment.ended_at)
+		WHERE enterprise_subscription.enterprise_id = $1
+		  AND enterprise_subscription.id = $2
+		  AND enterprise_subscription.upstream_user_subscription_id = $5
+		FOR KEY SHARE OF enterprise_subscription, subscription_window, assignment
+	`, params.EnterpriseID, params.SubscriptionID, *params.EmployeeID, params.APIKeyID,
+		params.UpstreamSubscriptionID, params.RequesterUserID, params.RequestAt.UTC()).Scan(
+		&generation, &anchor5h, &anchor7d,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUsageAttributionMismatch
+		}
+		return nil, err
+	}
+
+	anchors := []struct {
+		windowType string
+		anchor     time.Time
+	}{{WindowType5h, anchor5h.UTC()}, {WindowType7d, anchor7d.UTC()}}
+	attributions := make([]UsageAttribution, 0, len(anchors))
+	for _, window := range anchors {
+		attribution := UsageAttribution{}
+		var employeeID sql.NullInt64
+		err = tx.QueryRowContext(ctx, `
+				INSERT INTO enterprise_usage_attributions (
+					enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+					assignment_generation, window_type, window_anchor, request_at, classification
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'employee')
+				ON CONFLICT (usage_log_id, window_type) DO NOTHING
+				RETURNING id, enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+			          assignment_generation, window_type, window_anchor, request_at, classification, created_at
+		`, params.EnterpriseID, params.SubscriptionID, params.EmployeeID, params.APIKeyID,
+			params.UsageLogID, generation, window.windowType, window.anchor, params.RequestAt.UTC()).Scan(
+			&attribution.ID, &attribution.EnterpriseID, &attribution.SubscriptionID, &employeeID,
+			&attribution.APIKeyID, &attribution.UsageLogID, &attribution.AssignmentGeneration,
+			&attribution.WindowType, &attribution.WindowAnchor, &attribution.RequestAt,
+			&attribution.Classification, &attribution.CreatedAt,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRowContext(ctx, `
+					SELECT id, enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+					       assignment_generation, window_type, window_anchor, request_at, classification, created_at
+					FROM enterprise_usage_attributions
+					WHERE usage_log_id = $1 AND window_type = $2
+				`, params.UsageLogID, window.windowType).Scan(
+				&attribution.ID, &attribution.EnterpriseID, &attribution.SubscriptionID, &employeeID,
+				&attribution.APIKeyID, &attribution.UsageLogID, &attribution.AssignmentGeneration,
+				&attribution.WindowType, &attribution.WindowAnchor, &attribution.RequestAt,
+				&attribution.Classification, &attribution.CreatedAt,
+			)
+			if err == nil && (attribution.EnterpriseID != params.EnterpriseID ||
+				attribution.SubscriptionID != params.SubscriptionID || attribution.APIKeyID != params.APIKeyID ||
+				attribution.AssignmentGeneration != generation || !attribution.WindowAnchor.Equal(window.anchor) ||
+				!attribution.RequestAt.Equal(params.RequestAt.UTC()) || !sameNullableInt64(nullInt64Pointer(employeeID), params.EmployeeID)) {
+				return nil, ErrUsageAttributionMismatch
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		attribution.EmployeeID = nullInt64Pointer(employeeID)
+		attribution.WeeklyWindowAnchor = attribution.WindowAnchor
+		attributions = append(attributions, attribution)
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return attributions, nil
+}
+
 func (r *Repository) CreateUsageAttribution(
 	ctx context.Context,
 	params CreateUsageAttributionParams,
@@ -821,11 +1236,22 @@ func (r *Repository) CreateUsageAttribution(
 	var employeeID sql.NullInt64
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO enterprise_usage_attributions (
-			enterprise_id, subscription_id, employee_id, usage_log_id,
-			weekly_window_anchor, classification
+			enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+			assignment_generation, window_type, window_anchor, request_at, classification
 		)
-		SELECT $1, enterprise_subscription.id, $3::bigint, usage_log.id,
-		       $5::timestamptz, $6::text
+		SELECT $1, enterprise_subscription.id, $3::bigint, usage_log.api_key_id, usage_log.id,
+		       CASE WHEN $6::text = 'employee' THEN (
+				SELECT assignment.generation
+				FROM enterprise_key_assignments AS assignment
+				WHERE assignment.enterprise_id = $1
+				  AND assignment.employee_id = $3
+				  AND assignment.api_key_id = usage_log.api_key_id
+				  AND assignment.upstream_user_subscription_id = usage_log.subscription_id
+				  AND assignment.assigned_at <= usage_log.created_at
+				  AND (assignment.ended_at IS NULL OR usage_log.created_at < assignment.ended_at)
+				ORDER BY assignment.generation DESC LIMIT 1
+		       ) ELSE 0 END,
+		       '7d', $5::timestamptz, usage_log.created_at, $6::text
 		FROM usage_logs AS usage_log
 		JOIN enterprise_subscriptions AS enterprise_subscription
 		  ON enterprise_subscription.id = $2
@@ -868,17 +1294,21 @@ func (r *Repository) CreateUsageAttribution(
 				)
 			)
 		  )
-		ON CONFLICT (usage_log_id) DO NOTHING
-		RETURNING id, enterprise_id, subscription_id, employee_id, usage_log_id,
-		          weekly_window_anchor, classification, created_at
+		ON CONFLICT (usage_log_id, window_type) DO NOTHING
+		RETURNING id, enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+		          assignment_generation, window_type, window_anchor, request_at, classification, created_at
 	`, params.EnterpriseID, params.SubscriptionID, params.EmployeeID, params.UsageLogID,
 		params.WeeklyWindowAnchor, params.Classification).Scan(
 		&attribution.ID,
 		&attribution.EnterpriseID,
 		&attribution.SubscriptionID,
 		&employeeID,
+		&attribution.APIKeyID,
 		&attribution.UsageLogID,
-		&attribution.WeeklyWindowAnchor,
+		&attribution.AssignmentGeneration,
+		&attribution.WindowType,
+		&attribution.WindowAnchor,
+		&attribution.RequestAt,
 		&attribution.Classification,
 		&attribution.CreatedAt,
 	)
@@ -886,7 +1316,7 @@ func (r *Repository) CreateUsageAttribution(
 		existing, existingErr := getUsageAttributionByUsageLogID(ctx, tx, params.UsageLogID)
 		if existingErr == nil && existing.EnterpriseID == params.EnterpriseID &&
 			existing.SubscriptionID == params.SubscriptionID &&
-			existing.WeeklyWindowAnchor.Equal(params.WeeklyWindowAnchor) &&
+			existing.WindowAnchor.Equal(params.WeeklyWindowAnchor) &&
 			existing.Classification == params.Classification &&
 			sameNullableInt64(existing.EmployeeID, params.EmployeeID) {
 			if err = tx.Commit(); err != nil {
@@ -903,6 +1333,7 @@ func (r *Repository) CreateUsageAttribution(
 		return nil, err
 	}
 	attribution.EmployeeID = nullInt64Pointer(employeeID)
+	attribution.WeeklyWindowAnchor = attribution.WindowAnchor
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -928,17 +1359,21 @@ func getUsageAttributionByUsageLogID(
 	attribution := &UsageAttribution{}
 	var employeeID sql.NullInt64
 	err := queryer.QueryRowContext(ctx, `
-		SELECT id, enterprise_id, subscription_id, employee_id, usage_log_id,
-		       weekly_window_anchor, classification, created_at
+		SELECT id, enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+		       assignment_generation, window_type, window_anchor, request_at, classification, created_at
 		FROM enterprise_usage_attributions
-		WHERE usage_log_id = $1
+		WHERE usage_log_id = $1 AND window_type = '7d'
 	`, usageLogID).Scan(
 		&attribution.ID,
 		&attribution.EnterpriseID,
 		&attribution.SubscriptionID,
 		&employeeID,
+		&attribution.APIKeyID,
 		&attribution.UsageLogID,
-		&attribution.WeeklyWindowAnchor,
+		&attribution.AssignmentGeneration,
+		&attribution.WindowType,
+		&attribution.WindowAnchor,
+		&attribution.RequestAt,
 		&attribution.Classification,
 		&attribution.CreatedAt,
 	)
@@ -946,6 +1381,7 @@ func getUsageAttributionByUsageLogID(
 		return nil, err
 	}
 	attribution.EmployeeID = nullInt64Pointer(employeeID)
+	attribution.WeeklyWindowAnchor = attribution.WindowAnchor
 	return attribution, nil
 }
 
