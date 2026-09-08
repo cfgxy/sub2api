@@ -20,25 +20,112 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEnterprise237RollbackFailsClosedWith5hState(t *testing.T) {
+func TestEnterprise237MigratesNonEmptyLegacyAttribution(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
-	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_subscription_allocations.sql")))
-	seedEnterprise237MigrationAllocation(t, ctx, db, "5h")
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "236_enterprise_frozen_contract.sql")))
+	usageLogID, apiKeyID, generation, createdAt := seedEnterprise237LegacyAttribution(t, ctx, db)
 
-	_, err := db.ExecContext(ctx, readEnterprise237Rollback(t))
-	require.ErrorContains(t, err, "cannot rollback SHAN-154 while 5h allocation state exists")
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, "237_enterprise_subscription_allocations.sql")))
+
+	var windowType, classification string
+	var migratedAPIKeyID, migratedGeneration int64
+	var requestAt time.Time
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT window_type, api_key_id, assignment_generation, request_at, classification
+		FROM enterprise_usage_attributions WHERE usage_log_id = $1
+	`, usageLogID).Scan(&windowType, &migratedAPIKeyID, &migratedGeneration, &requestAt, &classification))
+	require.Equal(t, "week", windowType)
+	require.Equal(t, apiKeyID, migratedAPIKeyID)
+	require.Equal(t, generation, migratedGeneration)
+	require.Equal(t, createdAt, requestAt)
+	require.Equal(t, "employee", classification)
 }
 
-func TestEnterprise237RollbackRestoresPure7dSchemaAndData(t *testing.T) {
+func TestEnterprise237MaintainsAPIKeyAttributionCandidate(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "236_enterprise_frozen_contract.sql")))
+
+	var enterpriseUserID, laterEnterpriseUserID, ordinaryUserID, groupID int64
+	for _, target := range []*int64{&enterpriseUserID, &laterEnterpriseUserID, &ordinaryUserID} {
+		require.NoError(t, db.QueryRowContext(ctx,
+			"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+			fmt.Sprintf("shan154-candidate-%d@example.com", time.Now().UnixNano())).Scan(target))
+	}
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO groups (name) VALUES ($1) RETURNING id",
+		fmt.Sprintf("shan154-candidate-%d", time.Now().UnixNano())).Scan(&groupID))
+	_, err := db.ExecContext(ctx,
+		"INSERT INTO enterprises (name, dedicated_upstream_user_id) VALUES ('Candidate Existing', $1)",
+		enterpriseUserID)
+	require.NoError(t, err)
+
+	insertKey := func(userID int64, suffix string) int64 {
+		var id int64
+		require.NoError(t, db.QueryRowContext(ctx, `
+			INSERT INTO api_keys (user_id, group_id, key, name)
+			VALUES ($1, $2, $3, $4) RETURNING id
+		`, userID, groupID, fmt.Sprintf("sk-candidate-%s-%d", suffix, time.Now().UnixNano()), suffix).Scan(&id))
+		return id
+	}
+	existingEnterpriseKeyID := insertKey(enterpriseUserID, "existing-enterprise")
+	laterEnterpriseKeyID := insertKey(laterEnterpriseUserID, "later-enterprise")
+	ordinaryKeyID := insertKey(ordinaryUserID, "ordinary")
+
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, "237_enterprise_subscription_allocations.sql")))
+	assertCandidate := func(keyID int64, expected bool) {
+		var actual bool
+		require.NoError(t, db.QueryRowContext(ctx,
+			"SELECT enterprise_attribution_candidate FROM api_keys WHERE id = $1", keyID).Scan(&actual))
+		require.Equal(t, expected, actual)
+	}
+	assertCandidate(existingEnterpriseKeyID, true)
+	assertCandidate(laterEnterpriseKeyID, false)
+	assertCandidate(ordinaryKeyID, false)
+
+	postMigrationKeyID := insertKey(enterpriseUserID, "post-migration")
+	assertCandidate(postMigrationKeyID, true)
+	var laterEnterpriseKey string
+	require.NoError(t, db.QueryRowContext(ctx,
+		"SELECT key FROM api_keys WHERE id = $1", laterEnterpriseKeyID).Scan(&laterEnterpriseKey))
+	_, err = db.ExecContext(ctx, `
+		DELETE FROM auth_cache_invalidation_outbox
+		WHERE cache_key = encode(sha256(convert_to($1, 'UTF8')), 'hex')
+	`, laterEnterpriseKey)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		"INSERT INTO enterprises (name, dedicated_upstream_user_id) VALUES ('Candidate Later', $1)",
+		laterEnterpriseUserID)
+	require.NoError(t, err)
+	assertCandidate(laterEnterpriseKeyID, true)
+	var invalidationCount int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM auth_cache_invalidation_outbox
+		WHERE cache_key = encode(sha256(convert_to($1, 'UTF8')), 'hex')
+	`, laterEnterpriseKey).Scan(&invalidationCount))
+	require.Equal(t, 1, invalidationCount)
+}
+
+func TestEnterprise237RollbackFailsClosedWithDayState(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
 	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_subscription_allocations.sql")))
-	allocationID := seedEnterprise237MigrationAllocation(t, ctx, db, "7d")
+	seedEnterprise237MigrationAllocation(t, ctx, db, "day")
+
+	_, err := db.ExecContext(ctx, readEnterprise237Rollback(t))
+	require.ErrorContains(t, err, "cannot rollback SHAN-154 while day/month allocation state exists")
+}
+
+func TestEnterprise237RollbackRestoresPureWeekSchemaAndData(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_subscription_allocations.sql")))
+	allocationID := seedEnterprise237MigrationAllocation(t, ctx, db, "week")
 
 	_, err := db.ExecContext(ctx, readEnterprise237Rollback(t))
 	require.NoError(t, err)
-	var legacyAnchorExists, windowTypeExists bool
+	var legacyAnchorExists, windowTypeExists, candidateColumnExists bool
 	require.NoError(t, db.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
@@ -48,14 +135,102 @@ func TestEnterprise237RollbackRestoresPure7dSchemaAndData(t *testing.T) {
 			SELECT 1 FROM information_schema.columns
 			WHERE table_schema = 'public' AND table_name = 'enterprise_weekly_allocations'
 			  AND column_name = 'window_type'
-		)
-	`).Scan(&legacyAnchorExists, &windowTypeExists))
+			), EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'api_keys'
+				  AND column_name = 'enterprise_attribution_candidate'
+			)
+		`).Scan(&legacyAnchorExists, &windowTypeExists, &candidateColumnExists))
 	require.True(t, legacyAnchorExists)
 	require.False(t, windowTypeExists)
+	require.False(t, candidateColumnExists)
 	var amount string
 	require.NoError(t, db.QueryRowContext(ctx,
 		"SELECT amount::text FROM enterprise_weekly_allocations WHERE id = $1", allocationID).Scan(&amount))
 	require.Equal(t, "3.00000000", amount)
+}
+
+func TestEnterprise237RollbackRejectsMissingUsageRowBeforeSchemaChanges(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "236_enterprise_frozen_contract.sql")))
+	usageLogID, _, _, _ := seedEnterprise237LegacyAttribution(t, ctx, db)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, "237_enterprise_subscription_allocations.sql")))
+	_, err := db.ExecContext(ctx, "DELETE FROM usage_logs WHERE id = $1", usageLogID)
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, readEnterprise237Rollback(t))
+	require.ErrorContains(t, err, "cannot rollback SHAN-154 while enterprise usage attribution references a missing usage log; settle or clean up dangling attributions first")
+
+	var windowTypeExists, weeklyWindowAnchorExists bool
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'enterprise_usage_attributions'
+			  AND column_name = 'window_type'
+		), EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'enterprise_usage_attributions'
+			  AND column_name = 'weekly_window_anchor'
+		)
+	`).Scan(&windowTypeExists, &weeklyWindowAnchorExists))
+	require.True(t, windowTypeExists)
+	require.False(t, weeklyWindowAnchorExists)
+}
+
+func seedEnterprise237LegacyAttribution(t *testing.T, ctx context.Context, db *sql.DB) (int64, int64, int64, time.Time) {
+	t.Helper()
+	suffix := time.Now().UnixNano()
+	anchor := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	createdAt := anchor.Add(time.Hour)
+	var userID, groupID, upstreamSubscriptionID, enterpriseID, employeeID, subscriptionID, apiKeyID, accountID, usageLogID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+		fmt.Sprintf("shan154-legacy-%d@example.com", suffix)).Scan(&userID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO groups (name) VALUES ($1) RETURNING id",
+		fmt.Sprintf("shan154-legacy-%d", suffix)).Scan(&groupID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO user_subscriptions (user_id, group_id, starts_at, expires_at, status, weekly_window_start)
+		VALUES ($1, $2, $3::timestamptz, $3::timestamptz + INTERVAL '1 year', 'active', $3::timestamptz) RETURNING id
+	`, userID, groupID, anchor).Scan(&upstreamSubscriptionID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO enterprises (name, dedicated_upstream_user_id) VALUES ('Legacy Attribution', $1) RETURNING id",
+		userID).Scan(&enterpriseID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO enterprise_employees (enterprise_id, email) VALUES ($1, $2) RETURNING id",
+		enterpriseID, fmt.Sprintf("legacy-employee-%d@example.com", suffix)).Scan(&employeeID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprise_subscriptions (
+			enterprise_id, upstream_user_subscription_id, status, observed_weekly_window_start, activated_at, actor_ref
+		) VALUES ($1, $2, 'active', $3, $3, 'test:legacy') RETURNING id
+	`, enterpriseID, upstreamSubscriptionID, anchor).Scan(&subscriptionID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO api_keys (user_id, group_id, key, name)
+		VALUES ($1, $2, $3, 'legacy-key') RETURNING id
+	`, userID, groupID, fmt.Sprintf("sk-legacy-%d", suffix)).Scan(&apiKeyID))
+	const generation int64 = 7
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO enterprise_key_assignments (
+			enterprise_id, employee_id, api_key_id, upstream_user_subscription_id,
+			upstream_group_id, generation, status, actor_ref, assigned_at
+		) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'test:legacy', $7)
+	`, enterpriseID, employeeID, apiKeyID, upstreamSubscriptionID, groupID, generation, anchor)
+	require.NoError(t, err)
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO accounts (name, platform, type) VALUES ($1, 'anthropic', 'apikey') RETURNING id",
+		fmt.Sprintf("legacy-account-%d", suffix)).Scan(&accountID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO usage_logs (user_id, api_key_id, account_id, subscription_id, model, actual_cost, created_at)
+		VALUES ($1, $2, $3, $4, 'legacy-test', 1, $5) RETURNING id
+	`, userID, apiKeyID, accountID, upstreamSubscriptionID, createdAt).Scan(&usageLogID))
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO enterprise_usage_attributions (
+			enterprise_id, subscription_id, employee_id, usage_log_id, weekly_window_anchor, classification
+		) VALUES ($1, $2, $3, $4, $5, 'employee')
+	`, enterpriseID, subscriptionID, employeeID, usageLogID, anchor)
+	require.NoError(t, err)
+	return usageLogID, apiKeyID, generation, createdAt
 }
 
 func seedEnterprise237MigrationAllocation(t *testing.T, ctx context.Context, db *sql.DB, windowType string) int64 {

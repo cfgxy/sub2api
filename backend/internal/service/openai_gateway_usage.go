@@ -395,6 +395,13 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageSizeSource:          optionalTrimmedStringPtr(result.ImageSizeSource),
 		ImageSizeBreakdown:       result.ImageSizeBreakdown,
 		NativeCompactionV2:       input.NativeCompactionV2,
+		AttributionRequestAt:     pricingAt,
+	}
+	if subscription != nil {
+		usageLog.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
+		usageLog.AttributionDailyWindowAnchor = copyUsageAttributionAnchor(subscription.DailyWindowStart)
+		usageLog.AttributionWeeklyWindowAnchor = copyUsageAttributionAnchor(subscription.WeeklyWindowStart)
+		usageLog.AttributionMonthlyWindowAnchor = copyUsageAttributionAnchor(subscription.MonthlyWindowStart)
 	}
 	isVideoUsage := isGrokVideoUsageResult(result, billingModels)
 	if isVideoUsage {

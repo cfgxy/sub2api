@@ -11,10 +11,13 @@ import (
 func TestAllocationWindowValidation(t *testing.T) {
 	anchor := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
 
-	require.NoError(t, ValidateAllocationWindow(WindowType5h, anchor))
-	require.NoError(t, ValidateAllocationWindow(WindowType7d, anchor))
-	require.ErrorIs(t, ValidateAllocationWindow("1d", anchor), ErrInvalidWindowType)
-	require.ErrorIs(t, ValidateAllocationWindow(WindowType5h, time.Time{}), ErrInvalidWindowAnchor)
+	for _, windowType := range []string{WindowTypeDay, WindowTypeWeek, WindowTypeMonth} {
+		require.NoError(t, ValidateAllocationWindow(windowType, anchor))
+	}
+	for _, windowType := range []string{"5h", "7d", "daily", "weekly", "monthly"} {
+		require.ErrorIs(t, ValidateAllocationWindow(windowType, anchor), ErrInvalidWindowType)
+	}
+	require.ErrorIs(t, ValidateAllocationWindow(WindowTypeDay, time.Time{}), ErrInvalidWindowAnchor)
 }
 
 func TestNormalizeAllocationReasonRejectsSensitiveOrUnboundedText(t *testing.T) {

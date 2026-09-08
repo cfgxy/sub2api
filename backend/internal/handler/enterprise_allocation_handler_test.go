@@ -31,16 +31,17 @@ func (s *enterpriseAllocationStoreStub) GetAllocationUsageSummary(context.Contex
 
 func TestEnterpriseAllocationHandlerRejectsUnauthenticatedRequest(t *testing.T) {
 	store := &enterpriseAllocationStoreStub{}
-	status := serveEnterpriseAllocationSet(t, store, false, `{"enterprise_id":1,"window_type":"5h","window_anchor":"2026-09-08T10:00:00Z","amount":"1","reason":"test"}`)
+	status := serveEnterpriseAllocationSet(t, store, false, `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`)
 	require.Equal(t, http.StatusUnauthorized, status)
 	require.Zero(t, store.calls)
 }
 
 func TestEnterpriseAllocationHandlerEnforcesProtocolValidation(t *testing.T) {
 	for name, body := range map[string]string{
-		"invalid window type": `{"enterprise_id":1,"window_type":"1d","window_anchor":"2026-09-08T10:00:00Z","amount":"1","reason":"test"}`,
-		"negative amount":     `{"enterprise_id":1,"window_type":"5h","window_anchor":"2026-09-08T10:00:00Z","amount":"-1","reason":"test"}`,
-		"missing reason":      `{"enterprise_id":1,"window_type":"5h","window_anchor":"2026-09-08T10:00:00Z","amount":"1"}`,
+		"invalid window type": `{"enterprise_id":1,"window_type":"7d","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`,
+		"negative credit":     `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"-1","reason":"test"}`,
+		"legacy amount field": `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","amount":"1","reason":"test"}`,
+		"missing reason":      `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"1"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &enterpriseAllocationStoreStub{}
@@ -52,12 +53,13 @@ func TestEnterpriseAllocationHandlerEnforcesProtocolValidation(t *testing.T) {
 
 func TestEnterpriseAllocationHandlerPassesServerIdentityAndDeniesCrossScope(t *testing.T) {
 	store := &enterpriseAllocationStoreStub{setErr: enterprise.ErrEnterpriseAccessDenied}
-	status := serveEnterpriseAllocationSet(t, store, true, `{"enterprise_id":9,"window_type":"7d","window_anchor":"2026-09-08T10:00:00Z","amount":"1","reason":"change"}`)
+	status := serveEnterpriseAllocationSet(t, store, true, `{"enterprise_id":9,"window_type":"week","window_anchor":"2026-09-08T10:00:00Z","credit":"1","reason":"change"}`)
 	require.Equal(t, http.StatusForbidden, status)
 	require.Equal(t, int64(42), store.setParams.RequesterUserID)
 	require.Equal(t, int64(9), store.setParams.EnterpriseID)
 	require.Equal(t, int64(11), store.setParams.SubscriptionID)
 	require.Equal(t, int64(22), store.setParams.EmployeeID)
+	require.Equal(t, "1", store.setParams.Credit)
 }
 
 func serveEnterpriseAllocationSet(t *testing.T, store EnterpriseAllocationStore, authenticated bool, body string) int {

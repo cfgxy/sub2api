@@ -47,6 +47,9 @@ func (APIKey) Fields() []ent.Field {
 		field.String("status").
 			MaxLen(20).
 			Default(domain.StatusActive),
+		field.Bool("enterprise_attribution_candidate").
+			Default(false).
+			Comment("Whether usage from this key may require enterprise attribution"),
 		field.Time("last_used_at").
 			Optional().
 			Nillable().

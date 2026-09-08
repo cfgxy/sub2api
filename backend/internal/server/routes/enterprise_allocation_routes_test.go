@@ -26,12 +26,17 @@ func (s *enterpriseAllocationRouteStore) SetAllocation(_ context.Context, params
 	if s.setErr != nil {
 		return nil, s.setErr
 	}
-	return &enterprise.Allocation{ID: 7, EnterpriseID: params.EnterpriseID, SubscriptionID: params.SubscriptionID, EmployeeID: params.EmployeeID, WindowType: params.WindowType, WindowAnchor: params.WindowAnchor, Amount: params.Amount, Version: 2}, nil
+	return &enterprise.Allocation{ID: 7, EnterpriseID: params.EnterpriseID, SubscriptionID: params.SubscriptionID, EmployeeID: params.EmployeeID, WindowType: params.WindowType, WindowAnchor: params.WindowAnchor, Credit: params.Credit, Version: 2}, nil
 }
 
 func (s *enterpriseAllocationRouteStore) GetAllocationUsageSummary(_ context.Context, query enterprise.AllocationUsageSummaryQuery) (*enterprise.AllocationUsageSummary, error) {
 	s.summaryQuery = query
-	return &enterprise.AllocationUsageSummary{Allocation: "5.00000000", ActualCost: "2.00000000", Remaining: "3.00000000", Overage: "0.00000000"}, nil
+	limit := "4.00000000"
+	return &enterprise.AllocationUsageSummary{
+		ConfiguredCredit: "5.00000000", UsageCredit: "2.00000000", RemainingCredit: "3.00000000",
+		OverageCredit: "0.00000000", AllocatedTotal: "6.00000000", AuthoritativeLimit: &limit,
+		OverallocatedBy: "2.00000000", Warning: enterprise.AllocationWarningOverallocated,
+	}, nil
 }
 
 func TestEnterpriseAllocationRoutesUseAuthenticatedSubjectAndProductionPaths(t *testing.T) {
@@ -48,15 +53,19 @@ func TestEnterpriseAllocationRoutesUseAuthenticatedSubjectAndProductionPaths(t *
 	require.Equal(t, int64(11), store.setParams.SubscriptionID)
 	require.Equal(t, int64(22), store.setParams.EmployeeID)
 
-	summary := performAllocationRouteRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=5h&window_anchor=2026-09-08T10:00:00Z", nil, true)
+	summary := performAllocationRouteRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=day&window_anchor=2026-09-08T00:00:00Z", nil, true)
 	require.Equal(t, http.StatusOK, summary.Code)
 	require.Equal(t, int64(42), store.summaryQuery.RequesterUserID)
-	require.Equal(t, enterprise.WindowType5h, store.summaryQuery.WindowType)
+	require.Equal(t, enterprise.WindowTypeDay, store.summaryQuery.WindowType)
 	var response struct {
 		Data enterprise.AllocationUsageSummary `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(summary.Body.Bytes(), &response))
-	require.Equal(t, "2.00000000", response.Data.ActualCost)
+	require.Equal(t, "2.00000000", response.Data.UsageCredit)
+	require.Equal(t, "6.00000000", response.Data.AllocatedTotal)
+	require.Equal(t, "4.00000000", *response.Data.AuthoritativeLimit)
+	require.Equal(t, "2.00000000", response.Data.OverallocatedBy)
+	require.Equal(t, enterprise.AllocationWarningOverallocated, response.Data.Warning)
 
 	invalidSummary := performAllocationRouteRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=1d&window_anchor=2026-09-08T10:00:00Z", nil, true)
 	require.Equal(t, http.StatusBadRequest, invalidSummary.Code)
@@ -70,8 +79,8 @@ func TestEnterpriseAllocationRoutesMapScopeVersionAndUnsafeReason(t *testing.T) 
 	}{
 		"cross enterprise": {enterprise.ErrEnterpriseAccessDenied, validAllocationBody(), http.StatusForbidden},
 		"version conflict": {enterprise.ErrAllocationVersionConflict, validAllocationBody(), http.StatusConflict},
-		"secret reason":    {nil, []byte(`{"enterprise_id":9,"window_type":"5h","window_anchor":"2026-09-08T10:00:00Z","amount":"5","reason":"token=secret"}`), http.StatusBadRequest},
-		"long reason":      {nil, []byte(`{"enterprise_id":9,"window_type":"5h","window_anchor":"2026-09-08T10:00:00Z","amount":"5","reason":"` + string(bytes.Repeat([]byte("a"), enterprise.MaxAllocationReasonLength+1)) + `"}`), http.StatusBadRequest},
+		"secret reason":    {nil, []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"token=secret"}`), http.StatusBadRequest},
+		"long reason":      {nil, []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"` + string(bytes.Repeat([]byte("a"), enterprise.MaxAllocationReasonLength+1)) + `"}`), http.StatusBadRequest},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &enterpriseAllocationRouteStore{setErr: tc.storeErr}
@@ -112,5 +121,5 @@ func performAllocationRouteRequest(router http.Handler, method, target string, b
 }
 
 func validAllocationBody() []byte {
-	return []byte(`{"enterprise_id":9,"window_type":"5h","window_anchor":"2026-09-08T10:00:00Z","amount":"5","expected_version":1,"reason":"rebalance"}`)
+	return []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","expected_version":1,"reason":"rebalance"}`)
 }

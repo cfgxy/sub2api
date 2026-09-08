@@ -816,7 +816,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 创建使用日志
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
-		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost, pricingAt)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
@@ -1126,6 +1126,7 @@ func (s *GatewayService) buildRecordUsageLog(
 	billingType int8,
 	cacheTTLOverridden bool,
 	cost *CostBreakdown,
+	pricingAt time.Time,
 ) *UsageLog {
 	durationMs := int(result.Duration.Milliseconds())
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
@@ -1184,6 +1185,13 @@ func (s *GatewayService) buildRecordUsageLog(
 		GroupID:                  apiKey.GroupID,
 		SubscriptionID:           optionalSubscriptionID(subscription),
 		CreatedAt:                time.Now(),
+		AttributionRequestAt:     pricingAt,
+	}
+	if subscription != nil {
+		usageLog.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
+		usageLog.AttributionDailyWindowAnchor = copyUsageAttributionAnchor(subscription.DailyWindowStart)
+		usageLog.AttributionWeeklyWindowAnchor = copyUsageAttributionAnchor(subscription.WeeklyWindowStart)
+		usageLog.AttributionMonthlyWindowAnchor = copyUsageAttributionAnchor(subscription.MonthlyWindowStart)
 	}
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
@@ -1200,6 +1208,14 @@ func (s *GatewayService) buildRecordUsageLog(
 	}
 
 	return usageLog
+}
+
+func copyUsageAttributionAnchor(anchor *time.Time) *time.Time {
+	if anchor == nil {
+		return nil
+	}
+	value := anchor.UTC()
+	return &value
 }
 
 // resolveBillingMode 根据计费结果和请求类型确定计费模式。

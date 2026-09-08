@@ -113,6 +113,20 @@ func (_c *APIKeyCreate) SetNillableStatus(v *string) *APIKeyCreate {
 	return _c
 }
 
+// SetEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field.
+func (_c *APIKeyCreate) SetEnterpriseAttributionCandidate(v bool) *APIKeyCreate {
+	_c.mutation.SetEnterpriseAttributionCandidate(v)
+	return _c
+}
+
+// SetNillableEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableEnterpriseAttributionCandidate(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetEnterpriseAttributionCandidate(*v)
+	}
+	return _c
+}
+
 // SetLastUsedAt sets the "last_used_at" field.
 func (_c *APIKeyCreate) SetLastUsedAt(v time.Time) *APIKeyCreate {
 	_c.mutation.SetLastUsedAt(v)
@@ -387,6 +401,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.EnterpriseAttributionCandidate(); !ok {
+		v := apikey.DefaultEnterpriseAttributionCandidate
+		_c.mutation.SetEnterpriseAttributionCandidate(v)
+	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		v := apikey.DefaultQuota
 		_c.mutation.SetQuota(v)
@@ -456,6 +474,9 @@ func (_c *APIKeyCreate) check() error {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.EnterpriseAttributionCandidate(); !ok {
+		return &ValidationError{Name: "enterprise_attribution_candidate", err: errors.New(`ent: missing required field "APIKey.enterprise_attribution_candidate"`)}
 	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		return &ValidationError{Name: "quota", err: errors.New(`ent: missing required field "APIKey.quota"`)}
@@ -534,6 +555,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := _c.mutation.EnterpriseAttributionCandidate(); ok {
+		_spec.SetField(apikey.FieldEnterpriseAttributionCandidate, field.TypeBool, value)
+		_node.EnterpriseAttributionCandidate = value
 	}
 	if value, ok := _c.mutation.LastUsedAt(); ok {
 		_spec.SetField(apikey.FieldLastUsedAt, field.TypeTime, value)
@@ -790,6 +815,18 @@ func (u *APIKeyUpsert) SetStatus(v string) *APIKeyUpsert {
 // UpdateStatus sets the "status" field to the value that was provided on create.
 func (u *APIKeyUpsert) UpdateStatus() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldStatus)
+	return u
+}
+
+// SetEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field.
+func (u *APIKeyUpsert) SetEnterpriseAttributionCandidate(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldEnterpriseAttributionCandidate, v)
+	return u
+}
+
+// UpdateEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateEnterpriseAttributionCandidate() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldEnterpriseAttributionCandidate)
 	return u
 }
 
@@ -1217,6 +1254,20 @@ func (u *APIKeyUpsertOne) SetStatus(v string) *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) UpdateStatus() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field.
+func (u *APIKeyUpsertOne) SetEnterpriseAttributionCandidate(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetEnterpriseAttributionCandidate(v)
+	})
+}
+
+// UpdateEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateEnterpriseAttributionCandidate() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateEnterpriseAttributionCandidate()
 	})
 }
 
@@ -1855,6 +1906,20 @@ func (u *APIKeyUpsertBulk) SetStatus(v string) *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) UpdateStatus() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field.
+func (u *APIKeyUpsertBulk) SetEnterpriseAttributionCandidate(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetEnterpriseAttributionCandidate(v)
+	})
+}
+
+// UpdateEnterpriseAttributionCandidate sets the "enterprise_attribution_candidate" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateEnterpriseAttributionCandidate() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateEnterpriseAttributionCandidate()
 	})
 }
 

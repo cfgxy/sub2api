@@ -34,7 +34,7 @@ type setEnterpriseAllocationRequest struct {
 	EnterpriseID    int64  `json:"enterprise_id" binding:"required"`
 	WindowType      string `json:"window_type" binding:"required"`
 	WindowAnchor    string `json:"window_anchor" binding:"required"`
-	Amount          string `json:"amount" binding:"required"`
+	Credit          string `json:"credit" binding:"required"`
 	ExpectedVersion int64  `json:"expected_version"`
 	Reason          string `json:"reason" binding:"required"`
 }
@@ -69,8 +69,8 @@ func (h *EnterpriseAllocationHandler) Set(c *gin.Context) {
 		response.BadRequest(c, "Invalid allocation window")
 		return
 	}
-	if _, err = enterprise.NormalizeAmount(req.Amount); err != nil {
-		response.BadRequest(c, "Invalid allocation amount")
+	if _, err = enterprise.NormalizeAmount(req.Credit); err != nil {
+		response.BadRequest(c, "Invalid allocation credit")
 		return
 	}
 	if req.Reason, err = enterprise.NormalizeAllocationReason(req.Reason); err != nil {
@@ -80,7 +80,7 @@ func (h *EnterpriseAllocationHandler) Set(c *gin.Context) {
 	allocation, err := h.store.SetAllocation(c.Request.Context(), enterprise.SetAllocationParams{
 		RequesterUserID: subject.UserID,
 		EnterpriseID:    req.EnterpriseID, SubscriptionID: subscriptionID, EmployeeID: employeeID,
-		WindowType: req.WindowType, WindowAnchor: anchor, Amount: req.Amount,
+		WindowType: req.WindowType, WindowAnchor: anchor, Credit: req.Credit,
 		ExpectedVersion: req.ExpectedVersion, Reason: req.Reason,
 	})
 	if err != nil {
@@ -144,9 +144,7 @@ func writeEnterpriseAllocationError(c *gin.Context, err error) {
 		errors.Is(err, enterprise.ErrReasonRequired),
 		errors.Is(err, enterprise.ErrUnsafeReason):
 		response.BadRequest(c, "Invalid allocation request")
-	case errors.Is(err, enterprise.ErrAllocationLimitExceeded),
-		errors.Is(err, enterprise.ErrAllocationLimitUnavailable),
-		errors.Is(err, enterprise.ErrAllocationVersionConflict):
+	case errors.Is(err, enterprise.ErrAllocationVersionConflict):
 		response.Error(c, 409, err.Error())
 	default:
 		response.ErrorFrom(c, err)

@@ -569,6 +569,45 @@ func TestOpenAIGatewayServiceRecordUsage_TimePricingUsesExplicitPricingAt(t *tes
 	require.InDelta(t, baseCost*0.8, usageRepo.lastLog.ActualCost, 1e-12)
 	require.InDelta(t, 0.8, usageRepo.lastLog.RateMultiplier, 1e-12)
 }
+
+func TestOpenAIGatewayServiceRecordUsage_CapturesEnterpriseAttributionCandidate(t *testing.T) {
+	groupID := int64(18)
+	pricingAt := time.Date(2026, time.September, 9, 1, 0, 0, 0, time.UTC)
+	dayAnchor := pricingAt.Add(-time.Hour)
+	weekAnchor := pricingAt.Add(-24 * time.Hour)
+	monthAnchor := pricingAt.Add(-7 * 24 * time.Hour)
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "openai_attribution_candidate",
+			Model:     "gpt-5.1",
+			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 5},
+		},
+		APIKey: &APIKey{
+			ID: 1008, GroupID: i64p(groupID), EnterpriseAttributionCandidate: true,
+			Group: &Group{ID: groupID, RateMultiplier: 1, SubscriptionType: SubscriptionTypeSubscription},
+		},
+		User:      &User{ID: 2008},
+		Account:   &Account{ID: 3008},
+		PricingAt: pricingAt,
+		Subscription: &UserSubscription{
+			ID: 4008, DailyWindowStart: &dayAnchor,
+			WeeklyWindowStart: &weekAnchor, MonthlyWindowStart: &monthAnchor,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, pricingAt, usageRepo.lastLog.AttributionRequestAt)
+	require.Equal(t, dayAnchor, *usageRepo.lastLog.AttributionDailyWindowAnchor)
+	require.Equal(t, weekAnchor, *usageRepo.lastLog.AttributionWeeklyWindowAnchor)
+	require.Equal(t, monthAnchor, *usageRepo.lastLog.AttributionMonthlyWindowAnchor)
+	require.True(t, usageRepo.lastLog.EnterpriseAttributionCandidate)
+	require.Nil(t, usageRepo.lastLog.EnterpriseAttribution)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_IncludesEndpointMetadata(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

@@ -1,13 +1,29 @@
 -- Execute manually only after stopping writers.
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM enterprise_weekly_allocations WHERE window_type <> '7d')
-       OR EXISTS (SELECT 1 FROM enterprise_usage_attributions WHERE window_type <> '7d')
-       OR EXISTS (SELECT 1 FROM enterprise_subscription_windows WHERE allocation_limit_5h <> 0) THEN
-        RAISE EXCEPTION 'cannot rollback SHAN-154 while 5h allocation state exists';
+    IF EXISTS (
+        SELECT 1
+        FROM enterprise_usage_attributions AS attribution
+        LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+        WHERE usage_log.id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'cannot rollback SHAN-154 while enterprise usage attribution references a missing usage log; settle or clean up dangling attributions first';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM enterprise_weekly_allocations WHERE window_type <> 'week')
+       OR EXISTS (SELECT 1 FROM enterprise_usage_attributions WHERE window_type <> 'week') THEN
+        RAISE EXCEPTION 'cannot rollback SHAN-154 while day/month allocation state exists';
     END IF;
 END
 $$;
+
+DROP TRIGGER IF EXISTS sync_enterprise_api_key_candidates ON enterprises;
+DROP FUNCTION IF EXISTS sync_enterprise_api_key_candidates();
+DROP TRIGGER IF EXISTS enqueue_api_key_enterprise_candidate_invalidation ON api_keys;
+DROP FUNCTION IF EXISTS enqueue_api_key_enterprise_candidate_invalidation();
+DROP TRIGGER IF EXISTS set_api_key_enterprise_attribution_candidate ON api_keys;
+DROP FUNCTION IF EXISTS set_api_key_enterprise_attribution_candidate();
+ALTER TABLE api_keys DROP COLUMN enterprise_attribution_candidate;
 
 DROP INDEX IF EXISTS idx_enterprise_usage_attributions_window;
 ALTER TABLE enterprise_usage_attributions
@@ -45,13 +61,3 @@ CREATE INDEX idx_enterprise_weekly_allocations_window
 ALTER TABLE enterprise_weekly_allocations
     ADD CONSTRAINT enterprise_weekly_allocations_enterprise_id_subscription_id_key
         UNIQUE (enterprise_id, subscription_id, weekly_window_anchor, employee_id);
-
-ALTER TABLE enterprise_subscription_windows
-    DROP CONSTRAINT ck_enterprise_window_limit_actor_nonempty,
-    DROP CONSTRAINT ck_enterprise_window_limit_reason_nonempty,
-    DROP CONSTRAINT ck_enterprise_window_limit_5h_nonnegative,
-    DROP COLUMN allocation_limit_actor_ref,
-    DROP COLUMN allocation_limit_reason,
-    DROP COLUMN allocation_limit_5h;
-ALTER TABLE enterprise_subscription_windows
-    RENAME COLUMN allocation_limit_7d TO allocation_snapshot;

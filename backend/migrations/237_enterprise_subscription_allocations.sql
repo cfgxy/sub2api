@@ -1,18 +1,75 @@
-ALTER TABLE enterprise_subscription_windows
-    RENAME COLUMN allocation_snapshot TO allocation_limit_7d;
-ALTER TABLE enterprise_subscription_windows
-    ADD COLUMN allocation_limit_5h NUMERIC(20,8) NOT NULL DEFAULT 0,
-    ADD COLUMN allocation_limit_reason VARCHAR(200) NOT NULL DEFAULT 'legacy-7d-snapshot',
-    ADD COLUMN allocation_limit_actor_ref TEXT NOT NULL DEFAULT 'migration:237',
-    ADD CONSTRAINT ck_enterprise_window_limit_5h_nonnegative CHECK (allocation_limit_5h >= 0),
-    ADD CONSTRAINT ck_enterprise_window_limit_reason_nonempty CHECK (BTRIM(allocation_limit_reason) <> ''),
-    ADD CONSTRAINT ck_enterprise_window_limit_actor_nonempty CHECK (BTRIM(allocation_limit_actor_ref) <> '');
+ALTER TABLE api_keys
+    ADD COLUMN enterprise_attribution_candidate BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE api_keys AS api_key
+SET enterprise_attribution_candidate = TRUE
+WHERE EXISTS (
+    SELECT 1
+    FROM enterprises AS enterprise
+    WHERE enterprise.dedicated_upstream_user_id = api_key.user_id
+);
+
+CREATE FUNCTION set_api_key_enterprise_attribution_candidate()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.enterprise_attribution_candidate := EXISTS (
+        SELECT 1
+        FROM enterprises AS enterprise
+        WHERE enterprise.dedicated_upstream_user_id = NEW.user_id
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER set_api_key_enterprise_attribution_candidate
+    BEFORE INSERT OR UPDATE OF user_id ON api_keys
+    FOR EACH ROW EXECUTE FUNCTION set_api_key_enterprise_attribution_candidate();
+
+CREATE FUNCTION enqueue_api_key_enterprise_candidate_invalidation()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.enterprise_attribution_candidate IS DISTINCT FROM NEW.enterprise_attribution_candidate THEN
+        PERFORM enqueue_auth_cache_invalidation(NEW.key);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER enqueue_api_key_enterprise_candidate_invalidation
+    AFTER UPDATE OF enterprise_attribution_candidate ON api_keys
+    FOR EACH ROW EXECUTE FUNCTION enqueue_api_key_enterprise_candidate_invalidation();
+
+CREATE FUNCTION sync_enterprise_api_key_candidates()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
+        UPDATE api_keys AS api_key
+        SET enterprise_attribution_candidate = EXISTS (
+            SELECT 1
+            FROM enterprises AS enterprise
+            WHERE enterprise.dedicated_upstream_user_id = OLD.dedicated_upstream_user_id
+        )
+        WHERE api_key.user_id = OLD.dedicated_upstream_user_id;
+    END IF;
+
+    IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+        UPDATE api_keys AS api_key
+        SET enterprise_attribution_candidate = TRUE
+        WHERE api_key.user_id = NEW.dedicated_upstream_user_id;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER sync_enterprise_api_key_candidates
+    AFTER INSERT OR UPDATE OR DELETE ON enterprises
+    FOR EACH ROW EXECUTE FUNCTION sync_enterprise_api_key_candidates();
 
 ALTER TABLE enterprise_weekly_allocations
     RENAME COLUMN weekly_window_anchor TO window_anchor;
 ALTER TABLE enterprise_weekly_allocations
-    ADD COLUMN window_type VARCHAR(10) NOT NULL DEFAULT '7d',
-    ADD CONSTRAINT ck_enterprise_allocations_window_type CHECK (window_type IN ('5h', '7d'));
+    ADD COLUMN window_type VARCHAR(10) NOT NULL DEFAULT 'week',
+    ADD CONSTRAINT ck_enterprise_allocations_window_type CHECK (window_type IN ('day', 'week', 'month'));
 ALTER TABLE enterprise_weekly_allocations
     ALTER COLUMN window_type DROP DEFAULT;
 DROP INDEX IF EXISTS idx_enterprise_weekly_allocations_window;
@@ -32,11 +89,11 @@ ALTER TABLE enterprise_usage_attributions
 ALTER TABLE enterprise_usage_attributions
     RENAME COLUMN weekly_window_anchor TO window_anchor;
 ALTER TABLE enterprise_usage_attributions
-    ADD COLUMN window_type VARCHAR(10) NOT NULL DEFAULT '7d',
+    ADD COLUMN window_type VARCHAR(10) NOT NULL DEFAULT 'week',
     ADD COLUMN api_key_id BIGINT,
     ADD COLUMN assignment_generation BIGINT,
     ADD COLUMN request_at TIMESTAMPTZ,
-    ADD CONSTRAINT ck_enterprise_attributions_window_type CHECK (window_type IN ('5h', '7d'));
+    ADD CONSTRAINT ck_enterprise_attributions_window_type CHECK (window_type IN ('day', 'week', 'month'));
 
 UPDATE enterprise_usage_attributions AS attribution
 SET api_key_id = usage_log.api_key_id,
@@ -44,9 +101,13 @@ SET api_key_id = usage_log.api_key_id,
     assignment_generation = COALESCE((
         SELECT assignment.generation
         FROM enterprise_key_assignments AS assignment
+        JOIN enterprise_subscriptions AS enterprise_subscription
+          ON enterprise_subscription.id = attribution.subscription_id
+         AND enterprise_subscription.enterprise_id = attribution.enterprise_id
         WHERE assignment.enterprise_id = attribution.enterprise_id
-          AND assignment.employee_id IS NOT DISTINCT FROM attribution.employee_id
+          AND assignment.employee_id = attribution.employee_id
           AND assignment.api_key_id = usage_log.api_key_id
+          AND assignment.upstream_user_subscription_id = enterprise_subscription.upstream_user_subscription_id
           AND assignment.assigned_at <= usage_log.created_at
           AND (assignment.ended_at IS NULL OR usage_log.created_at < assignment.ended_at)
         ORDER BY assignment.generation DESC
@@ -54,17 +115,6 @@ SET api_key_id = usage_log.api_key_id,
     ), 0)
 FROM usage_logs AS usage_log
 WHERE usage_log.id = attribution.usage_log_id;
-
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM enterprise_usage_attributions
-        WHERE api_key_id IS NULL OR assignment_generation IS NULL OR request_at IS NULL
-    ) THEN
-        RAISE EXCEPTION 'SHAN-154 cannot backfill request attribution snapshots';
-    END IF;
-END
-$$;
 
 ALTER TABLE enterprise_usage_attributions
     ALTER COLUMN window_type DROP DEFAULT,
@@ -79,6 +129,8 @@ CREATE INDEX idx_enterprise_usage_attributions_window
         enterprise_id, subscription_id, window_type, window_anchor, employee_id
     );
 COMMENT ON COLUMN enterprise_usage_attributions.usage_log_id IS
-    'Reserved usage_logs id captured at request attribution time; settlement may insert the usage row later';
+    '请求归属时保留的 usage_logs 标识；结算可在之后写入 usage_logs';
+COMMENT ON COLUMN enterprise_usage_attributions.request_at IS
+    '不可变请求时刻：迁移后新记录严格使用网关 PricingAt；仅 237 历史迁移兼容时以关联 usage_logs.created_at 回填';
 COMMENT ON COLUMN enterprise_usage_attributions.assignment_generation IS
-    'Immutable enterprise key assignment generation captured at request time; 0 means controlled external';
+    '请求时冻结的企业 API Key assignment generation；0 表示 controlled_external，或历史 employee 记录无法重建具体代次';

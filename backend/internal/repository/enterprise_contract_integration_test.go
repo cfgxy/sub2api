@@ -171,8 +171,7 @@ func TestEnterprise237AllocationSchemaUsesWindowTypeAndAnchor(t *testing.T) {
 		require.True(t, exists, constraint)
 	}
 	for table, columns := range map[string][]string{
-		"enterprise_subscription_windows": {"allocation_limit_5h", "allocation_limit_7d", "allocation_limit_reason", "allocation_limit_actor_ref"},
-		"enterprise_usage_attributions":   {"window_type", "window_anchor", "api_key_id", "assignment_generation", "request_at"},
+		"enterprise_usage_attributions": {"window_type", "window_anchor", "api_key_id", "assignment_generation", "request_at"},
 	} {
 		for _, column := range columns {
 			var exists bool
@@ -184,6 +183,16 @@ func TestEnterprise237AllocationSchemaUsesWindowTypeAndAnchor(t *testing.T) {
 			`, table, column).Scan(&exists))
 			require.True(t, exists, table+"."+column)
 		}
+	}
+	for _, column := range []string{"allocation_limit_5h", "allocation_limit_7d", "allocation_limit_reason", "allocation_limit_actor_ref"} {
+		var exists bool
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'enterprise_subscription_windows' AND column_name = $1
+			)
+		`, column).Scan(&exists))
+		require.False(t, exists, column)
 	}
 }
 
@@ -510,8 +519,9 @@ func TestEnterpriseFirstAssignmentAndControlledExternalAttributionSerializeByAPI
 		require.NoError(t, assignmentResultValue.err)
 		require.NotNil(t, assignmentResultValue.assignment)
 		attributionResultValue := <-attributionDone
-		require.ErrorIs(t, attributionResultValue.err, enterprise.ErrUsageAttributionMismatch)
-		require.Nil(t, attributionResultValue.attribution)
+		require.NoError(t, attributionResultValue.err)
+		require.NotNil(t, attributionResultValue.attribution)
+		require.Equal(t, "controlled_external", attributionResultValue.attribution.Classification)
 	})
 
 	t.Run("attribution commits first", func(t *testing.T) {
@@ -854,7 +864,7 @@ func TestDashboardAggregationPartitionCleanupFailureRollsBackDataAndWatermark(t 
 		INSERT INTO enterprise_usage_attributions (
 			enterprise_id, subscription_id, api_key_id, usage_log_id, assignment_generation,
 			window_type, window_anchor, request_at, classification
-		) VALUES (300, 400, 10, 1, 0, '7d', '2000-01-01', '2000-01-10', 'controlled_external');
+		) VALUES (300, 400, 10, 1, 0, 'week', '2000-01-01', '2000-01-10', 'controlled_external');
 		CREATE FUNCTION reject_rollup_invalidation() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
 			RAISE EXCEPTION 'injected rollup invalidation failure';
