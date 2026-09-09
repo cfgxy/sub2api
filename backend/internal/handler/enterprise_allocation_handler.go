@@ -135,7 +135,7 @@ func (h *EnterpriseAllocationHandler) Summary(c *gin.Context) {
 func writeEnterpriseAllocationError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, enterprise.ErrEnterpriseAccessDenied):
-		response.Forbidden(c, "Enterprise scope denied")
+		response.NotFound(c, "Allocation not found")
 	case errors.Is(err, sql.ErrNoRows):
 		response.NotFound(c, "Allocation not found")
 	case errors.Is(err, enterprise.ErrInvalidAmount),

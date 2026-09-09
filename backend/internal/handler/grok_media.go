@@ -180,7 +180,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	// Grok 媒体（图片/视频生成与视频查询）按媒体倍率计费，不在 token 利润门
 	// 范围内：显式豁免，防止 service 层防御性装门按文本 D 误过滤媒体请求，
 	// 也防止已计费的在途视频任务因绑定账号被门排除而查询返回伪 404。
-	requestCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(
+	requestCtx, requestPricingAt := h.gatewayService.WithOpenAIRequestPricingContext(
 		service.WithOpenAIProfitControlSuppressed(c.Request.Context()), apiKey.GroupID,
 	)
 	c.Request = c.Request.WithContext(requestCtx)
@@ -192,8 +192,13 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	mediaEligibilityRejected := false
 	switchCount := 0
 	videoCreateStartedAt := ""
+	var videoCreateAttribution *service.EnterpriseUsageAttributionSnapshot
 	if isGrokVideoCreateEndpoint(endpoint) {
 		videoCreateStartedAt = service.GrokVideoPendingCreatedAtNow()
+		videoCreateAttribution, err = h.gatewayService.FreezeEnterpriseUsageAttribution(requestCtx, apiKey, subscription, requestPricingAt)
+		if err != nil {
+			reqLog.Warn("grok_media.freeze_video_attribution_failed", zap.Error(err))
+		}
 	}
 	maxAccountSwitches := h.maxAccountSwitches
 	if maxAccountSwitches <= 0 {
@@ -429,14 +434,21 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			// model/duration/resolution so status can still price if upstream omits them.
 			// Retry once: missing pending causes silent underpricing (status omits resolution).
 			pending := service.GrokVideoPendingBilling{
-				Model:                requestModel,
-				BillingModel:         firstNonEmptyString(result.BillingModel, requestModel),
-				UpstreamModel:        result.UpstreamModel,
-				VideoResolution:      result.VideoResolution,
-				VideoDurationSeconds: result.VideoDurationSeconds,
-				OriginalModel:        clientRequestedModel(c, requestModel),
+				Model:                 requestModel,
+				BillingModel:          firstNonEmptyString(result.BillingModel, requestModel),
+				UpstreamModel:         result.UpstreamModel,
+				VideoResolution:       result.VideoResolution,
+				VideoDurationSeconds:  result.VideoDurationSeconds,
+				OriginalModel:         clientRequestedModel(c, requestModel),
+				PricingAt:             requestPricingAt,
+				EnterpriseAttribution: videoCreateAttribution,
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
+			}
+			if subscription != nil {
+				pending.DailyWindowAnchor = copyGrokUsageAnchor(subscription.DailyWindowStart)
+				pending.WeeklyWindowAnchor = copyGrokUsageAnchor(subscription.WeeklyWindowStart)
+				pending.MonthlyWindowAnchor = copyGrokUsageAnchor(subscription.MonthlyWindowStart)
 			}
 			if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err != nil {
 				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
@@ -459,11 +471,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		// Both paths share the same claim key so the customer is charged once.
 		if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
 			taskID := strings.TrimSpace(requestID)
-			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
+			billResult, pending := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result)
+			if billResult != nil {
+				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID, pending)
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
-			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID, nil)
 		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -544,17 +557,17 @@ func prepareGrokVideoCompletionBilling(
 	subject middleware2.AuthSubject,
 	taskRequestID string,
 	statusResult *service.OpenAIForwardResult,
-) *service.OpenAIForwardResult {
+) (*service.OpenAIForwardResult, *service.GrokVideoPendingBilling) {
 	if h == nil || h.gatewayService == nil || apiKey == nil || statusResult == nil {
-		return nil
+		return nil, nil
 	}
 	// Forward already set VideoCount only when status=done && video.url (official).
 	if statusResult.VideoCount <= 0 {
-		return nil
+		return nil, nil
 	}
 	taskRequestID = strings.TrimSpace(firstNonEmptyString(taskRequestID, statusResult.ResponseID))
 	if taskRequestID == "" {
-		return nil
+		return nil, nil
 	}
 	// Load create-time snapshot before claim so we can fail-closed without burning the claim
 	// when Redis lost pending and status cannot price the job.
@@ -570,7 +583,7 @@ func prepareGrokVideoCompletionBilling(
 				zap.String("request_id", taskRequestID),
 				zap.String("reason", "no create-time snapshot and status has no video.duration"),
 			)
-			return nil
+			return nil, nil
 		}
 		reqLog.Error("grok_media.video_billing_without_pending",
 			zap.String("request_id", taskRequestID),
@@ -581,11 +594,11 @@ func prepareGrokVideoCompletionBilling(
 	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
 	if err != nil {
 		reqLog.Warn("grok_media.video_billing_claim_failed", zap.String("request_id", taskRequestID), zap.Error(err))
-		return nil
+		return nil, nil
 	}
 	if !claimed {
 		reqLog.Debug("grok_media.video_billing_already_claimed", zap.String("request_id", taskRequestID))
-		return nil
+		return nil, nil
 	}
 	// Re-merge with pending: resolution is request-only; model/duration fill gaps.
 	merged := *statusResult
@@ -635,7 +648,38 @@ func prepareGrokVideoCompletionBilling(
 			merged.Duration = e2e
 		}
 	}
-	return &merged
+	return &merged, pending
+}
+
+func copyGrokUsageAnchor(anchor *time.Time) *time.Time {
+	if anchor == nil {
+		return nil
+	}
+	value := anchor.UTC()
+	return &value
+}
+
+func grokVideoCompletionUsageSnapshot(
+	pollPricingAt time.Time,
+	pollSubscription *service.UserSubscription,
+	pending *service.GrokVideoPendingBilling,
+) (time.Time, *service.UserSubscription, *service.EnterpriseUsageAttributionSnapshot) {
+	if pending == nil {
+		return pollPricingAt, pollSubscription, nil
+	}
+	pricingAt := pollPricingAt
+	if !pending.PricingAt.IsZero() {
+		pricingAt = pending.PricingAt
+	}
+	subscription := pollSubscription
+	if pollSubscription != nil && (pending.DailyWindowAnchor != nil || pending.WeeklyWindowAnchor != nil || pending.MonthlyWindowAnchor != nil) {
+		copy := *pollSubscription
+		copy.DailyWindowStart = copyGrokUsageAnchor(pending.DailyWindowAnchor)
+		copy.WeeklyWindowStart = copyGrokUsageAnchor(pending.WeeklyWindowAnchor)
+		copy.MonthlyWindowStart = copyGrokUsageAnchor(pending.MonthlyWindowAnchor)
+		subscription = &copy
+	}
+	return pricingAt, subscription, pending.EnterpriseAttribution
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -659,6 +703,7 @@ func recordGrokMediaUsage(
 	requestModel string,
 	body []byte,
 	requestID string,
+	pending *service.GrokVideoPendingBilling,
 ) {
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
@@ -670,7 +715,9 @@ func recordGrokMediaUsage(
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-	pricingAt := service.OpenAIPricingAtFromContext(c.Request.Context())
+	pricingAt, usageSubscription, enterpriseAttribution := grokVideoCompletionUsageSnapshot(
+		service.OpenAIPricingAtFromContext(c.Request.Context()), subscription, pending,
+	)
 	// OriginalModel 记录客户端请求的模型：composite 分组下 body 已被改写为具体模型，
 	// 公开别名需从 context 取回，与其他端点的用量归因口径一致（计费不受影响：
 	// BillingModelSource 为空不会触发来源覆盖）。
@@ -692,21 +739,22 @@ func recordGrokMediaUsage(
 	}
 	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-			Result:             result,
-			APIKey:             apiKey,
-			User:               apiKey.User,
-			Account:            account,
-			Subscription:       subscription,
-			InboundEndpoint:    inboundEndpoint,
-			UpstreamEndpoint:   upstreamEndpoint,
-			UserAgent:          userAgent,
-			IPAddress:          clientIP,
-			RequestPayloadHash: service.HashUsageRequestPayload(payloadForHash),
-			APIKeyService:      h.apiKeyService,
-			QuotaPlatform:      quotaPlatform,
-			PricingAt:          pricingAt,
-			SessionID:          sessionID,
-			ChannelUsageFields: channelUsageFields,
+			Result:                result,
+			APIKey:                apiKey,
+			User:                  apiKey.User,
+			Account:               account,
+			Subscription:          usageSubscription,
+			InboundEndpoint:       inboundEndpoint,
+			UpstreamEndpoint:      upstreamEndpoint,
+			UserAgent:             userAgent,
+			IPAddress:             clientIP,
+			RequestPayloadHash:    service.HashUsageRequestPayload(payloadForHash),
+			APIKeyService:         h.apiKeyService,
+			QuotaPlatform:         quotaPlatform,
+			PricingAt:             pricingAt,
+			EnterpriseAttribution: enterpriseAttribution,
+			SessionID:             sessionID,
+			ChannelUsageFields:    channelUsageFields,
 		}); err != nil {
 			if videoTaskID != "" {
 				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID); releaseErr != nil {

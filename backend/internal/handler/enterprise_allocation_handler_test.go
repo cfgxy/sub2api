@@ -14,9 +14,11 @@ import (
 )
 
 type enterpriseAllocationStoreStub struct {
-	setParams enterprise.SetAllocationParams
-	setErr    error
-	calls     int
+	setParams    enterprise.SetAllocationParams
+	setErr       error
+	summaryErr   error
+	calls        int
+	summaryCalls int
 }
 
 func (s *enterpriseAllocationStoreStub) SetAllocation(_ context.Context, params enterprise.SetAllocationParams) (*enterprise.Allocation, error) {
@@ -26,7 +28,8 @@ func (s *enterpriseAllocationStoreStub) SetAllocation(_ context.Context, params 
 }
 
 func (s *enterpriseAllocationStoreStub) GetAllocationUsageSummary(context.Context, enterprise.AllocationUsageSummaryQuery) (*enterprise.AllocationUsageSummary, error) {
-	return &enterprise.AllocationUsageSummary{}, nil
+	s.summaryCalls++
+	return &enterprise.AllocationUsageSummary{}, s.summaryErr
 }
 
 func TestEnterpriseAllocationHandlerRejectsUnauthenticatedRequest(t *testing.T) {
@@ -54,12 +57,19 @@ func TestEnterpriseAllocationHandlerEnforcesProtocolValidation(t *testing.T) {
 func TestEnterpriseAllocationHandlerPassesServerIdentityAndDeniesCrossScope(t *testing.T) {
 	store := &enterpriseAllocationStoreStub{setErr: enterprise.ErrEnterpriseAccessDenied}
 	status := serveEnterpriseAllocationSet(t, store, true, `{"enterprise_id":9,"window_type":"week","window_anchor":"2026-09-08T10:00:00Z","credit":"1","reason":"change"}`)
-	require.Equal(t, http.StatusForbidden, status)
+	require.Equal(t, http.StatusNotFound, status)
 	require.Equal(t, int64(42), store.setParams.RequesterUserID)
 	require.Equal(t, int64(9), store.setParams.EnterpriseID)
 	require.Equal(t, int64(11), store.setParams.SubscriptionID)
 	require.Equal(t, int64(22), store.setParams.EmployeeID)
 	require.Equal(t, "1", store.setParams.Credit)
+}
+
+func TestEnterpriseAllocationSummaryHidesCrossScopeResource(t *testing.T) {
+	store := &enterpriseAllocationStoreStub{summaryErr: enterprise.ErrEnterpriseAccessDenied}
+	status := serveEnterpriseAllocationSummary(t, store, true)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, 1, store.summaryCalls)
 }
 
 func serveEnterpriseAllocationSet(t *testing.T, store EnterpriseAllocationStore, authenticated bool, body string) int {
@@ -76,6 +86,23 @@ func serveEnterpriseAllocationSet(t *testing.T, store EnterpriseAllocationStore,
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/subscriptions/11/allocations/22", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, req)
+	return recorder.Code
+}
+
+func serveEnterpriseAllocationSummary(t *testing.T, store EnterpriseAllocationStore, authenticated bool) int {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	h := &EnterpriseAllocationHandler{store: store}
+	router.GET("/subscriptions/:subscription_id/allocations/:employee_id", func(c *gin.Context) {
+		if authenticated {
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})
+		}
+		h.Summary(c)
+	})
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions/11/allocations/22?enterprise_id=9&window_type=week&window_anchor=2026-09-08T10:00:00Z", nil)
 	router.ServeHTTP(recorder, req)
 	return recorder.Code
 }

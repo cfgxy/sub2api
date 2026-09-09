@@ -336,17 +336,56 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	Model                string `json:"model"`
-	BillingModel         string `json:"billing_model,omitempty"`
-	UpstreamModel        string `json:"upstream_model,omitempty"`
-	VideoResolution      string `json:"video_resolution,omitempty"`
-	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
-	OriginalModel        string `json:"original_model,omitempty"`
+	Model                 string                              `json:"model"`
+	BillingModel          string                              `json:"billing_model,omitempty"`
+	UpstreamModel         string                              `json:"upstream_model,omitempty"`
+	VideoResolution       string                              `json:"video_resolution,omitempty"`
+	VideoDurationSeconds  int                                 `json:"video_duration_seconds,omitempty"`
+	OriginalModel         string                              `json:"original_model,omitempty"`
+	PricingAt             time.Time                           `json:"pricing_at,omitempty"`
+	DailyWindowAnchor     *time.Time                          `json:"daily_window_anchor,omitempty"`
+	WeeklyWindowAnchor    *time.Time                          `json:"weekly_window_anchor,omitempty"`
+	MonthlyWindowAnchor   *time.Time                          `json:"monthly_window_anchor,omitempty"`
+	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot `json:"enterprise_attribution,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
 	// not the latency of that single discovery request alone.
 	CreatedAt string `json:"created_at,omitempty"`
+}
+
+type enterpriseUsageAttributionSnapshotResolver interface {
+	ResolveEnterpriseUsageAttributionSnapshot(context.Context, *UsageLog) error
+}
+
+// FreezeEnterpriseUsageAttribution resolves the request-time employee assignment
+// before an asynchronous completion can observe a later assignment generation.
+func (s *OpenAIGatewayService) FreezeEnterpriseUsageAttribution(
+	ctx context.Context,
+	apiKey *APIKey,
+	subscription *UserSubscription,
+	pricingAt time.Time,
+) (*EnterpriseUsageAttributionSnapshot, error) {
+	if s == nil || apiKey == nil || apiKey.User == nil || subscription == nil ||
+		!apiKey.EnterpriseAttributionCandidate || pricingAt.IsZero() {
+		return nil, nil
+	}
+	resolver, ok := s.usageLogRepo.(enterpriseUsageAttributionSnapshotResolver)
+	if !ok {
+		return nil, nil
+	}
+	subscriptionID := subscription.ID
+	log := &UsageLog{
+		UserID: apiKey.User.ID, APIKeyID: apiKey.ID, SubscriptionID: &subscriptionID,
+		EnterpriseAttributionCandidate: true, AttributionRequestAt: pricingAt,
+		AttributionDailyWindowAnchor:   copyUsageAttributionAnchor(subscription.DailyWindowStart),
+		AttributionWeeklyWindowAnchor:  copyUsageAttributionAnchor(subscription.WeeklyWindowStart),
+		AttributionMonthlyWindowAnchor: copyUsageAttributionAnchor(subscription.MonthlyWindowStart),
+	}
+	if err := resolver.ResolveEnterpriseUsageAttributionSnapshot(ctx, log); err != nil {
+		return nil, err
+	}
+	return log.EnterpriseAttribution, nil
 }
 
 // GrokVideoPendingCreatedAtNow formats a create-accept timestamp for pending billing.

@@ -431,6 +431,10 @@ func (r *usageLogRepository) resolveEnterpriseUsageAttributionSnapshot(ctx conte
 	return nil
 }
 
+func (r *usageLogRepository) ResolveEnterpriseUsageAttributionSnapshot(ctx context.Context, log *service.UsageLog) error {
+	return r.resolveEnterpriseUsageAttributionSnapshot(ctx, log)
+}
+
 func copyTimePointer(value *time.Time) *time.Time {
 	if value == nil {
 		return nil

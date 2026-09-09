@@ -77,7 +77,7 @@ func TestEnterpriseAllocationRoutesMapScopeVersionAndUnsafeReason(t *testing.T) 
 		body     []byte
 		want     int
 	}{
-		"cross enterprise": {enterprise.ErrEnterpriseAccessDenied, validAllocationBody(), http.StatusForbidden},
+		"cross enterprise": {enterprise.ErrEnterpriseAccessDenied, validAllocationBody(), http.StatusNotFound},
 		"version conflict": {enterprise.ErrAllocationVersionConflict, validAllocationBody(), http.StatusConflict},
 		"secret reason":    {nil, []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"token=secret"}`), http.StatusBadRequest},
 		"long reason":      {nil, []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"` + string(bytes.Repeat([]byte("a"), enterprise.MaxAllocationReasonLength+1)) + `"}`), http.StatusBadRequest},

@@ -75,6 +75,7 @@ func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 	subRepo := &openAIRecordUsageSubRepoStub{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 	usage := OpenAIUsage{InputTokens: 1200, OutputTokens: 300}
+	pricingAt := time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)
 
 	// 流式 cyber：上游 response.failed 报告了真实 token，须按真实 token 计费并扣费，
 	// 与 WS cyber / 正常请求口径一致（不再是 tokens=0 免费行）。
@@ -86,6 +87,7 @@ func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 		Stream:       true,
 		InputTokens:  1200,
 		OutputTokens: 300,
+		PricingAt:    pricingAt,
 	})
 
 	require.Equal(t, 1, usageRepo.calls)
@@ -95,6 +97,7 @@ func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 	require.Equal(t, 300, usageRepo.lastLog.OutputTokens)
 	require.Equal(t, RequestTypeCyberBlocked, usageRepo.lastLog.RequestType, "cyber 行须标 request_type=cyber")
 	require.True(t, usageRepo.lastLog.Stream, "cyber 不覆盖真实 stream 字段")
+	require.Equal(t, pricingAt, usageRepo.lastLog.AttributionRequestAt, "cyber usage 必须沿用原请求 PricingAt")
 
 	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
 	require.Greater(t, usageRepo.lastLog.ActualCost, 0.0, "流式 cyber 有真实 token，须计费")

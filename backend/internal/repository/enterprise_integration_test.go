@@ -405,6 +405,58 @@ func TestEnterpriseAllocationRejectsCrossScopeAndInvalidInput(t *testing.T) {
 	}
 }
 
+func TestEnterpriseAllocationCrossEnterpriseObjectsHaveNoWriteSideEffects(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	other := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+
+	counts := func() [3]int64 {
+		var result [3]int64
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM enterprise_weekly_allocations`).Scan(&result[0]))
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM enterprise_allocation_revisions`).Scan(&result[1]))
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM enterprise_audit_events`).Scan(&result[2]))
+		return result
+	}
+
+	for name, mutate := range map[string]func(*enterprise.SetAllocationParams){
+		"subscription": func(params *enterprise.SetAllocationParams) { params.SubscriptionID = other.subscriptionID },
+		"employee":     func(params *enterprise.SetAllocationParams) { params.EmployeeID = other.employeeID },
+	} {
+		t.Run(name, func(t *testing.T) {
+			params := enterprise.SetAllocationParams{
+				RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+				SubscriptionID: fixture.subscriptionID, EmployeeID: fixture.employeeID,
+				WindowType: enterprise.WindowTypeWeek, WindowAnchor: fixture.anchor,
+				Credit: "1", Reason: "cross enterprise isolation",
+			}
+			mutate(&params)
+			before := counts()
+			_, err := repo.SetAllocation(ctx, params)
+			require.ErrorIs(t, err, enterprise.ErrEnterpriseAccessDenied)
+			require.Equal(t, before, counts(), "cross-enterprise write must not create allocation, revision, or audit rows")
+		})
+	}
+
+	for name, mutate := range map[string]func(*enterprise.AllocationUsageSummaryQuery){
+		"subscription": func(query *enterprise.AllocationUsageSummaryQuery) { query.SubscriptionID = other.subscriptionID },
+		"employee":     func(query *enterprise.AllocationUsageSummaryQuery) { query.EmployeeID = other.employeeID },
+	} {
+		t.Run("summary "+name, func(t *testing.T) {
+			query := enterprise.AllocationUsageSummaryQuery{
+				RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+				SubscriptionID: fixture.subscriptionID, EmployeeID: fixture.employeeID,
+				WindowType: enterprise.WindowTypeWeek, WindowAnchor: fixture.anchor,
+			}
+			mutate(&query)
+			before := counts()
+			_, err := repo.GetAllocationUsageSummary(ctx, query)
+			require.ErrorIs(t, err, enterprise.ErrEnterpriseAccessDenied)
+			require.Equal(t, before, counts(), "cross-enterprise summary must not create allocation, revision, or audit rows")
+		})
+	}
+}
+
 func TestEnterpriseAllocationConcurrentEmployeesMayOverallocate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
