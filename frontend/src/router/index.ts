@@ -13,11 +13,15 @@ import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
+import { enterpriseRoutes } from './enterpriseRoutes'
+import { resolveEnterpriseNavigation } from './enterpriseGuard'
+import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
 
 /**
  * Route definitions with lazy loading
  */
 const routes: RouteRecordRaw[] = [
+  ...enterpriseRoutes,
   // ==================== Setup Routes ====================
   {
     path: '/setup',
@@ -781,6 +785,23 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
+
+  if (to.path.startsWith('/enterprise')) {
+    const enterpriseAuth = useEnterpriseAuthStore()
+    enterpriseAuth.restore()
+    const redirect = resolveEnterpriseNavigation({
+      requiresEnterpriseAuth: to.meta.requiresEnterpriseAuth as boolean | undefined,
+      enterpriseRole: to.meta.enterpriseRole as 'admin' | 'employee' | undefined,
+    }, to.path, {
+      authenticated: enterpriseAuth.isAuthenticated,
+      role: enterpriseAuth.principal?.role,
+      forcePasswordChange: enterpriseAuth.mustChangePassword,
+    })
+    document.title = `${String(to.meta.title || '企业门户')} - 企业门户`
+    if (redirect) next(redirect)
+    else next()
+    return
+  }
 
   const authStore = useAuthStore()
 

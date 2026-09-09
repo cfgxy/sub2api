@@ -1923,11 +1923,17 @@ func resolvedTokenVersion(user *User) int64 {
 	if user.TokenVersionResolved {
 		return user.TokenVersion
 	}
+	return ResolveTokenVersion(user.Email, user.PasswordHash, user.TokenVersion)
+}
 
-	material := strings.ToLower(strings.TrimSpace(user.Email)) + "\n" + user.PasswordHash
+// ResolveTokenVersion derives the stateless token version used when users has
+// no token_version column. Password or normalized email changes invalidate all
+// access and refresh tokens issued from the previous fingerprint.
+func ResolveTokenVersion(email, passwordHash string, tokenVersion int64) int64 {
+	material := strings.ToLower(strings.TrimSpace(email)) + "\n" + passwordHash
 	sum := sha256.Sum256([]byte(material))
 	fingerprint := int64(binary.BigEndian.Uint64(sum[:8]) & 0x7fffffffffffffff)
-	return user.TokenVersion ^ fingerprint
+	return tokenVersion ^ fingerprint
 }
 
 // snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（platform × 3 window）以

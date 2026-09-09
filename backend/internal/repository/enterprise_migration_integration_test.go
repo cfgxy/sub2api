@@ -8,13 +8,19 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseidentity"
 	dbmigrations "github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var enterprise235TriggerNames = []string{
@@ -154,8 +160,8 @@ func TestEnterprise236NonEmptyDatabaseRollsBackWithoutPartialSchema(t *testing.T
 	require.ErrorContains(t, err, "requires empty enterprise tables")
 
 	require.False(t, relationExists(t, ctx, db, "enterprise_departments"))
-	require.True(t, columnExists(t, ctx, db, "enterprise_subscriptions", "effective_window_anchor"))
-	require.False(t, columnExists(t, ctx, db, "enterprise_subscriptions", "observed_weekly_window_start"))
+	require.False(t, columnExists(t, ctx, db, "enterprise_subscriptions", "effective_window_anchor"))
+	require.True(t, columnExists(t, ctx, db, "enterprise_subscriptions", "observed_weekly_window_start"))
 	require.Equal(t, len(enterprise235TriggerNames), countNamedEnterpriseTriggers(t, ctx, db))
 	require.Equal(t, len(enterprise235FunctionNames), countNamedEnterpriseFunctions(t, ctx, db))
 
@@ -165,6 +171,205 @@ func TestEnterprise236NonEmptyDatabaseRollsBackWithoutPartialSchema(t *testing.T
 	require.Zero(t, migrationCount)
 	require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM enterprises").Scan(&enterpriseCount))
 	require.Equal(t, 1, enterpriseCount)
+}
+
+func TestEnterprise237IdentitySchemaAllowsScopedEmailAndRehire(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+
+	for _, table := range []string{"enterprise_sessions", "enterprise_refresh_tokens", "enterprise_password_reset_tokens", "enterprise_branding"} {
+		require.True(t, relationExists(t, ctx, db, table), table)
+	}
+	for _, column := range []string{"portal_host", "admin_user_id"} {
+		require.Equal(t, "NO", columnNullable(t, ctx, db, "enterprises", column), column)
+	}
+
+	createEnterprise := func(email, host string) int64 {
+		var userID, enterpriseID int64
+		require.NoError(t, db.QueryRowContext(ctx, `
+			INSERT INTO users (email, password_hash) VALUES ($1, '$2a$12$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuu') RETURNING id
+		`, email).Scan(&userID))
+		require.NoError(t, db.QueryRowContext(ctx, `
+			INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host)
+			VALUES ($1, $2, $2, $3) RETURNING id
+		`, email, userID, host).Scan(&enterpriseID))
+		return enterpriseID
+	}
+	one := createEnterprise("admin-one@example.com", "one.example.com")
+	two := createEnterprise("admin-two@example.com", "two.example.com")
+
+	createEmployee := func(enterpriseID int64) int64 {
+		var employeeID int64
+		require.NoError(t, db.QueryRowContext(ctx, `
+			INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, initial_password_expires_at)
+			VALUES ($1, 'same@example.com', 'same@example.com', '$2a$12$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuu', NOW() + INTERVAL '24 hours')
+			RETURNING id
+		`, enterpriseID).Scan(&employeeID))
+		return employeeID
+	}
+	firstEmployeeID := createEmployee(one)
+	require.NotZero(t, createEmployee(two), "same email must be valid in another enterprise")
+	_, err := db.ExecContext(ctx, `
+		UPDATE enterprise_employees
+		SET status = 'terminated', current_email = NULL, terminated_at = NOW(), updated_at = NOW()
+		WHERE enterprise_id = $1 AND id = $2
+	`, one, firstEmployeeID)
+	require.NoError(t, err)
+	rehiredEmployeeID := createEmployee(one)
+	require.NotEqual(t, firstEmployeeID, rehiredEmployeeID)
+}
+
+func TestEnterprise237RejectsExistingEnterpriseDataBeforeIdentityDDL(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "236_enterprise_frozen_contract.sql")))
+
+	var userID int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO users (email, password_hash)
+		VALUES ('shan152-preflight@example.com', 'test')
+		RETURNING id
+	`).Scan(&userID))
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO enterprises (name, dedicated_upstream_user_id)
+		VALUES ('SHAN-152 preflight probe', $1)
+	`, userID)
+	require.NoError(t, err)
+
+	err = applyMigrationsFS(ctx, db, migrationOnly(t, "237_enterprise_identity.sql"))
+	require.ErrorContains(t, err, "SHAN-152 237 refuses existing enterprise data in enterprises")
+	require.ErrorContains(t, err, "explicitly backfill portal_host, admin_user_id, and employee password_hash")
+	require.False(t, columnExists(t, ctx, db, "enterprises", "portal_host"))
+	require.False(t, columnExists(t, ctx, db, "enterprise_employees", "password_hash"))
+	require.False(t, relationExists(t, ctx, db, "enterprise_sessions"))
+	require.Zero(t, migrationRecordCount(t, ctx, db, "237_enterprise_identity.sql"))
+}
+
+func TestEnterprise237RollbackRestores235And236Foundation(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	rollbackSQL, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "..", "..", "..", "deploy", "shan-152-enterprise-identity.rollback.sql"))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, string(rollbackSQL))
+	require.NoError(t, err)
+
+	for _, table := range []string{
+		"enterprise_sessions",
+		"enterprise_refresh_tokens",
+		"enterprise_password_reset_tokens",
+		"enterprise_branding",
+	} {
+		require.False(t, relationExists(t, ctx, db, table), table)
+	}
+	for _, column := range []string{
+		"portal_host",
+		"admin_user_id",
+	} {
+		require.False(t, columnExists(t, ctx, db, "enterprises", column), column)
+	}
+	for _, column := range []string{
+		"current_email",
+		"password_hash",
+		"must_change_password",
+		"initial_password_expires_at",
+		"password_changed_at",
+		"auth_version",
+		"terminated_at",
+	} {
+		require.False(t, columnExists(t, ctx, db, "enterprise_employees", column), column)
+	}
+
+	for _, table := range []string{
+		"enterprises",
+		"enterprise_employees",
+		"enterprise_subscriptions",
+		"enterprise_subscription_windows",
+		"enterprise_key_assignments",
+		"enterprise_weekly_allocations",
+		"enterprise_allocation_revisions",
+		"enterprise_usage_attributions",
+		"enterprise_audit_events",
+		"enterprise_departments",
+	} {
+		require.True(t, relationExists(t, ctx, db, table), table)
+	}
+	require.False(t, columnExists(t, ctx, db, "enterprise_subscriptions", "effective_window_anchor"))
+	require.True(t, columnExists(t, ctx, db, "enterprise_subscriptions", "observed_weekly_window_start"))
+	for _, constraint := range []string{
+		"ck_enterprises_admin_is_dedicated_user",
+		"ck_enterprise_employees_lifecycle",
+	} {
+		require.False(t, constraintExists(t, ctx, db, constraint), constraint)
+	}
+	for _, index := range []string{
+		"uq_enterprises_portal_host",
+		"uq_enterprises_admin_user",
+		"uq_enterprise_employees_current_email",
+	} {
+		require.False(t, relationExists(t, ctx, db, index), index)
+	}
+	require.True(t, constraintExists(t, ctx, db, "enterprise_employees_status_check"))
+	require.True(t, constraintExists(t, ctx, db, "ck_enterprise_employees_status_disabled_at"))
+}
+
+func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+	require.False(t, columnExists(t, ctx, db, "users", "token_version"))
+
+	oldHash, err := bcrypt.GenerateFromPassword([]byte("old-password-strong"), bcrypt.MinCost)
+	require.NoError(t, err)
+	var userID int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO users (email, password_hash, status)
+		VALUES ('admin@example.com', $1, 'active') RETURNING id
+	`, string(oldHash)).Scan(&userID))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host, status)
+		VALUES ('Acme', $1, $1, 'acme.example.com', 'active')
+	`, userID)
+	require.NoError(t, err)
+
+	svc := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil)
+	oldPair, err := svc.Login(ctx, "acme.example.com", "admin@example.com", "old-password-strong", "integration", "127.0.0.1")
+	require.NoError(t, err)
+	_, _, err = svc.Authenticate(ctx, "acme.example.com", oldPair.AccessToken)
+	require.NoError(t, err)
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte("new-password-strong"), bcrypt.MinCost)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `UPDATE users SET password_hash = $1 WHERE id = $2`, string(newHash), userID)
+	require.NoError(t, err)
+	_, _, err = svc.Authenticate(ctx, "acme.example.com", oldPair.AccessToken)
+	require.Error(t, err)
+	_, err = svc.Refresh(ctx, "acme.example.com", oldPair.RefreshToken, "integration", "127.0.0.1")
+	require.Error(t, err)
+
+	logoutR0, err := svc.Login(ctx, "acme.example.com", "admin@example.com", "new-password-strong", "integration", "127.0.0.1")
+	require.NoError(t, err)
+	logoutR1, err := svc.Refresh(ctx, "acme.example.com", logoutR0.RefreshToken, "integration", "127.0.0.1")
+	require.NoError(t, err)
+	require.NoError(t, svc.Logout(ctx, "acme.example.com", logoutR1.RefreshToken))
+	_, _, err = svc.Authenticate(ctx, "acme.example.com", logoutR1.AccessToken)
+	require.Error(t, err)
+	_, err = svc.Refresh(ctx, "acme.example.com", logoutR1.RefreshToken, "integration", "127.0.0.1")
+	require.Error(t, err)
+
+	r0, err := svc.Login(ctx, "acme.example.com", "admin@example.com", "new-password-strong", "integration", "127.0.0.1")
+	require.NoError(t, err)
+	r1, err := svc.Refresh(ctx, "acme.example.com", r0.RefreshToken, "integration", "127.0.0.1")
+	require.NoError(t, err)
+	_, err = svc.Refresh(ctx, "acme.example.com", r0.RefreshToken, "integration", "127.0.0.1")
+	require.Error(t, err)
+	_, err = svc.Refresh(ctx, "acme.example.com", r1.RefreshToken, "integration", "127.0.0.1")
+	require.Error(t, err)
 }
 
 func newIndependentMigrationDatabase(t *testing.T, ctx context.Context) *sql.DB {

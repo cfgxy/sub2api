@@ -1,0 +1,95 @@
+name: shan-152-enterprise-identity
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
+    container_name: shan-152-sub2api
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${SHAN152_BIND_HOST:-127.0.0.1}:${SHAN152_SERVER_PORT:-8152}:8080"
+    environment:
+      AUTO_SETUP: "true"
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      SERVER_MODE: debug
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${SHAN152_POSTGRES_USER:-sub2api}
+      DATABASE_PASSWORD: ${SHAN152_POSTGRES_PASSWORD:?SHAN152_POSTGRES_PASSWORD is required}
+      DATABASE_DBNAME: ${SHAN152_POSTGRES_DB:-sub2api}
+      DATABASE_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${SHAN152_REDIS_PASSWORD:-shan152-local-only}
+      JWT_SECRET: ${SHAN152_JWT_SECRET:?SHAN152_JWT_SECRET is required}
+      ADMIN_EMAIL: ${SHAN152_ADMIN_EMAIL:-admin@shan-152.local}
+      ADMIN_PASSWORD: ${SHAN152_ADMIN_PASSWORD:?SHAN152_ADMIN_PASSWORD is required}
+      TZ: ${TZ:-Asia/Shanghai}
+      NO_PROXY: 127.0.0.1,localhost,::1,postgres,redis,app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - shan-152
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: shan-152-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${SHAN152_POSTGRES_USER:-sub2api}
+      POSTGRES_PASSWORD: ${SHAN152_POSTGRES_PASSWORD:?SHAN152_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${SHAN152_POSTGRES_DB:-sub2api}
+      PGDATA: /var/lib/postgresql/data
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - shan-152-postgres:/var/lib/postgresql/data
+    networks:
+      - shan-152
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SHAN152_POSTGRES_USER:-sub2api} -d ${SHAN152_POSTGRES_DB:-sub2api}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:8-alpine
+    container_name: shan-152-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${SHAN152_REDIS_PASSWORD:-shan152-local-only}"]
+    environment:
+      REDISCLI_AUTH: ${SHAN152_REDIS_PASSWORD:-shan152-local-only}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - shan-152-redis:/data
+    networks:
+      - shan-152
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+networks:
+  shan-152:
+    name: shan-152-enterprise-identity
+
+volumes:
+  shan-152-postgres:
+    name: shan-152-enterprise-postgres
+  shan-152-redis:
+    name: shan-152-enterprise-redis
