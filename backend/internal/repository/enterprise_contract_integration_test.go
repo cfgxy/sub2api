@@ -81,7 +81,7 @@ func TestEnterprise236SchemaMatchesFrozenContract(t *testing.T) {
 			  AND c.confrelid = 'usage_logs'::regclass
 		)
 	`).Scan(&usageLogFK))
-	require.True(t, usageLogFK)
+	require.False(t, usageLogFK)
 	var usageLogsKind string
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		SELECT relkind::text FROM pg_class WHERE oid = 'usage_logs'::regclass
@@ -129,6 +129,71 @@ func TestEnterprise236SchemaMatchesFrozenContract(t *testing.T) {
 		  AND pg_proc.proname = ANY($1)
 	`, pq.Array(functionNames)).Scan(&enterpriseFunctions))
 	require.Zero(t, enterpriseFunctions)
+}
+
+func TestEnterprise237AllocationSchemaUsesWindowTypeAndAnchor(t *testing.T) {
+	ctx := context.Background()
+	for _, column := range []string{"window_type", "window_anchor"} {
+		var exists bool
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'enterprise_weekly_allocations'
+				  AND column_name = $1
+			)
+		`, column).Scan(&exists))
+		require.True(t, exists, column)
+	}
+	var legacyAnchorExists bool
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = 'enterprise_weekly_allocations'
+			  AND column_name = 'weekly_window_anchor'
+		)
+	`).Scan(&legacyAnchorExists))
+	require.False(t, legacyAnchorExists)
+
+	for _, constraint := range []string{
+		"ck_enterprise_allocations_window_type",
+		"uq_enterprise_allocations_scope",
+	} {
+		var exists bool
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conrelid = 'enterprise_weekly_allocations'::regclass
+				  AND conname = $1
+			)
+		`, constraint).Scan(&exists))
+		require.True(t, exists, constraint)
+	}
+	for table, columns := range map[string][]string{
+		"enterprise_usage_attributions": {"window_type", "window_anchor", "api_key_id", "assignment_generation", "request_at"},
+	} {
+		for _, column := range columns {
+			var exists bool
+			require.NoError(t, integrationDB.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+				)
+			`, table, column).Scan(&exists))
+			require.True(t, exists, table+"."+column)
+		}
+	}
+	for _, column := range []string{"allocation_limit_5h", "allocation_limit_7d", "allocation_limit_reason", "allocation_limit_actor_ref"} {
+		var exists bool
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'enterprise_subscription_windows' AND column_name = $1
+			)
+		`, column).Scan(&exists))
+		require.False(t, exists, column)
+	}
 }
 
 func TestEnterpriseReplaceScheduledSubscriptionIsAtomicAndAudited(t *testing.T) {
@@ -454,8 +519,9 @@ func TestEnterpriseFirstAssignmentAndControlledExternalAttributionSerializeByAPI
 		require.NoError(t, assignmentResultValue.err)
 		require.NotNil(t, assignmentResultValue.assignment)
 		attributionResultValue := <-attributionDone
-		require.ErrorIs(t, attributionResultValue.err, enterprise.ErrUsageAttributionMismatch)
-		require.Nil(t, attributionResultValue.attribution)
+		require.NoError(t, attributionResultValue.err)
+		require.NotNil(t, attributionResultValue.attribution)
+		require.Equal(t, "controlled_external", attributionResultValue.attribution.Classification)
 	})
 
 	t.Run("attribution commits first", func(t *testing.T) {
@@ -796,8 +862,9 @@ func TestDashboardAggregationPartitionCleanupFailureRollsBackDataAndWatermark(t 
 
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO enterprise_usage_attributions (
-			enterprise_id, subscription_id, usage_log_id, weekly_window_anchor, classification
-		) VALUES (300, 400, 1, '2000-01-01', 'controlled_external');
+			enterprise_id, subscription_id, api_key_id, usage_log_id, assignment_generation,
+			window_type, window_anchor, request_at, classification
+		) VALUES (300, 400, 10, 1, 0, 'week', '2000-01-01', '2000-01-10', 'controlled_external');
 		CREATE FUNCTION reject_rollup_invalidation() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
 			RAISE EXCEPTION 'injected rollup invalidation failure';
@@ -861,8 +928,9 @@ func setupPartitionCleanupSchema(t *testing.T, ctx context.Context, schema strin
 			enterprise_id BIGINT NOT NULL,
 			employee_id BIGINT,
 			api_key_id BIGINT NOT NULL,
-			upstream_user_subscription_id BIGINT NOT NULL,
-			assigned_at TIMESTAMPTZ NOT NULL,
+				upstream_user_subscription_id BIGINT NOT NULL,
+				generation BIGINT NOT NULL DEFAULT 1,
+				assigned_at TIMESTAMPTZ NOT NULL,
 			ended_at TIMESTAMPTZ
 		);
 		CREATE TABLE `+quotedSchema+`.enterprise_usage_attributions (
@@ -870,10 +938,15 @@ func setupPartitionCleanupSchema(t *testing.T, ctx context.Context, schema strin
 			enterprise_id BIGINT NOT NULL,
 			subscription_id BIGINT NOT NULL,
 			employee_id BIGINT,
-			usage_log_id BIGINT NOT NULL UNIQUE,
-			weekly_window_anchor TIMESTAMPTZ NOT NULL,
-			classification TEXT NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				api_key_id BIGINT NOT NULL,
+				usage_log_id BIGINT NOT NULL,
+				assignment_generation BIGINT NOT NULL,
+				window_type TEXT NOT NULL,
+				window_anchor TIMESTAMPTZ NOT NULL,
+				request_at TIMESTAMPTZ NOT NULL,
+				classification TEXT NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				UNIQUE (usage_log_id, window_type)
 		);
 		CREATE TABLE `+quotedSchema+`.usage_group_rollup_state (
 			id SMALLINT PRIMARY KEY,

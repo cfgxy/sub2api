@@ -95,6 +95,11 @@ func Status(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldStatus, v))
 }
 
+// EnterpriseAttributionCandidate applies equality check predicate on the "enterprise_attribution_candidate" field. It's identical to EnterpriseAttributionCandidateEQ.
+func EnterpriseAttributionCandidate(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldEnterpriseAttributionCandidate, v))
+}
+
 // LastUsedAt applies equality check predicate on the "last_used_at" field. It's identical to LastUsedAtEQ.
 func LastUsedAt(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldLastUsedAt, v))
@@ -533,6 +538,16 @@ func StatusEqualFold(v string) predicate.APIKey {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// EnterpriseAttributionCandidateEQ applies the EQ predicate on the "enterprise_attribution_candidate" field.
+func EnterpriseAttributionCandidateEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldEnterpriseAttributionCandidate, v))
+}
+
+// EnterpriseAttributionCandidateNEQ applies the NEQ predicate on the "enterprise_attribution_candidate" field.
+func EnterpriseAttributionCandidateNEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldEnterpriseAttributionCandidate, v))
 }
 
 // LastUsedAtEQ applies the EQ predicate on the "last_used_at" field.

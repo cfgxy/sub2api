@@ -143,6 +143,41 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
+func TestGatewayServiceRecordUsage_CapturesPricingAtAndSubscriptionWindowAnchors(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	pricingAt := time.Date(2026, 9, 8, 23, 59, 59, 0, time.UTC)
+	dayAnchor := pricingAt.Add(-23 * time.Hour)
+	weekAnchor := pricingAt.Add(-6 * 24 * time.Hour)
+	monthAnchor := pricingAt.Add(-29 * 24 * time.Hour)
+	subscriptionID := int64(801)
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_enterprise_attribution", Usage: ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model: "claude-sonnet-4", Duration: time.Second,
+		},
+		APIKey: &APIKey{
+			ID: 501, Group: &Group{SubscriptionType: "subscription"},
+			EnterpriseAttributionCandidate: true,
+		},
+		User: &User{ID: 601}, Account: &Account{ID: 701}, PricingAt: pricingAt,
+		Subscription: &UserSubscription{
+			ID: subscriptionID, DailyWindowStart: &dayAnchor,
+			WeeklyWindowStart: &weekAnchor, MonthlyWindowStart: &monthAnchor,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, pricingAt, usageRepo.lastLog.AttributionRequestAt)
+	require.Equal(t, dayAnchor, *usageRepo.lastLog.AttributionDailyWindowAnchor)
+	require.Equal(t, weekAnchor, *usageRepo.lastLog.AttributionWeeklyWindowAnchor)
+	require.Equal(t, monthAnchor, *usageRepo.lastLog.AttributionMonthlyWindowAnchor)
+	require.True(t, usageRepo.lastLog.EnterpriseAttributionCandidate)
+	require.Nil(t, usageRepo.lastLog.EnterpriseAttribution)
+}
+
 func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

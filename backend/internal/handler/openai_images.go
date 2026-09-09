@@ -144,7 +144,11 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	}
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
-	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
+	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(
+		service.WithOpenAIProfitControlSuppressed(c.Request.Context()), apiKey.GroupID,
+	)
+	c.Request = c.Request.WithContext(pricingCtx)
+	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(pricingCtx))
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -406,6 +410,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,
+				PricingAt:          pricingAt,
 				SessionID:          sessionID,
 				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, requestModel, upstreamModel),
 			}); err != nil {

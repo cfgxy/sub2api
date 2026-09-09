@@ -210,11 +210,31 @@ type UsageLog struct {
 
 	CreatedAt time.Time
 
+	// 企业积分归属仅保存请求时快照，不改变原生 usage_logs 结构与 actual_cost 协议。
+	AttributionRequestAt           time.Time
+	AttributionDailyWindowAnchor   *time.Time
+	AttributionWeeklyWindowAnchor  *time.Time
+	AttributionMonthlyWindowAnchor *time.Time
+	EnterpriseAttributionCandidate bool
+	EnterpriseAttribution          *EnterpriseUsageAttributionSnapshot
+
 	User         *User
 	APIKey       *APIKey
 	Account      *Account
 	Group        *Group
 	Subscription *UserSubscription
+}
+
+type EnterpriseUsageAttributionSnapshot struct {
+	EnterpriseID         int64
+	SubscriptionID       int64
+	EmployeeID           *int64
+	AssignmentGeneration int64
+	Classification       string
+	RequestAt            time.Time
+	DailyWindowAnchor    *time.Time
+	WeeklyWindowAnchor   *time.Time
+	MonthlyWindowAnchor  *time.Time
 }
 
 func (u *UsageLog) TotalTokens() int {

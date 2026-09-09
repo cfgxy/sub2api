@@ -12,6 +12,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	enterprise "github.com/Wei-Shaw/sub2api/internal/enterprise"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -158,6 +159,12 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return r.createSingle(ctx, tx.Client(), log)
 	}
+	if err := r.resolveEnterpriseUsageAttributionSnapshot(ctx, log); err != nil {
+		return false, err
+	}
+	if hasEnterpriseUsageAttributionSnapshot(log) {
+		return r.createSingleWithAttributionTransaction(ctx, log)
+	}
 	requestID := strings.TrimSpace(log.RequestID)
 	if requestID == "" {
 		return r.createSingle(ctx, r.sql, log)
@@ -173,6 +180,13 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		_, err := r.createSingle(ctx, tx.Client(), log)
+		return err
+	}
+	if err := r.resolveEnterpriseUsageAttributionSnapshot(ctx, log); err != nil {
+		return err
+	}
+	if hasEnterpriseUsageAttributionSnapshot(log) {
+		_, err := r.createSingleWithAttributionTransaction(ctx, log)
 		return err
 	}
 	if r.db == nil {
@@ -212,6 +226,26 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 	case <-ctx.Done():
 		return service.MarkUsageLogCreateDropped(ctx.Err())
 	}
+}
+
+func (r *usageLogRepository) createSingleWithAttributionTransaction(ctx context.Context, log *service.UsageLog) (bool, error) {
+	if r.db == nil {
+		return r.createSingle(ctx, r.sql, log)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	inserted, err := r.createSingle(ctx, tx, log)
+	if err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return inserted, nil
 }
 
 func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor, log *service.UsageLog) (bool, error) {
@@ -306,13 +340,196 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 				return false, err
 			}
 			log.RateMultiplier = prepared.rateMultiplier
+			if err := createEnterpriseUsageAttributions(ctx, sqlq, log, false); err != nil {
+				return false, err
+			}
 			return false, nil
 		} else {
 			return false, err
 		}
 	}
 	log.RateMultiplier = prepared.rateMultiplier
+	if err := createEnterpriseUsageAttributions(ctx, sqlq, log, true); err != nil {
+		return false, err
+	}
 	return true, nil
+}
+
+func hasEnterpriseUsageAttributionSnapshot(log *service.UsageLog) bool {
+	return log != nil && log.EnterpriseAttribution != nil
+}
+
+func (r *usageLogRepository) resolveEnterpriseUsageAttributionSnapshot(ctx context.Context, log *service.UsageLog) error {
+	if log == nil || !log.EnterpriseAttributionCandidate || log.EnterpriseAttribution != nil || r.db == nil || log.SubscriptionID == nil ||
+		log.AttributionRequestAt.IsZero() || (log.AttributionDailyWindowAnchor == nil &&
+		log.AttributionWeeklyWindowAnchor == nil && log.AttributionMonthlyWindowAnchor == nil) {
+		return nil
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT enterprise_subscription.enterprise_id,
+		       enterprise_subscription.id,
+		       assignment.employee_id,
+		       assignment.generation
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN enterprises AS enterprise
+		  ON enterprise.id = enterprise_subscription.enterprise_id
+		 AND enterprise.dedicated_upstream_user_id = $2
+		 AND enterprise.status = 'active'
+		LEFT JOIN LATERAL (
+			SELECT candidate.employee_id, candidate.generation
+			FROM enterprise_key_assignments AS candidate
+			WHERE candidate.enterprise_id = enterprise_subscription.enterprise_id
+			  AND candidate.api_key_id = $3
+			  AND candidate.upstream_user_subscription_id = $1
+			  AND candidate.assigned_at <= $4::timestamptz
+			  AND (candidate.ended_at IS NULL OR $4::timestamptz < candidate.ended_at)
+			ORDER BY candidate.generation DESC
+			LIMIT 1
+		) AS assignment ON TRUE
+		WHERE enterprise_subscription.upstream_user_subscription_id = $1
+		  AND enterprise_subscription.status IN ('active', 'ended')
+		  AND enterprise_subscription.activated_at IS NOT NULL
+		  AND enterprise_subscription.activated_at <= $4::timestamptz
+		  AND (enterprise_subscription.ended_at IS NULL OR $4::timestamptz < enterprise_subscription.ended_at)
+	`, *log.SubscriptionID, log.UserID, log.APIKeyID, log.AttributionRequestAt.UTC())
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var snapshot *service.EnterpriseUsageAttributionSnapshot
+	for rows.Next() {
+		if snapshot != nil {
+			return enterprise.ErrUsageAttributionMismatch
+		}
+		var employeeID sql.NullInt64
+		var generation sql.NullInt64
+		candidate := &service.EnterpriseUsageAttributionSnapshot{
+			RequestAt:           log.AttributionRequestAt.UTC(),
+			DailyWindowAnchor:   copyTimePointer(log.AttributionDailyWindowAnchor),
+			WeeklyWindowAnchor:  copyTimePointer(log.AttributionWeeklyWindowAnchor),
+			MonthlyWindowAnchor: copyTimePointer(log.AttributionMonthlyWindowAnchor),
+		}
+		if err := rows.Scan(&candidate.EnterpriseID, &candidate.SubscriptionID, &employeeID, &generation); err != nil {
+			return err
+		}
+		if employeeID.Valid {
+			value := employeeID.Int64
+			candidate.EmployeeID = &value
+			candidate.AssignmentGeneration = generation.Int64
+			candidate.Classification = "employee"
+		} else {
+			candidate.Classification = "controlled_external"
+		}
+		snapshot = candidate
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	log.EnterpriseAttribution = snapshot
+	return nil
+}
+
+func (r *usageLogRepository) ResolveEnterpriseUsageAttributionSnapshot(ctx context.Context, log *service.UsageLog) error {
+	return r.resolveEnterpriseUsageAttributionSnapshot(ctx, log)
+}
+
+func copyTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := value.UTC()
+	return &copy
+}
+
+func createEnterpriseUsageAttributions(ctx context.Context, sqlq sqlExecutor, log *service.UsageLog, inserted bool) error {
+	if !hasEnterpriseUsageAttributionSnapshot(log) || log.ID == 0 {
+		return nil
+	}
+	snapshot := log.EnterpriseAttribution
+	windows := []struct {
+		windowType string
+		anchor     *time.Time
+	}{
+		{"day", snapshot.DailyWindowAnchor},
+		{"week", snapshot.WeeklyWindowAnchor},
+		{"month", snapshot.MonthlyWindowAnchor},
+	}
+	if inserted {
+		for _, window := range windows {
+			if window.anchor == nil {
+				continue
+			}
+			if _, err := sqlq.ExecContext(ctx, `
+				INSERT INTO enterprise_usage_attributions (
+					enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+					assignment_generation, window_type, window_anchor, request_at, classification
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			`, snapshot.EnterpriseID, snapshot.SubscriptionID, snapshot.EmployeeID, log.APIKeyID, log.ID,
+				snapshot.AssignmentGeneration, window.windowType, window.anchor.UTC(), snapshot.RequestAt.UTC(),
+				snapshot.Classification); err != nil {
+				return err
+			}
+		}
+	}
+	return validateEnterpriseUsageAttributions(ctx, sqlq, log)
+}
+
+func validateEnterpriseUsageAttributions(ctx context.Context, sqlq sqlExecutor, log *service.UsageLog) error {
+	snapshot := log.EnterpriseAttribution
+	expected := map[string]time.Time{}
+	for windowType, anchor := range map[string]*time.Time{
+		"day": snapshot.DailyWindowAnchor, "week": snapshot.WeeklyWindowAnchor, "month": snapshot.MonthlyWindowAnchor,
+	} {
+		if anchor != nil {
+			expected[windowType] = anchor.UTC()
+		}
+	}
+	rows, err := sqlq.QueryContext(ctx, `
+		SELECT enterprise_id, subscription_id, employee_id, api_key_id,
+		       assignment_generation, window_type, window_anchor, request_at, classification
+		FROM enterprise_usage_attributions
+		WHERE usage_log_id = $1
+	`, log.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var enterpriseID, subscriptionID, apiKeyID, generation int64
+		var employeeID sql.NullInt64
+		var windowType, classification string
+		var windowAnchor, requestAt time.Time
+		if err := rows.Scan(&enterpriseID, &subscriptionID, &employeeID, &apiKeyID, &generation,
+			&windowType, &windowAnchor, &requestAt, &classification); err != nil {
+			return err
+		}
+		anchor, ok := expected[windowType]
+		if !ok || enterpriseID != snapshot.EnterpriseID || subscriptionID != snapshot.SubscriptionID ||
+			apiKeyID != log.APIKeyID || generation != snapshot.AssignmentGeneration ||
+			classification != snapshot.Classification || !windowAnchor.Equal(anchor) ||
+			!requestAt.Equal(snapshot.RequestAt.UTC()) || !sameUsageAttributionEmployee(employeeID, snapshot.EmployeeID) {
+			return enterprise.ErrUsageAttributionMismatch
+		}
+		delete(expected, windowType)
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(expected) != 0 || seen == 0 {
+		return enterprise.ErrUsageAttributionMismatch
+	}
+	return nil
+}
+
+func sameUsageAttributionEmployee(actual sql.NullInt64, expected *int64) bool {
+	if expected == nil {
+		return !actual.Valid
+	}
+	return actual.Valid && actual.Int64 == *expected
 }
 
 func (r *usageLogRepository) createBatched(ctx context.Context, log *service.UsageLog) (bool, error) {
