@@ -122,6 +122,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		}})
 		return
 	}
+	_, pricingAt := service.WithGatewayTokenRequestPricing(c.Request.Context())
 
 	failedAccounts := make(map[int64]struct{})
 	var account *service.Account
@@ -247,6 +248,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			RequestPayloadHash: requestPayloadHash,
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
+			PricingAt:          pricingAt,
 		}); err != nil {
 			logger.L().With(
 				zap.String("component", "handler.gateway.web_search"),

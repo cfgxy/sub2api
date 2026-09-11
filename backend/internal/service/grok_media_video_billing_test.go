@@ -1,11 +1,30 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type grokVideoAttributionResolverStub struct {
+	UsageLogRepository
+	lastLog *UsageLog
+}
+
+func (s *grokVideoAttributionResolverStub) ResolveEnterpriseUsageAttributionSnapshot(_ context.Context, log *UsageLog) error {
+	s.lastLog = log
+	employeeID := int64(42)
+	log.EnterpriseAttribution = &EnterpriseUsageAttributionSnapshot{
+		EnterpriseID: 11, SubscriptionID: 22, EmployeeID: &employeeID,
+		AssignmentGeneration: 3, Classification: "employee", RequestAt: log.AttributionRequestAt,
+		DailyWindowAnchor: log.AttributionDailyWindowAnchor, WeeklyWindowAnchor: log.AttributionWeeklyWindowAnchor,
+		MonthlyWindowAnchor: log.AttributionMonthlyWindowAnchor,
+	}
+	return nil
+}
 
 func TestGrokVideoE2EDurationFromCreatedAt(t *testing.T) {
 	t.Parallel()
@@ -28,6 +47,54 @@ func TestGrokVideoPendingCreatedAtStampOnStoreShape(t *testing.T) {
 	d := GrokVideoE2EDuration(stamp, time.Now().UTC().Add(2*time.Second))
 	require.GreaterOrEqual(t, d, time.Second)
 	require.LessOrEqual(t, d, 3*time.Second)
+}
+
+func TestGrokVideoPendingBillingCarriesCreateTimeUsageSnapshot(t *testing.T) {
+	pricingAt := time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)
+	dayAnchor := pricingAt.Add(-time.Hour)
+	weekAnchor := pricingAt.AddDate(0, 0, -2)
+	monthAnchor := pricingAt.AddDate(0, 0, -7)
+	employeeID := int64(42)
+	pending := GrokVideoPendingBilling{
+		PricingAt:         pricingAt,
+		DailyWindowAnchor: &dayAnchor, WeeklyWindowAnchor: &weekAnchor, MonthlyWindowAnchor: &monthAnchor,
+		EnterpriseAttribution: &EnterpriseUsageAttributionSnapshot{
+			EnterpriseID: 11, SubscriptionID: 22, EmployeeID: &employeeID,
+			AssignmentGeneration: 3, Classification: "employee", RequestAt: pricingAt,
+			DailyWindowAnchor: &dayAnchor, WeeklyWindowAnchor: &weekAnchor, MonthlyWindowAnchor: &monthAnchor,
+		},
+	}
+
+	payload, err := json.Marshal(pending)
+	require.NoError(t, err)
+	var restored GrokVideoPendingBilling
+	require.NoError(t, json.Unmarshal(payload, &restored))
+	require.Equal(t, pricingAt, restored.PricingAt)
+	require.Equal(t, dayAnchor, *restored.DailyWindowAnchor)
+	require.Equal(t, weekAnchor, *restored.WeeklyWindowAnchor)
+	require.Equal(t, monthAnchor, *restored.MonthlyWindowAnchor)
+	require.Equal(t, employeeID, *restored.EnterpriseAttribution.EmployeeID)
+	require.Equal(t, int64(3), restored.EnterpriseAttribution.AssignmentGeneration)
+}
+
+func TestFreezeEnterpriseUsageAttributionUsesCreateRequestContext(t *testing.T) {
+	pricingAt := time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)
+	dayAnchor := pricingAt.Add(-time.Hour)
+	weekAnchor := pricingAt.AddDate(0, 0, -2)
+	monthAnchor := pricingAt.AddDate(0, 0, -7)
+	repo := &grokVideoAttributionResolverStub{}
+	svc := &OpenAIGatewayService{usageLogRepo: repo}
+	apiKey := &APIKey{ID: 33, User: &User{ID: 44}, EnterpriseAttributionCandidate: true}
+	subscription := &UserSubscription{
+		ID: 22, DailyWindowStart: &dayAnchor, WeeklyWindowStart: &weekAnchor, MonthlyWindowStart: &monthAnchor,
+	}
+
+	snapshot, err := svc.FreezeEnterpriseUsageAttribution(context.Background(), apiKey, subscription, pricingAt)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.Equal(t, pricingAt, repo.lastLog.AttributionRequestAt)
+	require.Equal(t, int64(42), *snapshot.EmployeeID)
+	require.Equal(t, int64(3), snapshot.AssignmentGeneration)
 }
 
 func TestIsGrokVideoStatusBillable(t *testing.T) {

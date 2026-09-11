@@ -36,3 +36,25 @@ func TestOpenAIWSTurnPricingFreezePerTurn(t *testing.T) {
 	p.freeze(turn2)
 	require.Equal(t, turn2, p.currentOr(time.Time{}), "后续 turn 必须使用自己的定价时刻")
 }
+
+func TestOpenAIWSNativeCyberPricingUsesTurnFrozenInstant(t *testing.T) {
+	connectionPricingAt := time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)
+	turnPricingAt := connectionPricingAt.Add(2 * time.Hour)
+	turnStart := turnPricingAt.Add(-time.Second)
+	var pricing openAIWSTurnPricing
+	pricing.freeze(turnPricingAt)
+
+	got := openAIWSCyberPricingAt(&pricing, turnStart)
+	require.NotEqual(t, connectionPricingAt, got)
+	require.Equal(t, turnPricingAt, got)
+}
+
+func TestOpenAIWSPassthroughCyberPricingFallsBackToTurnStart(t *testing.T) {
+	connectionPricingAt := time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)
+	turnStart := connectionPricingAt.Add(3 * time.Hour)
+	var pricing openAIWSTurnPricing
+
+	got := openAIWSCyberPricingAt(&pricing, turnStart)
+	require.NotEqual(t, connectionPricingAt, got)
+	require.Equal(t, turnStart, got)
+}

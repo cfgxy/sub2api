@@ -36,7 +36,8 @@ type OpenAIRecordUsageInput struct {
 	// PricingAt 是请求级定价时刻（请求开始捕获，与利润门的 D 同源）：高峰因子
 	// 按该时刻计算，保证同一请求从准入到扣费不中途变价。零值回退记录时刻
 	//（既有行为），供未装配的路径（图片/异步/cyber 等）沿用。
-	PricingAt time.Time
+	PricingAt             time.Time
+	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot
 	// CyberBlocked 为 true 时把该用量行标记为 cyber（request_type=cyber），计费逻辑不变。
 	CyberBlocked bool
 	// NativeCompactionV2 is an orthogonal semantic flag captured by the
@@ -58,6 +59,7 @@ type CyberPolicyUsageInput struct {
 	Stream       bool
 	InputTokens  int
 	OutputTokens int
+	PricingAt    time.Time
 	// 渠道归因与请求级 meta，使 cyber 计费行与正常 RecordUsage 行口径一致
 	// （否则 cyber 行 channel_id 等为空，渠道维度统计会遗漏 cyber 命中）。
 	InboundEndpoint    string
@@ -103,6 +105,7 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		SessionID:          in.SessionID,
 		RequestPayloadHash: in.RequestPayloadHash,
 		APIKeyService:      in.APIKeyService,
+		PricingAt:          in.PricingAt,
 		ChannelUsageFields: in.ChannelUsageFields,
 		CyberBlocked:       true,
 		NativeCompactionV2: in.NativeCompactionV2,
@@ -395,6 +398,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageSizeSource:          optionalTrimmedStringPtr(result.ImageSizeSource),
 		ImageSizeBreakdown:       result.ImageSizeBreakdown,
 		NativeCompactionV2:       input.NativeCompactionV2,
+		AttributionRequestAt:     pricingAt,
+		EnterpriseAttribution:    input.EnterpriseAttribution,
+	}
+	if subscription != nil {
+		usageLog.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
+		usageLog.AttributionDailyWindowAnchor = copyUsageAttributionAnchor(subscription.DailyWindowStart)
+		usageLog.AttributionWeeklyWindowAnchor = copyUsageAttributionAnchor(subscription.WeeklyWindowStart)
+		usageLog.AttributionMonthlyWindowAnchor = copyUsageAttributionAnchor(subscription.MonthlyWindowStart)
 	}
 	isVideoUsage := isGrokVideoUsageResult(result, billingModels)
 	if isVideoUsage {

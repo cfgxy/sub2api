@@ -75,6 +75,7 @@ func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 	subRepo := &openAIRecordUsageSubRepoStub{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 	usage := OpenAIUsage{InputTokens: 1200, OutputTokens: 300}
+	pricingAt := time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)
 
 	// 流式 cyber：上游 response.failed 报告了真实 token，须按真实 token 计费并扣费，
 	// 与 WS cyber / 正常请求口径一致（不再是 tokens=0 免费行）。
@@ -86,6 +87,7 @@ func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 		Stream:       true,
 		InputTokens:  1200,
 		OutputTokens: 300,
+		PricingAt:    pricingAt,
 	})
 
 	require.Equal(t, 1, usageRepo.calls)
@@ -95,6 +97,7 @@ func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 	require.Equal(t, 300, usageRepo.lastLog.OutputTokens)
 	require.Equal(t, RequestTypeCyberBlocked, usageRepo.lastLog.RequestType, "cyber 行须标 request_type=cyber")
 	require.True(t, usageRepo.lastLog.Stream, "cyber 不覆盖真实 stream 字段")
+	require.Equal(t, pricingAt, usageRepo.lastLog.AttributionRequestAt, "cyber usage 必须沿用原请求 PricingAt")
 
 	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
 	require.Greater(t, usageRepo.lastLog.ActualCost, 0.0, "流式 cyber 有真实 token，须计费")
@@ -569,6 +572,45 @@ func TestOpenAIGatewayServiceRecordUsage_TimePricingUsesExplicitPricingAt(t *tes
 	require.InDelta(t, baseCost*0.8, usageRepo.lastLog.ActualCost, 1e-12)
 	require.InDelta(t, 0.8, usageRepo.lastLog.RateMultiplier, 1e-12)
 }
+
+func TestOpenAIGatewayServiceRecordUsage_CapturesEnterpriseAttributionCandidate(t *testing.T) {
+	groupID := int64(18)
+	pricingAt := time.Date(2026, time.September, 9, 1, 0, 0, 0, time.UTC)
+	dayAnchor := pricingAt.Add(-time.Hour)
+	weekAnchor := pricingAt.Add(-24 * time.Hour)
+	monthAnchor := pricingAt.Add(-7 * 24 * time.Hour)
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "openai_attribution_candidate",
+			Model:     "gpt-5.1",
+			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 5},
+		},
+		APIKey: &APIKey{
+			ID: 1008, GroupID: i64p(groupID), EnterpriseAttributionCandidate: true,
+			Group: &Group{ID: groupID, RateMultiplier: 1, SubscriptionType: SubscriptionTypeSubscription},
+		},
+		User:      &User{ID: 2008},
+		Account:   &Account{ID: 3008},
+		PricingAt: pricingAt,
+		Subscription: &UserSubscription{
+			ID: 4008, DailyWindowStart: &dayAnchor,
+			WeeklyWindowStart: &weekAnchor, MonthlyWindowStart: &monthAnchor,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, pricingAt, usageRepo.lastLog.AttributionRequestAt)
+	require.Equal(t, dayAnchor, *usageRepo.lastLog.AttributionDailyWindowAnchor)
+	require.Equal(t, weekAnchor, *usageRepo.lastLog.AttributionWeeklyWindowAnchor)
+	require.Equal(t, monthAnchor, *usageRepo.lastLog.AttributionMonthlyWindowAnchor)
+	require.True(t, usageRepo.lastLog.EnterpriseAttributionCandidate)
+	require.Nil(t, usageRepo.lastLog.EnterpriseAttribution)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_IncludesEndpointMetadata(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

@@ -5,10 +5,39 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGrokVideoCompletionUsageSnapshotUsesCreateRequestValues(t *testing.T) {
+	createAt := time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)
+	pollAt := createAt.Add(12 * time.Hour)
+	createDay := createAt.Add(-time.Hour)
+	createWeek := createAt.AddDate(0, 0, -2)
+	createMonth := createAt.AddDate(0, 0, -7)
+	pollDay := pollAt.Add(-time.Hour)
+	pollSubscription := &service.UserSubscription{ID: 22, DailyWindowStart: &pollDay}
+	employeeID := int64(42)
+	pending := &service.GrokVideoPendingBilling{
+		PricingAt:         createAt,
+		DailyWindowAnchor: &createDay, WeeklyWindowAnchor: &createWeek, MonthlyWindowAnchor: &createMonth,
+		EnterpriseAttribution: &service.EnterpriseUsageAttributionSnapshot{
+			EnterpriseID: 11, SubscriptionID: 22, EmployeeID: &employeeID,
+			AssignmentGeneration: 3, Classification: "employee", RequestAt: createAt,
+		},
+	}
+
+	pricingAt, subscription, attribution := grokVideoCompletionUsageSnapshot(pollAt, pollSubscription, pending)
+	require.Equal(t, createAt, pricingAt)
+	require.NotSame(t, pollSubscription, subscription)
+	require.Equal(t, createDay, *subscription.DailyWindowStart)
+	require.Equal(t, createWeek, *subscription.WeeklyWindowStart)
+	require.Equal(t, createMonth, *subscription.MonthlyWindowStart)
+	require.Equal(t, employeeID, *attribution.EmployeeID)
+	require.Equal(t, int64(3), attribution.AssignmentGeneration)
+}
 
 type grokMediaEligibilityProberStub struct {
 	eligible bool

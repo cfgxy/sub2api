@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -142,4 +143,156 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	require.False(t, nullArg.Valid, "absent upstream request id must be NULL")
 
 	require.Contains(t, usageLogSelectColumns, "upstream_request_id")
+}
+
+func TestUsageLogEnterpriseAttributionUsesDatabaseTransaction(t *testing.T) {
+	requestAt := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
+	dayAnchor := requestAt.Add(-time.Hour)
+	subscriptionID := int64(41)
+
+	t.Run("提交 usage log 与部分 anchor", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+		repo := newUsageLogRepositoryWithSQL(nil, db)
+		log := &service.UsageLog{
+			UserID: 1, APIKeyID: 2, AccountID: 3, RequestID: "client:enterprise-commit", Model: "gpt-5",
+			SubscriptionID: &subscriptionID, CreatedAt: requestAt.Add(time.Hour), AttributionRequestAt: requestAt,
+			AttributionDailyWindowAnchor: &dayAnchor,
+		}
+		log.EnterpriseAttribution = enterpriseAttributionSnapshotForUnit(requestAt, &dayAnchor)
+
+		mock.ExpectBegin()
+		mock.ExpectQuery("INSERT INTO usage_logs").WillReturnRows(
+			sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), log.CreatedAt),
+		)
+		mock.ExpectExec("INSERT INTO enterprise_usage_attributions").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery("SELECT enterprise_id").WillReturnRows(enterpriseAttributionRowsForUnit(requestAt, dayAnchor))
+		mock.ExpectCommit()
+
+		inserted, createErr := repo.Create(context.Background(), log)
+		require.NoError(t, createErr)
+		require.True(t, inserted)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("attribution 失败时回滚 usage log", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+		repo := newUsageLogRepositoryWithSQL(nil, db)
+		log := &service.UsageLog{
+			UserID: 1, APIKeyID: 2, AccountID: 3, RequestID: "client:enterprise-rollback", Model: "gpt-5",
+			SubscriptionID: &subscriptionID, CreatedAt: requestAt.Add(time.Hour), AttributionRequestAt: requestAt,
+			AttributionDailyWindowAnchor: &dayAnchor,
+		}
+		log.EnterpriseAttribution = enterpriseAttributionSnapshotForUnit(requestAt, &dayAnchor)
+
+		mock.ExpectBegin()
+		mock.ExpectQuery("INSERT INTO usage_logs").WillReturnRows(
+			sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), log.CreatedAt),
+		)
+		mock.ExpectExec("INSERT INTO enterprise_usage_attributions").WillReturnError(errors.New("attribution failed"))
+		mock.ExpectRollback()
+
+		inserted, createErr := repo.Create(context.Background(), log)
+		require.ErrorContains(t, createErr, "attribution failed")
+		require.False(t, inserted)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestUsageLogEnterpriseAttributionWithoutDatabaseUsesProvidedExecutor(t *testing.T) {
+	requestAt := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
+	dayAnchor := requestAt.Add(-time.Hour)
+	subscriptionID := int64(41)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := &usageLogRepository{sql: db}
+	log := &service.UsageLog{
+		UserID: 1, APIKeyID: 2, AccountID: 3, RequestID: "client:enterprise-executor", Model: "gpt-5",
+		SubscriptionID: &subscriptionID, CreatedAt: requestAt.Add(time.Hour), AttributionRequestAt: requestAt,
+		AttributionDailyWindowAnchor: &dayAnchor,
+	}
+	log.EnterpriseAttribution = enterpriseAttributionSnapshotForUnit(requestAt, &dayAnchor)
+
+	mock.ExpectQuery("INSERT INTO usage_logs").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(101), log.CreatedAt),
+	)
+	mock.ExpectExec("INSERT INTO enterprise_usage_attributions").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT enterprise_id").WillReturnRows(enterpriseAttributionRowsForUnit(requestAt, dayAnchor))
+
+	inserted, createErr := repo.Create(context.Background(), log)
+	require.NoError(t, createErr)
+	require.True(t, inserted)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func enterpriseAttributionSnapshotForUnit(requestAt time.Time, dayAnchor *time.Time) *service.EnterpriseUsageAttributionSnapshot {
+	return &service.EnterpriseUsageAttributionSnapshot{
+		EnterpriseID: 10, SubscriptionID: 11, Classification: "controlled_external",
+		RequestAt: requestAt, DailyWindowAnchor: dayAnchor,
+	}
+}
+
+func enterpriseAttributionRowsForUnit(requestAt, dayAnchor time.Time) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"enterprise_id", "subscription_id", "employee_id", "api_key_id", "assignment_generation",
+		"window_type", "window_anchor", "request_at", "classification",
+	}).AddRow(int64(10), int64(11), nil, int64(2), int64(0), "day", dayAnchor, requestAt, "controlled_external")
+}
+
+func TestUsageLogOrdinarySubscriptionDoesNotExecuteEnterpriseSQL(t *testing.T) {
+	requestAt := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
+	dayAnchor := requestAt.Add(-time.Hour)
+	subscriptionID := int64(41)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := &usageLogRepository{sql: db}
+	log := &service.UsageLog{
+		UserID: 1, APIKeyID: 2, AccountID: 3, Model: "gpt-5",
+		SubscriptionID: &subscriptionID, CreatedAt: requestAt.Add(time.Hour), AttributionRequestAt: requestAt,
+		AttributionDailyWindowAnchor: &dayAnchor,
+	}
+
+	mock.ExpectQuery("INSERT INTO usage_logs").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(102), log.CreatedAt),
+	)
+
+	inserted, createErr := repo.Create(context.Background(), log)
+	require.NoError(t, createErr)
+	require.True(t, inserted)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageLogOrdinarySubscriptionProductionRepositoryKeepsBestEffortBatchPath(t *testing.T) {
+	requestAt := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
+	dayAnchor := requestAt.Add(-time.Hour)
+	subscriptionID := int64(41)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := NewUsageLogRepository(nil, db).(*usageLogRepository)
+	repo.bestEffortBatchCh = make(chan usageLogBestEffortRequest, 1)
+	batched := make(chan struct{}, 1)
+	go func() {
+		req := <-repo.bestEffortBatchCh
+		batched <- struct{}{}
+		sendUsageLogBestEffortResult(req.resultCh, nil)
+	}()
+
+	err = repo.CreateBestEffort(context.Background(), &service.UsageLog{
+		UserID: 1, APIKeyID: 2, AccountID: 3, RequestID: "client:ordinary-best-effort", Model: "gpt-5",
+		SubscriptionID: &subscriptionID, CreatedAt: requestAt.Add(time.Hour), AttributionRequestAt: requestAt,
+		AttributionDailyWindowAnchor: &dayAnchor,
+	})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet(), "ordinary subscription must not execute enterprise SQL")
+	select {
+	case <-batched:
+	default:
+		t.Fatal("ordinary subscription did not use the best-effort batch path")
+	}
 }
