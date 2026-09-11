@@ -1,28 +1,42 @@
 package enterpriseidentity
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 const claimsContextKey = "enterprise_identity_claims"
 
-type Handler struct{ service *Service }
+const enterpriseAuthClientBurstMultiplier = 10
+const enterpriseAuthPeerBurstMultiplier = 1000
 
-func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+type Handler struct {
+	service     *Service
+	rateLimiter *middleware.RateLimiter
+}
+
+func NewHandler(service *Service, redisClient *redis.Client) *Handler {
+	return &Handler{service: service, rateLimiter: middleware.NewRateLimiter(redisClient)}
+}
 
 func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	root := v1.Group("/enterprise")
-	root.POST("/auth/login", h.login)
-	root.POST("/auth/refresh", h.refresh)
+	h.registerPublicAuthRoute(root, "/auth/login", "enterprise-auth-login", 20, h.login)
+	h.registerPublicAuthRoute(root, "/auth/refresh", "enterprise-auth-refresh", 30, h.refresh)
 	root.POST("/auth/logout", h.logout)
-	root.POST("/auth/forgot-password", h.forgotPassword)
-	root.POST("/auth/reset-password", h.resetPassword)
+	h.registerPublicAuthRoute(root, "/auth/forgot-password", "enterprise-auth-forgot-password", 5, h.forgotPassword)
+	h.registerPublicAuthRoute(root, "/auth/reset-password", "enterprise-auth-reset-password", 10, h.resetPassword)
 	root.GET("/brand", h.getPublicBrand)
 	root.GET("/brand/background", h.getPublicBrandBackground)
 
@@ -46,6 +60,46 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.GET("/brand", h.getBrand)
 	admin.PUT("/brand", h.putBrand)
 	admin.POST("/brand/background", h.uploadBrandBackground)
+}
+
+func (h *Handler) registerPublicAuthRoute(root *gin.RouterGroup, path, key string, limit int, handler gin.HandlerFunc) {
+	handlers := append(h.publicAuthRateLimits(key, limit), handler)
+	root.POST(path, handlers...)
+}
+
+func (h *Handler) publicAuthRateLimits(key string, limit int) []gin.HandlerFunc {
+	peerLimit := h.rateLimiter.LimitWithOptions(key+"-peer", limit*enterpriseAuthPeerBurstMultiplier, time.Minute, middleware.RateLimitOptions{
+		FailureMode: middleware.RateLimitFailClose,
+		KeyFunc: func(c *gin.Context, _ string) string {
+			return hashRateLimitScope(remoteAddressHost(c.Request.RemoteAddr))
+		},
+	})
+	clientLimit := h.rateLimiter.LimitWithOptions(key+"-client", limit*enterpriseAuthClientBurstMultiplier, time.Minute, middleware.RateLimitOptions{
+		FailureMode: middleware.RateLimitFailClose,
+		KeyFunc: func(_ *gin.Context, clientIP string) string {
+			return hashRateLimitScope(clientIP)
+		},
+	})
+	enterpriseClientLimit := h.rateLimiter.LimitWithOptions(key, limit, time.Minute, middleware.RateLimitOptions{
+		FailureMode: middleware.RateLimitFailClose,
+		KeyFunc: func(c *gin.Context, clientIP string) string {
+			return hashRateLimitScope(requestHost(c.Request) + "\x00" + clientIP)
+		},
+	})
+	return []gin.HandlerFunc{peerLimit, clientLimit, enterpriseClientLimit}
+}
+
+func hashRateLimitScope(scope string) string {
+	digest := sha256.Sum256([]byte(scope))
+	return fmt.Sprintf("%x", digest)
+}
+
+func remoteAddressHost(address string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(address)
 }
 
 func (h *Handler) authenticate() gin.HandlerFunc {

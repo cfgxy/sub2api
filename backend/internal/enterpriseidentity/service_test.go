@@ -438,7 +438,7 @@ func TestAuthenticateRejectsDisabledEnterpriseImmediately(t *testing.T) {
 
 func TestAdminPasswordChangeInvalidatesEnterpriseAccessToken(t *testing.T) {
 	svc, mock := newMockService(t)
-	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	svc.now = func() time.Time { return now }
 	oldHash, err := bcrypt.GenerateFromPassword([]byte("old-password-strong"), bcrypt.MinCost)
 	require.NoError(t, err)
