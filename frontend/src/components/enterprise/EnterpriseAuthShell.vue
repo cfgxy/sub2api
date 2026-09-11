@@ -3,10 +3,10 @@
     <div class="enterprise-auth__shade"></div>
     <section class="enterprise-auth__brand" aria-label="企业品牌">
       <span class="enterprise-auth__mark"><Icon name="shield" size="xl" /></span>
-      <p class="enterprise-auth__eyebrow">企业安全门户</p>
-      <h1>{{ brand.title || '企业工作台' }}</h1>
-      <p v-if="brand.slogan" class="enterprise-auth__slogan">{{ brand.slogan }}</p>
-      <p v-if="brand.body" class="enterprise-auth__body">{{ brand.body }}</p>
+      <p class="enterprise-auth__eyebrow">{{ brand.enterprise_name }}</p>
+      <h1>{{ brand.title }}</h1>
+      <p class="enterprise-auth__slogan">{{ brand.slogan }}</p>
+      <p class="enterprise-auth__body">{{ brand.body }}</p>
     </section>
     <section class="enterprise-auth__form"><slot /></section>
   </main>
@@ -18,11 +18,39 @@ import { enterpriseAPI } from '@/api/enterprise'
 import Icon from '@/components/icons/Icon.vue'
 import type { EnterpriseBrand } from '@/types/enterprise'
 
-const brand = reactive<EnterpriseBrand>({ title: '', body: '', slogan: '', background_url: '', background_content_type: '', background_sha256: '', background_size_bytes: 0 })
-const backgroundStyle = computed(() => brand.background_url ? { backgroundImage: `url(${brand.background_url})` } : {})
+const defaultBrand: EnterpriseBrand = {
+  enterprise_name: 'Sub2API',
+  title: '企业工作台',
+  body: '使用企业管理员或员工账号安全访问组织资源。',
+  slogan: '安全、统一的企业访问入口',
+  background_url: '/logo.svg',
+  background_content_type: 'image/svg+xml',
+  background_sha256: 'ce1f2ac07efcfff80904a9582578b5db8fdd14a3118a5c7b58f408ed06df18e1',
+  background_size_bytes: 2010,
+}
+const brand = reactive<EnterpriseBrand>({ ...defaultBrand })
+const controlledBackgroundURLs = new Set(['/logo.svg', '/api/v1/enterprise/brand/background'])
+const backgroundStyle = computed(() => {
+  const url = controlledBackgroundURLs.has(brand.background_url) ? brand.background_url : defaultBrand.background_url
+  const version = url === '/api/v1/enterprise/brand/background' && /^[a-f\d]{64}$/i.test(brand.background_sha256)
+    ? `?v=${brand.background_sha256}`
+    : ''
+  return { backgroundImage: `url("${url}${version}")` }
+})
+
+function applyBrand(response: EnterpriseBrand) {
+  brand.enterprise_name = response.enterprise_name?.trim() || defaultBrand.enterprise_name
+  brand.title = response.title?.trim() || defaultBrand.title
+  brand.body = response.body?.trim() || defaultBrand.body
+  brand.slogan = response.slogan?.trim() || defaultBrand.slogan
+  brand.background_url = controlledBackgroundURLs.has(response.background_url) ? response.background_url : defaultBrand.background_url
+  brand.background_content_type = response.background_content_type || defaultBrand.background_content_type
+  brand.background_sha256 = response.background_sha256 || defaultBrand.background_sha256
+  brand.background_size_bytes = response.background_size_bytes > 0 ? response.background_size_bytes : defaultBrand.background_size_bytes
+}
 
 onMounted(async () => {
-  try { Object.assign(brand, await enterpriseAPI.getBrand()) } catch { /* Host without branding keeps the restrained fallback. */ }
+  try { applyBrand(await enterpriseAPI.getBrand()) } catch { /* Keep per-field platform defaults when branding is unavailable. */ }
 })
 </script>
 

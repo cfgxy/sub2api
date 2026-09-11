@@ -4,6 +4,7 @@ import type {
   EmployeeCreateInput,
   EmployeeUpdateInput,
   EnterpriseBrand,
+  EnterpriseBrandUpdate,
   EnterpriseDepartment,
   EnterpriseEmployee,
   EnterpriseSession,
@@ -96,5 +97,21 @@ export const enterpriseAPI = {
   updateEmployee: (id: number, input: EmployeeUpdateInput) => data<{ success: boolean }>(enterpriseClient.patch(`/enterprise/admin/employees/${id}`, input)),
   terminateEmployee: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/employees/${id}`)),
   getAdminBrand: () => data<EnterpriseBrand>(enterpriseClient.get('/enterprise/admin/brand')),
-  updateBrand: (input: EnterpriseBrand) => data<EnterpriseBrand>(enterpriseClient.put('/enterprise/admin/brand', input)),
+  updateBrand: (input: EnterpriseBrandUpdate) => data<EnterpriseBrand>(enterpriseClient.put('/enterprise/admin/brand', input)),
+  uploadBrandBackground: async (file: File) => {
+    const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as ArrayBuffer)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(file)
+    })
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    const form = new FormData()
+    form.append('file', file)
+    form.append('sha256', sha256)
+    return data<Pick<EnterpriseBrand, 'background_url' | 'background_content_type' | 'background_sha256' | 'background_size_bytes'>>(
+      enterpriseClient.post('/enterprise/admin/brand/background', form, { headers: { 'Content-Type': 'multipart/form-data' } }),
+    )
+  },
 }

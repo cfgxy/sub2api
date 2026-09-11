@@ -40,6 +40,7 @@ export interface EnterpriseEmployee {
 }
 
 export interface EnterpriseBrand {
+  enterprise_name: string
   title: string
   body: string
   slogan: string
@@ -48,6 +49,8 @@ export interface EnterpriseBrand {
   background_sha256: string
   background_size_bytes: number
 }
+
+export type EnterpriseBrandUpdate = Pick<EnterpriseBrand, 'enterprise_name' | 'title' | 'body' | 'slogan' | 'background_url'>
 
 export interface EmployeeCreateInput {
   email: string
