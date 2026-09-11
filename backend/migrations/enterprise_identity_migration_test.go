@@ -34,3 +34,19 @@ func TestEnterpriseIdentityMigrationContract(t *testing.T) {
 		require.Contains(t, sql, fragment)
 	}
 }
+
+func TestEnterpriseBrandObjectMigrationContract(t *testing.T) {
+	raw, err := FS.ReadFile("238_enterprise_brand_object.sql")
+	require.NoError(t, err)
+	sql := strings.ToLower(string(raw))
+
+	require.Contains(t, sql, "background_object_key")
+	require.Contains(t, sql, "enterprise_name")
+	require.Contains(t, sql, "enterprise_branding")
+	require.Contains(t, sql, "background_content_type in ('image/jpeg', 'image/png', 'image/webp')")
+	require.Contains(t, sql, "background_sha256 ~ '^[0-9a-f]{64}$'")
+	require.Contains(t, sql, "background_size_bytes between 1 and 5242880")
+	require.Contains(t, sql, "background_object_key = ''")
+	require.Contains(t, sql, "set enterprise_name = enterprise.name")
+	require.NotContains(t, sql, "alter column background_url")
+}

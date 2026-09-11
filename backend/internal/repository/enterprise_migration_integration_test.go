@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -246,10 +247,10 @@ func TestEnterprise237RejectsExistingEnterpriseDataBeforeIdentityDDL(t *testing.
 	require.Zero(t, migrationRecordCount(t, ctx, db, "237_enterprise_identity.sql"))
 }
 
-func TestEnterprise237RollbackRestores235And236Foundation(t *testing.T) {
+func TestEnterprise238RollbackRestores235And236Foundation(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
-	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "238_enterprise_brand_object.sql")))
 
 	_, currentFile, _, ok := runtime.Caller(0)
 	require.True(t, ok)
@@ -315,6 +316,64 @@ func TestEnterprise237RollbackRestores235And236Foundation(t *testing.T) {
 	}
 	require.True(t, constraintExists(t, ctx, db, "enterprise_employees_status_check"))
 	require.True(t, constraintExists(t, ctx, db, "ck_enterprise_employees_status_disabled_at"))
+	require.Zero(t, migrationRecordCount(t, ctx, db, "237_enterprise_identity.sql"))
+	require.Zero(t, migrationRecordCount(t, ctx, db, "238_enterprise_brand_object.sql"))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, "235_enterprise_foundation.sql"))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, "236_enterprise_frozen_contract.sql"))
+}
+
+func TestEnterprise238UpgradesLegacyBrandMetadataWithoutRewriting237(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+
+	var userID, enterpriseID int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO users (email, password_hash) VALUES ('legacy-brand@example.com', 'test') RETURNING id
+	`).Scan(&userID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host)
+		VALUES ('Legacy Enterprise', $1, $1, 'legacy.example.com') RETURNING id
+	`, userID).Scan(&enterpriseID))
+	legacyURL := "https://legacy.example.com/background.gif"
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprise_branding (
+			enterprise_id, title, background_url, background_content_type, background_sha256, background_size_bytes
+		) VALUES ($1, 'Legacy title', $2, 'image/gif', 'legacy', 128)
+		RETURNING enterprise_id
+	`, enterpriseID, legacyURL).Scan(&enterpriseID))
+
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, "238_enterprise_brand_object.sql")))
+
+	var enterpriseName, objectKey, backgroundURL, contentType, digest string
+	var size int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT enterprise_name, background_object_key, background_url,
+		       background_content_type, background_sha256, background_size_bytes
+		FROM enterprise_branding WHERE enterprise_id = $1
+	`, enterpriseID).Scan(&enterpriseName, &objectKey, &backgroundURL, &contentType, &digest, &size))
+	require.Equal(t, "Legacy Enterprise", enterpriseName)
+	require.Empty(t, objectKey)
+	require.Equal(t, legacyURL, backgroundURL)
+	require.Equal(t, "image/gif", contentType)
+	require.Equal(t, "legacy", strings.TrimSpace(digest))
+	require.Equal(t, int64(128), size)
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	rollbackSQL, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "..", "..", "..", "deploy", "shan-152-enterprise-identity.rollback.sql"))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, string(rollbackSQL))
+	require.ErrorContains(t, err, "SHAN-152 rollback requires empty table enterprise_branding")
+	require.True(t, relationExists(t, ctx, db, "enterprise_branding"))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, "238_enterprise_brand_object.sql"))
+
+	_, err = db.ExecContext(ctx, `
+		UPDATE enterprise_branding SET background_object_key = 'enterprise/1/branding/invalid.gif'
+		WHERE enterprise_id = $1
+	`, enterpriseID)
+	require.Error(t, err)
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, "238_enterprise_brand_object.sql"))
 }
 
 func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {

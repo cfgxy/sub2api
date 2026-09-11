@@ -1,4 +1,4 @@
--- SHAN-152 migration 237 的开发环境补偿回滚脚本。
+-- SHAN-152 migrations 237/238 的开发环境补偿回滚脚本。
 -- 仅允许在企业身份功能尚未写入业务数据时执行；生产回滚应优先恢复升级前备份。
 
 DO $$
@@ -66,3 +66,9 @@ ALTER TABLE enterprises
     DROP CONSTRAINT ck_enterprises_admin_is_dedicated_user,
     DROP COLUMN portal_host,
     DROP COLUMN admin_user_id;
+
+DELETE FROM schema_migrations
+WHERE filename IN (
+    '237_enterprise_identity.sql',
+    '238_enterprise_brand_object.sql'
+);
