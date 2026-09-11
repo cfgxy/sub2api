@@ -1,10 +1,10 @@
 package enterpriseidentity
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +67,7 @@ func TestEnterprisePublicAuthRateLimits(t *testing.T) {
 			rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
 			t.Cleanup(func() { _ = rdb.Close() })
 			router := gin.New()
-			NewHandler(nil, rdb).RegisterRoutes(router.Group("/api/v1"))
+			newEnterpriseRateLimitTestHandler(rdb).RegisterRoutes(router.Group("/api/v1"))
 
 			for i := 0; i < tt.limit; i++ {
 				recorder := performEnterpriseAuthRequest(router, tt.path, "acme.example.com", "198.51.100.10")
@@ -92,7 +92,7 @@ func TestEnterprisePublicAuthRateLimitFailsClosedWhenRedisUnavailable(t *testing
 	})
 	t.Cleanup(func() { _ = rdb.Close() })
 	router := gin.New()
-	NewHandler(nil, rdb).RegisterRoutes(router.Group("/api/v1"))
+	newEnterpriseRateLimitTestHandler(rdb).RegisterRoutes(router.Group("/api/v1"))
 
 	for _, path := range []string{
 		"/api/v1/enterprise/auth/login",
@@ -112,7 +112,7 @@ func TestEnterprisePublicAuthRateLimitIsolatesEnterpriseAndClientWithoutPIIKeys(
 	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	router := gin.New()
-	NewHandler(nil, rdb).RegisterRoutes(router.Group("/api/v1"))
+	newEnterpriseRateLimitTestHandler(rdb).RegisterRoutes(router.Group("/api/v1"))
 
 	for i := 0; i < 20; i++ {
 		require.Equal(t, http.StatusBadRequest, performEnterpriseAuthRequest(
@@ -130,7 +130,7 @@ func TestEnterprisePublicAuthRateLimitIsolatesEnterpriseAndClientWithoutPIIKeys(
 	).Code)
 
 	keys := server.Keys()
-	require.Len(t, keys, 7)
+	require.Len(t, keys, 3)
 	for _, key := range keys {
 		require.True(t, strings.HasPrefix(key, "rate_limit:enterprise-auth-login"), key)
 		require.NotContains(t, key, "acme.example.com")
@@ -139,12 +139,12 @@ func TestEnterprisePublicAuthRateLimitIsolatesEnterpriseAndClientWithoutPIIKeys(
 	}
 }
 
-func TestEnterprisePublicAuthRateLimitBoundsUnknownHostChurnAndSkipsHandler(t *testing.T) {
+func TestEnterprisePublicAuthRateLimitRejectsUnknownHostChurnBeforeHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	server := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	h := NewHandler(nil, rdb)
+	h := newEnterpriseRateLimitTestHandler(rdb)
 	handlerCalls := 0
 	router := gin.New()
 	handlers := append(h.publicAuthRateLimits("enterprise-auth-test", 1), func(c *gin.Context) {
@@ -153,33 +153,24 @@ func TestEnterprisePublicAuthRateLimitBoundsUnknownHostChurnAndSkipsHandler(t *t
 	})
 	router.POST("/test", handlers...)
 
-	for i := 0; i < enterpriseAuthClientBurstMultiplier; i++ {
+	for i := 0; i < 10; i++ {
 		recorder := performEnterpriseAuthRequest(router, "/test", fmt.Sprintf("unknown-%d.invalid", i), "198.51.100.10")
-		require.Equal(t, http.StatusNoContent, recorder.Code)
+		require.Equal(t, http.StatusUnauthorized, recorder.Code)
 	}
-	require.Equal(t, enterpriseAuthClientBurstMultiplier, handlerCalls)
-	require.Len(t, server.Keys(), enterpriseAuthClientBurstMultiplier+2)
-
-	recorder := performEnterpriseAuthRequest(router, "/test", "another-unknown.invalid", "198.51.100.10")
-	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "rate limit exceeded")
-	require.Equal(t, enterpriseAuthClientBurstMultiplier, handlerCalls)
-	require.Len(t, server.Keys(), enterpriseAuthClientBurstMultiplier+2)
+	require.Zero(t, handlerCalls)
+	require.Empty(t, server.Keys())
 }
 
-func TestEnterprisePublicAuthRateLimitBoundsForwardedIPAndHostChurnByTransportPeer(t *testing.T) {
+func TestEnterprisePublicAuthRateLimitIgnoresUntrustedForwardedIPAndNormalizedHostChurn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	server := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	h := NewHandler(nil, rdb)
-
-	peerKey := "rate_limit:enterprise-auth-test-peer:" + hashRateLimitScope("198.51.100.10")
-	server.Set(peerKey, strconv.Itoa(enterpriseAuthPeerBurstMultiplier))
-	server.SetTTL(peerKey, time.Minute)
+	h := newEnterpriseRateLimitTestHandler(rdb)
 
 	handlerCalls := 0
 	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies([]string{"10.0.0.0/8"}))
 	router.Use(func(c *gin.Context) {
 		ippkg.SetForwardedIPSettings(c, true, nil)
 		c.Next()
@@ -190,17 +181,58 @@ func TestEnterprisePublicAuthRateLimitBoundsForwardedIPAndHostChurnByTransportPe
 	})
 	router.POST("/test", handlers...)
 
-	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("{"))
-	req.Host = "rotated.invalid"
-	req.RemoteAddr = "198.51.100.10:1234"
-	req.Header.Set("CF-Connecting-IP", "203.0.113.99")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, req)
+	hosts := []string{"acme.example.com", "ACME.EXAMPLE.COM", "acme.example.com.", "acme.example.com:443"}
+	for i, host := range hosts {
+		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("{"))
+		req.Host = host
+		req.RemoteAddr = "198.51.100.10:1234"
+		req.Header.Set("CF-Connecting-IP", fmt.Sprintf("203.0.113.%d", i+1))
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		if i == 0 {
+			require.Equal(t, http.StatusNoContent, recorder.Code)
+		} else {
+			require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+		}
+	}
+	require.Equal(t, 1, handlerCalls)
+}
 
-	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "rate limit exceeded")
-	require.Zero(t, handlerCalls)
-	require.Equal(t, []string{peerKey}, server.Keys())
+func TestEnterprisePublicAuthRateLimitDoesNotShareTransportPeerAcrossTrustedClients(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	h := newEnterpriseRateLimitTestHandler(rdb)
+
+	peerKey := "rate_limit:enterprise-auth-test-peer:" + hashRateLimitScope("10.0.0.2")
+	server.Set(peerKey, "1000")
+	server.SetTTL(peerKey, time.Minute)
+
+	handlerCalls := 0
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies([]string{"10.0.0.0/8"}))
+	handlers := append(h.publicAuthRateLimits("enterprise-auth-test", 1), func(c *gin.Context) {
+		handlerCalls++
+		c.Status(http.StatusNoContent)
+	})
+	router.POST("/test", handlers...)
+
+	request := func(host, clientIP string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("{"))
+		req.Host = host
+		req.RemoteAddr = "10.0.0.2:1234"
+		req.Header.Set("X-Forwarded-For", clientIP)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	require.Equal(t, http.StatusNoContent, request("acme.example.com", "198.51.100.10").Code)
+	require.Equal(t, http.StatusNoContent, request("other.example.com", "198.51.100.10").Code)
+	require.Equal(t, http.StatusNoContent, request("acme.example.com", "198.51.100.11").Code)
+	require.Equal(t, http.StatusTooManyRequests, request("acme.example.com", "198.51.100.10").Code)
+	require.Equal(t, 3, handlerCalls)
 }
 
 func TestEnterprisePublicAuthRateLimitSkipsHandlerWhenRedisUnavailable(t *testing.T) {
@@ -212,7 +244,7 @@ func TestEnterprisePublicAuthRateLimitSkipsHandlerWhenRedisUnavailable(t *testin
 		WriteTimeout: 25 * time.Millisecond,
 	})
 	t.Cleanup(func() { _ = rdb.Close() })
-	h := NewHandler(nil, rdb)
+	h := newEnterpriseRateLimitTestHandler(rdb)
 
 	handlerCalls := 0
 	router := gin.New()
@@ -236,4 +268,19 @@ func performEnterpriseAuthRequest(router http.Handler, path, host, clientIP stri
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 	return recorder
+}
+
+func newEnterpriseRateLimitTestHandler(rdb *redis.Client) *Handler {
+	h := NewHandler(nil, rdb)
+	h.resolveRateLimitEnterprise = func(_ context.Context, host string) (int64, error) {
+		switch host {
+		case "acme.example.com":
+			return 1, nil
+		case "other.example.com":
+			return 2, nil
+		default:
+			return 0, errWrongHost
+		}
+	}
+	return h
 }

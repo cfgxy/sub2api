@@ -1,33 +1,43 @@
 package enterpriseidentity
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
+	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
 
 const claimsContextKey = "enterprise_identity_claims"
-
-const enterpriseAuthClientBurstMultiplier = 10
-const enterpriseAuthPeerBurstMultiplier = 1000
+const enterpriseAuthRateLimitScopeContextKey = "enterprise_auth_rate_limit_scope"
 
 type Handler struct {
-	service     *Service
-	rateLimiter *middleware.RateLimiter
+	service                    *Service
+	rateLimiter                *middleware.RateLimiter
+	resolveRateLimitEnterprise func(context.Context, string) (int64, error)
 }
 
 func NewHandler(service *Service, redisClient *redis.Client) *Handler {
-	return &Handler{service: service, rateLimiter: middleware.NewRateLimiter(redisClient)}
+	h := &Handler{service: service, rateLimiter: middleware.NewRateLimiter(redisClient)}
+	if service != nil {
+		h.resolveRateLimitEnterprise = func(ctx context.Context, host string) (int64, error) {
+			enterprise, err := service.enterpriseByHost(ctx, host)
+			if err != nil {
+				return 0, err
+			}
+			return enterprise.ID, nil
+		}
+	}
+	return h
 }
 
 func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
@@ -68,38 +78,34 @@ func (h *Handler) registerPublicAuthRoute(root *gin.RouterGroup, path, key strin
 }
 
 func (h *Handler) publicAuthRateLimits(key string, limit int) []gin.HandlerFunc {
-	peerLimit := h.rateLimiter.LimitWithOptions(key+"-peer", limit*enterpriseAuthPeerBurstMultiplier, time.Minute, middleware.RateLimitOptions{
-		FailureMode: middleware.RateLimitFailClose,
-		KeyFunc: func(c *gin.Context, _ string) string {
-			return hashRateLimitScope(remoteAddressHost(c.Request.RemoteAddr))
-		},
-	})
-	clientLimit := h.rateLimiter.LimitWithOptions(key+"-client", limit*enterpriseAuthClientBurstMultiplier, time.Minute, middleware.RateLimitOptions{
-		FailureMode: middleware.RateLimitFailClose,
-		KeyFunc: func(_ *gin.Context, clientIP string) string {
-			return hashRateLimitScope(clientIP)
-		},
-	})
+	resolveEnterprise := func(c *gin.Context) {
+		if h.resolveRateLimitEnterprise == nil {
+			response.Error(c, http.StatusServiceUnavailable, "enterprise authentication is unavailable")
+			c.Abort()
+			return
+		}
+		enterpriseID, err := h.resolveRateLimitEnterprise(c.Request.Context(), requestHost(c.Request))
+		if response.ErrorFrom(c, err) {
+			c.Abort()
+			return
+		}
+		c.Set(enterpriseAuthRateLimitScopeContextKey, enterpriseID)
+		c.Next()
+	}
 	enterpriseClientLimit := h.rateLimiter.LimitWithOptions(key, limit, time.Minute, middleware.RateLimitOptions{
 		FailureMode: middleware.RateLimitFailClose,
-		KeyFunc: func(c *gin.Context, clientIP string) string {
-			return hashRateLimitScope(requestHost(c.Request) + "\x00" + clientIP)
+		KeyFunc: func(c *gin.Context, _ string) string {
+			enterpriseID := c.GetInt64(enterpriseAuthRateLimitScopeContextKey)
+			clientIP := ippkg.GetTrustedClientIP(c)
+			return hashRateLimitScope(strconv.FormatInt(enterpriseID, 10) + "\x00" + clientIP)
 		},
 	})
-	return []gin.HandlerFunc{peerLimit, clientLimit, enterpriseClientLimit}
+	return []gin.HandlerFunc{resolveEnterprise, enterpriseClientLimit}
 }
 
 func hashRateLimitScope(scope string) string {
 	digest := sha256.Sum256([]byte(scope))
 	return fmt.Sprintf("%x", digest)
-}
-
-func remoteAddressHost(address string) string {
-	host, _, err := net.SplitHostPort(address)
-	if err == nil {
-		return host
-	}
-	return strings.TrimSpace(address)
 }
 
 func (h *Handler) authenticate() gin.HandlerFunc {
