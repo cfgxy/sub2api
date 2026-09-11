@@ -818,7 +818,7 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE enterprise_employees SET status = $1, department_id = $2,
-		    disabled_at = CASE WHEN $1 = 'disabled' THEN NOW() ELSE NULL END,
+		    disabled_at = CASE WHEN $1::varchar = 'disabled' THEN NOW() ELSE NULL END,
 		    auth_version = CASE WHEN status IS DISTINCT FROM $1 THEN auth_version + 1 ELSE auth_version END,
 		    updated_at = NOW()
 		WHERE enterprise_id = $3 AND id = $4 AND status <> 'terminated'

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/enterpriseidentity"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	dbmigrations "github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -429,6 +431,96 @@ func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {
 	require.Error(t, err)
 	_, err = svc.Refresh(ctx, "acme.example.com", r1.RefreshToken, "integration", "127.0.0.1")
 	require.Error(t, err)
+}
+
+func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+
+	createEnterprise := func(email, host string) int64 {
+		var userID, enterpriseID int64
+		require.NoError(t, db.QueryRowContext(ctx, `
+			INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id
+		`, email).Scan(&userID))
+		require.NoError(t, db.QueryRowContext(ctx, `
+			INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host)
+			VALUES ($1, $2, $2, $3) RETURNING id
+		`, email, userID, host).Scan(&enterpriseID))
+		return enterpriseID
+	}
+
+	requestEnterpriseID := createEnterprise("admin-one@example.com", "one.example.com")
+	targetEnterpriseID := createEnterprise("admin-two@example.com", "two.example.com")
+	var targetEmployeeID int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprise_employees (
+			enterprise_id, email, current_email, password_hash, initial_password_expires_at
+		) VALUES ($1, 'target@example.com', 'target@example.com', 'test', NOW() + INTERVAL '24 hours')
+		RETURNING id
+	`, targetEnterpriseID).Scan(&targetEmployeeID))
+	require.NoError(t, func() error {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO enterprise_sessions (
+				id, enterprise_id, principal_type, principal_id, refresh_family_id,
+				auth_version, expires_at
+			) VALUES (
+				'00000000-0000-0000-0000-000000000001', $1, 'employee', $2,
+				'00000000-0000-0000-0000-000000000002', 1, NOW() + INTERVAL '1 hour'
+			)
+		`, targetEnterpriseID, targetEmployeeID)
+		return err
+	}())
+
+	type employeeSnapshot struct {
+		Status       string
+		DepartmentID sql.NullInt64
+		DisabledAt   sql.NullTime
+		AuthVersion  int64
+		UpdatedAt    time.Time
+	}
+	type sessionSnapshot struct {
+		RevokedAt sql.NullTime
+		UpdatedAt time.Time
+	}
+	readEmployee := func() employeeSnapshot {
+		var snapshot employeeSnapshot
+		require.NoError(t, db.QueryRowContext(ctx, `
+			SELECT status, department_id, disabled_at, auth_version, updated_at
+			FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2
+		`, targetEnterpriseID, targetEmployeeID).Scan(
+			&snapshot.Status, &snapshot.DepartmentID, &snapshot.DisabledAt,
+			&snapshot.AuthVersion, &snapshot.UpdatedAt,
+		))
+		return snapshot
+	}
+	readSession := func() sessionSnapshot {
+		var snapshot sessionSnapshot
+		require.NoError(t, db.QueryRowContext(ctx, `
+			SELECT revoked_at, updated_at FROM enterprise_sessions
+			WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2
+		`, targetEnterpriseID, targetEmployeeID).Scan(&snapshot.RevokedAt, &snapshot.UpdatedAt))
+		return snapshot
+	}
+
+	employeeBefore := readEmployee()
+	sessionBefore := readSession()
+	svc := enterpriseidentity.NewService(db, &config.Config{}, nil, nil)
+	err := svc.UpdateEmployee(ctx, requestEnterpriseID, targetEmployeeID, "disabled", nil)
+	statusCode, body := infraerrors.ToHTTP(err)
+
+	require.Equal(t, http.StatusNotFound, statusCode)
+	require.Equal(t, "ENTERPRISE_OBJECT_NOT_FOUND", body.Reason)
+	require.Equal(t, employeeBefore, readEmployee())
+	require.Equal(t, sessionBefore, readSession())
+
+	require.NoError(t, svc.UpdateEmployee(ctx, targetEnterpriseID, targetEmployeeID, "disabled", nil))
+	employeeAfter := readEmployee()
+	sessionAfter := readSession()
+	require.Equal(t, "disabled", employeeAfter.Status)
+	require.True(t, employeeAfter.DisabledAt.Valid)
+	require.Equal(t, employeeBefore.AuthVersion+1, employeeAfter.AuthVersion)
+	require.True(t, sessionAfter.RevokedAt.Valid)
 }
 
 func newIndependentMigrationDatabase(t *testing.T, ctx context.Context) *sql.DB {
