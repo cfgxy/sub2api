@@ -1,6 +1,7 @@
 package enterpriseidentity
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,13 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	_ "golang.org/x/image/webp"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -26,10 +31,21 @@ import (
 )
 
 const (
-	maxBrandBackgroundBytes = 5 * 1024 * 1024
-	accessTokenTTL          = 15 * time.Minute
-	refreshTokenTTL         = 30 * 24 * time.Hour
-	passwordResetTTL        = time.Hour
+	maxBrandBackgroundBytes                 = 5 * 1024 * 1024
+	maxBrandImageDimension                  = 8192
+	maxBrandImagePixels                     = 16 * 1024 * 1024
+	accessTokenTTL                          = 15 * time.Minute
+	refreshTokenTTL                         = 30 * 24 * time.Hour
+	passwordResetTTL                        = time.Hour
+	defaultBrandEnterpriseName              = "Sub2API"
+	defaultBrandTitle                       = "企业工作台"
+	defaultBrandBody                        = "使用企业管理员或员工账号安全访问组织资源。"
+	defaultBrandSlogan                      = "安全、统一的企业访问入口"
+	defaultBrandBackgroundURL               = "/logo.svg"
+	defaultBrandBackgroundContentType       = "image/svg+xml"
+	defaultBrandBackgroundSHA256            = "ce1f2ac07efcfff80904a9582578b5db8fdd14a3118a5c7b58f408ed06df18e1"
+	defaultBrandBackgroundSize        int64 = 2010
+	publicBrandBackgroundURL                = "/api/v1/enterprise/brand/background"
 )
 
 var (
@@ -49,11 +65,25 @@ type PasswordResetMailer interface {
 	SendEmail(ctx context.Context, to, subject, body string) error
 }
 
+type BrandObjectStorage interface {
+	Save(ctx context.Context, key, contentType string, data []byte) (string, error)
+	Load(ctx context.Context, key string) ([]byte, string, error)
+}
+
+type BrandObject struct {
+	URL         string `json:"background_url"`
+	ContentType string `json:"background_content_type"`
+	SHA256      string `json:"background_sha256"`
+	Size        int64  `json:"background_size_bytes"`
+}
+
 type Service struct {
-	db     *sql.DB
-	secret []byte
-	mailer PasswordResetMailer
-	now    func() time.Time
+	db                   *sql.DB
+	secret               []byte
+	mailer               PasswordResetMailer
+	brandStorage         BrandObjectStorage
+	brandStorageResolver func() (BrandObjectStorage, bool)
+	now                  func() time.Time
 }
 
 type queryRower interface {
@@ -123,16 +153,18 @@ type Employee struct {
 }
 
 type BrandInput struct {
+	EnterpriseName        string `json:"enterprise_name"`
 	Title                 string `json:"title"`
 	Body                  string `json:"body"`
 	Slogan                string `json:"slogan"`
+	BackgroundObjectKey   string `json:"-"`
 	BackgroundURL         string `json:"background_url"`
 	BackgroundContentType string `json:"background_content_type"`
 	BackgroundSHA256      string `json:"background_sha256"`
 	BackgroundSize        int64  `json:"background_size_bytes"`
 }
 
-func NewService(db *sql.DB, cfg *config.Config, mailer *platformservice.EmailService) *Service {
+func NewService(db *sql.DB, cfg *config.Config, mailer *platformservice.EmailService, imageStorageSettings *platformservice.ImageStorageSettingService) *Service {
 	secret := ""
 	if cfg != nil {
 		secret = cfg.JWT.Secret
@@ -140,6 +172,13 @@ func NewService(db *sql.DB, cfg *config.Config, mailer *platformservice.EmailSer
 	service := &Service{db: db, secret: []byte(secret), now: time.Now}
 	if mailer != nil {
 		service.mailer = mailer
+	}
+	if imageStorageSettings != nil {
+		service.brandStorageResolver = func() (BrandObjectStorage, bool) {
+			storage, enabled := imageStorageSettings.ObjectStorage()
+			readable, ok := storage.(BrandObjectStorage)
+			return readable, enabled && ok
+		}
 	}
 	return service
 }
@@ -822,67 +861,180 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 
 func (s *Service) GetBrand(ctx context.Context, enterpriseID int64) (*BrandInput, error) {
 	brand := new(BrandInput)
-	err := s.db.QueryRowContext(ctx, `SELECT title, body, slogan, background_url, background_content_type, background_sha256, background_size_bytes FROM enterprise_branding WHERE enterprise_id = $1`, enterpriseID).Scan(&brand.Title, &brand.Body, &brand.Slogan, &brand.BackgroundURL, &brand.BackgroundContentType, &brand.BackgroundSHA256, &brand.BackgroundSize)
-	if errors.Is(err, sql.ErrNoRows) {
-		return &BrandInput{}, nil
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(NULLIF(BTRIM(branding.enterprise_name), ''), enterprise.name, ''), COALESCE(branding.title, ''),
+		       COALESCE(branding.body, ''), COALESCE(branding.slogan, ''),
+		       COALESCE(branding.background_object_key, ''), COALESCE(branding.background_content_type, ''),
+		       COALESCE(branding.background_sha256, ''), COALESCE(branding.background_size_bytes, 0)
+		FROM enterprises AS enterprise
+		LEFT JOIN enterprise_branding AS branding ON branding.enterprise_id = enterprise.id
+		WHERE enterprise.id = $1
+	`, enterpriseID).Scan(&brand.EnterpriseName, &brand.Title, &brand.Body, &brand.Slogan,
+		&brand.BackgroundObjectKey, &brand.BackgroundContentType, &brand.BackgroundSHA256, &brand.BackgroundSize)
+	if err != nil {
+		return nil, err
 	}
-	return brand, err
+	applyBrandDefaults(brand)
+	return brand, nil
 }
 
 func (s *Service) PutBrand(ctx context.Context, enterpriseID int64, input BrandInput) (*BrandInput, error) {
 	if err := validateBrand(input); err != nil {
 		return nil, err
 	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO enterprise_branding (enterprise_id, title, body, slogan, background_url, background_content_type, background_sha256, background_size_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (enterprise_id) DO UPDATE SET title = EXCLUDED.title, body = EXCLUDED.body,
-			slogan = EXCLUDED.slogan, background_url = EXCLUDED.background_url,
-			background_content_type = EXCLUDED.background_content_type, background_sha256 = EXCLUDED.background_sha256,
-			background_size_bytes = EXCLUDED.background_size_bytes, updated_at = NOW()
-	`, enterpriseID, input.Title, input.Body, input.Slogan, input.BackgroundURL, input.BackgroundContentType, input.BackgroundSHA256, input.BackgroundSize)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &input, nil
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO enterprise_branding (enterprise_id, enterprise_name, title, body, slogan)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (enterprise_id) DO UPDATE SET enterprise_name = EXCLUDED.enterprise_name,
+			title = EXCLUDED.title, body = EXCLUDED.body, slogan = EXCLUDED.slogan, updated_at = NOW()
+	`, enterpriseID, strings.TrimSpace(input.EnterpriseName), strings.TrimSpace(input.Title), strings.TrimSpace(input.Body), strings.TrimSpace(input.Slogan))
+	if err != nil {
+		return nil, err
+	}
+	if input.BackgroundURL == "" || input.BackgroundURL == defaultBrandBackgroundURL {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE enterprise_branding
+			SET background_url = '', background_object_key = '', background_content_type = '', background_sha256 = '',
+				background_size_bytes = 0, updated_at = NOW()
+			WHERE enterprise_id = $1
+		`, enterpriseID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetBrand(ctx, enterpriseID)
+}
+
+func (s *Service) UploadBrandBackground(ctx context.Context, enterpriseID int64, expectedSHA256 string, data []byte) (*BrandObject, error) {
+	storage, ok := s.resolveBrandStorage()
+	if !ok {
+		return nil, errInvalidBrand
+	}
+	contentType, actualSHA256, extension, err := inspectBrandImage(data)
+	if err != nil || !strings.EqualFold(strings.TrimSpace(expectedSHA256), actualSHA256) {
+		return nil, errInvalidBrand
+	}
+	key := fmt.Sprintf("enterprises/%d/branding/background-%s%s", enterpriseID, actualSHA256, extension)
+	if _, err := storage.Save(ctx, key, contentType, data); err != nil {
+		return nil, err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO enterprise_branding (enterprise_id, background_url, background_object_key, background_content_type, background_sha256, background_size_bytes)
+		VALUES ($1, '', $2, $3, $4, $5)
+		ON CONFLICT (enterprise_id) DO UPDATE SET background_url = '', background_object_key = EXCLUDED.background_object_key,
+			background_content_type = EXCLUDED.background_content_type,
+			background_sha256 = EXCLUDED.background_sha256,
+			background_size_bytes = EXCLUDED.background_size_bytes, updated_at = NOW()
+	`, enterpriseID, key, contentType, actualSHA256, int64(len(data))); err != nil {
+		return nil, err
+	}
+	return &BrandObject{URL: publicBrandBackgroundURL, ContentType: contentType, SHA256: actualSHA256, Size: int64(len(data))}, nil
+}
+
+func (s *Service) ReadBrandBackground(ctx context.Context, enterpriseID int64) ([]byte, string, error) {
+	var key, expectedContentType, expectedSHA256 string
+	var expectedSize int64
+	if err := s.db.QueryRowContext(ctx, `SELECT background_object_key, background_content_type, background_sha256, background_size_bytes FROM enterprise_branding WHERE enterprise_id = $1`, enterpriseID).Scan(&key, &expectedContentType, &expectedSHA256, &expectedSize); err != nil {
+		return nil, "", errNotFound
+	}
+	prefix := fmt.Sprintf("enterprises/%d/", enterpriseID)
+	storage, ok := s.resolveBrandStorage()
+	if !ok || key == "" || !strings.HasPrefix(key, prefix) {
+		return nil, "", errNotFound
+	}
+	data, storedContentType, err := storage.Load(ctx, key)
+	if err != nil {
+		return nil, "", errNotFound
+	}
+	contentType, actualSHA256, _, err := inspectBrandImage(data)
+	if err != nil || storedContentType != expectedContentType || contentType != expectedContentType || actualSHA256 != expectedSHA256 || int64(len(data)) != expectedSize {
+		return nil, "", errNotFound
+	}
+	return data, contentType, nil
+}
+
+func (s *Service) resolveBrandStorage() (BrandObjectStorage, bool) {
+	if s.brandStorage != nil {
+		return s.brandStorage, true
+	}
+	if s.brandStorageResolver == nil {
+		return nil, false
+	}
+	return s.brandStorageResolver()
+}
+
+func inspectBrandImage(data []byte) (string, string, string, error) {
+	if len(data) == 0 || int64(len(data)) > maxBrandBackgroundBytes {
+		return "", "", "", errInvalidBrand
+	}
+	contentType := strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0])
+	extension := ""
+	switch contentType {
+	case "image/jpeg":
+		extension = ".jpg"
+	case "image/png":
+		extension = ".png"
+	case "image/webp":
+		extension = ".webp"
+	default:
+		return "", "", "", errInvalidBrand
+	}
+	imageConfig, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || imageConfig.Width <= 0 || imageConfig.Height <= 0 ||
+		imageConfig.Width > maxBrandImageDimension || imageConfig.Height > maxBrandImageDimension ||
+		int64(imageConfig.Width)*int64(imageConfig.Height) > maxBrandImagePixels {
+		return "", "", "", errInvalidBrand
+	}
+	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+		return "", "", "", errInvalidBrand
+	}
+	digest := sha256.Sum256(data)
+	return contentType, hex.EncodeToString(digest[:]), extension, nil
+}
+
+func applyBrandDefaults(brand *BrandInput) {
+	if strings.TrimSpace(brand.EnterpriseName) == "" {
+		brand.EnterpriseName = defaultBrandEnterpriseName
+	}
+	if strings.TrimSpace(brand.Title) == "" {
+		brand.Title = defaultBrandTitle
+	}
+	if strings.TrimSpace(brand.Body) == "" {
+		brand.Body = defaultBrandBody
+	}
+	if strings.TrimSpace(brand.Slogan) == "" {
+		brand.Slogan = defaultBrandSlogan
+	}
+	if brand.BackgroundObjectKey != "" {
+		brand.BackgroundURL = publicBrandBackgroundURL
+	} else {
+		brand.BackgroundURL = defaultBrandBackgroundURL
+		brand.BackgroundContentType = defaultBrandBackgroundContentType
+		brand.BackgroundSHA256 = defaultBrandBackgroundSHA256
+		brand.BackgroundSize = defaultBrandBackgroundSize
+	}
 }
 
 func validateBrand(input BrandInput) error {
-	if utf8.RuneCountInString(input.Title) > 40 || utf8.RuneCountInString(input.Body) > 120 || utf8.RuneCountInString(input.Slogan) > 60 || input.BackgroundSize < 0 || input.BackgroundSize > maxBrandBackgroundBytes {
+	input.EnterpriseName = strings.TrimSpace(input.EnterpriseName)
+	if utf8.RuneCountInString(input.EnterpriseName) > 255 || utf8.RuneCountInString(input.Title) > 40 || utf8.RuneCountInString(input.Body) > 120 || utf8.RuneCountInString(input.Slogan) > 60 {
 		return errInvalidBrand
 	}
-	for _, value := range []string{input.Title, input.Body, input.Slogan} {
+	if input.BackgroundURL != "" && input.BackgroundURL != publicBrandBackgroundURL && input.BackgroundURL != defaultBrandBackgroundURL {
+		return errInvalidBrand
+	}
+	for _, value := range []string{input.EnterpriseName, input.Title, input.Body, input.Slogan} {
 		lower := strings.ToLower(value)
 		if strings.ContainsAny(value, "<>") || strings.Contains(lower, "script") || strings.Contains(lower, "svg") {
 			return errInvalidBrand
 		}
-	}
-	if input.BackgroundURL == "" {
-		if input.BackgroundContentType != "" || input.BackgroundSHA256 != "" || input.BackgroundSize != 0 {
-			return errInvalidBrand
-		}
-		return nil
-	}
-	if input.BackgroundSize <= 0 || len(input.BackgroundSHA256) != 64 {
-		return errInvalidBrand
-	}
-	if _, err := hex.DecodeString(input.BackgroundSHA256); err != nil {
-		return errInvalidBrand
-	}
-	allowedContentTypes := map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true}
-	if !allowedContentTypes[strings.ToLower(input.BackgroundContentType)] {
-		return errInvalidBrand
-	}
-	u, err := url.Parse(input.BackgroundURL)
-	if err != nil {
-		return errInvalidBrand
-	}
-	if u.Scheme != "https" && u.Scheme != "asset" {
-		return errInvalidBrand
-	}
-	ext := strings.ToLower(filepath.Ext(u.Path))
-	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
-		return errInvalidBrand
 	}
 	return nil
 }

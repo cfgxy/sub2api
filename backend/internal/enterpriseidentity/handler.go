@@ -1,6 +1,7 @@
 package enterpriseidentity
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	root.POST("/auth/forgot-password", h.forgotPassword)
 	root.POST("/auth/reset-password", h.resetPassword)
 	root.GET("/brand", h.getPublicBrand)
+	root.GET("/brand/background", h.getPublicBrandBackground)
 
 	authenticated := root.Group("")
 	authenticated.Use(h.authenticate())
@@ -43,6 +45,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.DELETE("/employees/:id", h.terminateEmployee)
 	admin.GET("/brand", h.getBrand)
 	admin.PUT("/brand", h.putBrand)
+	admin.POST("/brand/background", h.uploadBrandBackground)
 }
 
 func (h *Handler) authenticate() gin.HandlerFunc {
@@ -236,6 +239,19 @@ func (h *Handler) getPublicBrand(c *gin.Context) {
 	response.Success(c, brand)
 }
 
+func (h *Handler) getPublicBrandBackground(c *gin.Context) {
+	e, err := h.service.enterpriseByHost(c.Request.Context(), requestHost(c.Request))
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	data, contentType, err := h.service.ReadBrandBackground(c.Request.Context(), e.ID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=300")
+	c.Data(http.StatusOK, contentType, data)
+}
+
 func (h *Handler) listDepartments(c *gin.Context) {
 	items, err := h.service.ListDepartments(c.Request.Context(), mustClaims(c).EnterpriseID)
 	if response.ErrorFrom(c, err) {
@@ -323,6 +339,31 @@ func (h *Handler) putBrand(c *gin.Context) {
 		return
 	}
 	response.Success(c, brand)
+}
+
+func (h *Handler) uploadBrandBackground(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBrandBackgroundBytes+(1<<20))
+	fileHeader, err := c.FormFile("file")
+	if err != nil || fileHeader.Size <= 0 || fileHeader.Size > maxBrandBackgroundBytes {
+		response.ErrorFrom(c, errInvalidBrand)
+		return
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		response.ErrorFrom(c, errInvalidBrand)
+		return
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxBrandBackgroundBytes+1))
+	if err != nil || int64(len(data)) > maxBrandBackgroundBytes {
+		response.ErrorFrom(c, errInvalidBrand)
+		return
+	}
+	asset, err := h.service.UploadBrandBackground(c.Request.Context(), mustClaims(c).EnterpriseID, c.PostForm("sha256"), data)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, asset)
 }
 
 func bind(c *gin.Context, value any) bool {

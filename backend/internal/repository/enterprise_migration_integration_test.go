@@ -396,7 +396,7 @@ func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {
 	`, userID)
 	require.NoError(t, err)
 
-	svc := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil)
+	svc := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil)
 	oldPair, err := svc.Login(ctx, "acme.example.com", "admin@example.com", "old-password-strong", "integration", "127.0.0.1")
 	require.NoError(t, err)
 	_, _, err = svc.Authenticate(ctx, "acme.example.com", oldPair.AccessToken)

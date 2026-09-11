@@ -1,11 +1,19 @@
 package enterpriseidentity
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"hash/crc32"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"regexp"
 	"strings"
 	"testing"
@@ -22,6 +30,83 @@ type failingResetMailer struct{ err error }
 
 func (m failingResetMailer) SendEmail(context.Context, string, string, string) error { return m.err }
 
+type storedBrandObject struct {
+	contentType string
+	data        []byte
+}
+
+type memoryBrandStorage struct {
+	objects map[string]storedBrandObject
+}
+
+func (s *memoryBrandStorage) Save(_ context.Context, key, contentType string, data []byte) (string, error) {
+	if s.objects == nil {
+		s.objects = make(map[string]storedBrandObject)
+	}
+	s.objects[key] = storedBrandObject{contentType: contentType, data: append([]byte(nil), data...)}
+	return "https://storage.invalid/" + key, nil
+}
+
+func (s *memoryBrandStorage) Load(_ context.Context, key string) ([]byte, string, error) {
+	object, ok := s.objects[key]
+	if !ok {
+		return nil, "", errors.New("not found")
+	}
+	return append([]byte(nil), object.data...), object.contentType, nil
+}
+
+func validPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 20, G: 80, B: 120, A: 255})
+	var payload bytes.Buffer
+	require.NoError(t, png.Encode(&payload, img))
+	return payload.Bytes()
+}
+
+func validJPEG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 20, G: 80, B: 120, A: 255})
+	var payload bytes.Buffer
+	require.NoError(t, jpeg.Encode(&payload, img, nil))
+	return payload.Bytes()
+}
+
+func validWebP(t *testing.T) []byte {
+	t.Helper()
+	payload, err := base64.StdEncoding.DecodeString("UklGRrIBAABXRUJQVlA4TKUBAAAvSsAYAA8w//M///MfeJAkbXvaSG7m8Q3GfYSBJekwQztm/IcZlgwnmWImn2BK7aFmBtnVir6q//8VOkFE/xm4baTIu8c48ArEo6+B3zFKYln3pqClSCKX0begFTAXFOLXHSyF8cCNcZEG4OywuA4KVVfJCiArU7GAgJI8+lJP/OKMT/fBAjevg1cYB7YVkFuWga2lyPi5I0HFy5YTpWIHg0RZpkniRVW9odHAKOwosWuOGdxIyn2OvaCDvhg/we6TwadPBPbqBV58MsLmMJ8yZnOWk8SRz4N+QoyPL+MnamzMvcE1rHNEr91F9GKZPVUcS9w7PhhH36suB9qPeYb/oLk6cuTiJ0wOK3m5h1cKjW6EVZCYMK7dxcKCBdgP9HkKr9gkAO2P8GKZGWVdIAatQa+1IDpt6qyorVwdy01xdW8Jkfk6xjEXmVQQ+HQdFr6OKhIN34dXWq0+0qr6EJSCeeVLH9+gvGTLyqM65PQ44ihzlTXxQKjKbAvshXgir7Lil9w4L2bvMycmjQcqXaMCO6BlY28i+FOLzbfI1vEqxAhotocAAA==")
+	require.NoError(t, err)
+	return payload
+}
+
+func truncateAfterImageHeader(t *testing.T, payload []byte) []byte {
+	t.Helper()
+	for size := len(payload) - 1; size > 0; size-- {
+		candidate := append([]byte(nil), payload[:size]...)
+		if _, _, err := image.DecodeConfig(bytes.NewReader(candidate)); err != nil {
+			continue
+		}
+		if _, _, err := image.Decode(bytes.NewReader(candidate)); err != nil {
+			return candidate
+		}
+	}
+	t.Fatal("未找到仅完整解码失败的截断样本")
+	return nil
+}
+
+func pngWithDimensions(t *testing.T, width, height uint32) []byte {
+	t.Helper()
+	payload := validPNG(t)
+	require.GreaterOrEqual(t, len(payload), 33)
+	binary.BigEndian.PutUint32(payload[16:20], width)
+	binary.BigEndian.PutUint32(payload[20:24], height)
+	binary.BigEndian.PutUint32(payload[29:33], crc32.ChecksumIEEE(payload[12:29]))
+	_, _, err := image.DecodeConfig(bytes.NewReader(payload))
+	require.NoError(t, err)
+	return payload
+}
+
 func expectedUserTokenVersion(email, passwordHash string) int64 {
 	material := strings.ToLower(strings.TrimSpace(email)) + "\n" + passwordHash
 	sum := sha256.Sum256([]byte(material))
@@ -33,7 +118,232 @@ func newMockService(t *testing.T) (*Service, sqlmock.Sqlmock) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	return NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil), mock
+	return NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil), mock
+}
+
+func TestInspectBrandImageAllowsJPEGPNGAndWebP(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		payload     func(*testing.T) []byte
+		contentType string
+		extension   string
+	}{
+		{name: "jpeg", payload: validJPEG, contentType: "image/jpeg", extension: ".jpg"},
+		{name: "png", payload: validPNG, contentType: "image/png", extension: ".png"},
+		{name: "webp", payload: validWebP, contentType: "image/webp", extension: ".webp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := tc.payload(t)
+			contentType, digest, extension, err := inspectBrandImage(payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.contentType, contentType)
+			sum := sha256.Sum256(payload)
+			require.Equal(t, hex.EncodeToString(sum[:]), digest)
+			require.Equal(t, tc.extension, extension)
+		})
+	}
+}
+
+func TestInspectBrandImageRejectsTruncatedImageData(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload func(*testing.T) []byte
+	}{
+		{name: "jpeg", payload: validJPEG},
+		{name: "png", payload: validPNG},
+		{name: "webp", payload: validWebP},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := truncateAfterImageHeader(t, tc.payload(t))
+			_, _, configErr := image.DecodeConfig(bytes.NewReader(payload))
+			require.NoError(t, configErr)
+
+			_, _, _, err := inspectBrandImage(payload)
+			require.ErrorIs(t, err, errInvalidBrand)
+		})
+	}
+}
+
+func TestInspectBrandImageRejectsUnsafeDimensions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		width  uint32
+		height uint32
+	}{
+		{name: "width", width: 8193, height: 1},
+		{name: "height", width: 1, height: 8193},
+		{name: "pixels", width: 8192, height: 8192},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := inspectBrandImage(pngWithDimensions(t, tc.width, tc.height))
+			require.ErrorIs(t, err, errInvalidBrand)
+		})
+	}
+}
+
+func TestInspectBrandImageRejectsOversizePayload(t *testing.T) {
+	_, _, _, err := inspectBrandImage(make([]byte, maxBrandBackgroundBytes+1))
+	require.ErrorIs(t, err, errInvalidBrand)
+}
+
+func TestUploadBrandBackgroundFailsClosedWithoutStorage(t *testing.T) {
+	svc, _ := newMockService(t)
+	payload := validPNG(t)
+	digest := sha256.Sum256(payload)
+
+	_, err := svc.UploadBrandBackground(context.Background(), 1, hex.EncodeToString(digest[:]), payload)
+	require.ErrorIs(t, err, errInvalidBrand)
+}
+
+func TestUploadBrandBackgroundRejectsSpoofedMIME(t *testing.T) {
+	svc, _ := newMockService(t)
+	svc.brandStorage = &memoryBrandStorage{}
+	sum := sha256.Sum256([]byte("not an image"))
+
+	_, err := svc.UploadBrandBackground(context.Background(), 1, hex.EncodeToString(sum[:]), []byte("not an image"))
+	require.ErrorIs(t, err, errInvalidBrand)
+}
+
+func TestUploadBrandBackgroundRejectsDigestMismatch(t *testing.T) {
+	svc, _ := newMockService(t)
+	svc.brandStorage = &memoryBrandStorage{}
+
+	_, err := svc.UploadBrandBackground(context.Background(), 1, strings.Repeat("0", 64), validPNG(t))
+	require.ErrorIs(t, err, errInvalidBrand)
+}
+
+func TestReadBrandBackgroundRejectsCrossEnterpriseObject(t *testing.T) {
+	svc, mock := newMockService(t)
+	svc.brandStorage = &memoryBrandStorage{}
+	mock.ExpectQuery("SELECT background_object_key").WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"background_object_key", "background_content_type", "background_sha256", "background_size_bytes"}).
+			AddRow("enterprises/2/branding/background-deadbeef.png", "image/png", strings.Repeat("0", 64), 1))
+
+	_, _, err := svc.ReadBrandBackground(context.Background(), 1)
+	require.ErrorIs(t, err, errNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUploadAndReadBrandBackground(t *testing.T) {
+	svc, mock := newMockService(t)
+	storage := &memoryBrandStorage{}
+	svc.brandStorage = storage
+	payload := validPNG(t)
+	sum := sha256.Sum256(payload)
+	digest := hex.EncodeToString(sum[:])
+	mock.ExpectExec("INSERT INTO enterprise_branding").WithArgs(int64(7), sqlmock.AnyArg(), "image/png", digest, int64(len(payload))).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	asset, err := svc.UploadBrandBackground(context.Background(), 7, digest, payload)
+	require.NoError(t, err)
+	require.Equal(t, "image/png", asset.ContentType)
+	require.Equal(t, digest, asset.SHA256)
+	require.Equal(t, int64(len(payload)), asset.Size)
+	require.Equal(t, publicBrandBackgroundURL, asset.URL)
+
+	var key string
+	for storedKey := range storage.objects {
+		key = storedKey
+	}
+	require.True(t, strings.HasPrefix(key, "enterprises/7/branding/background-"))
+	mock.ExpectQuery("SELECT background_object_key").WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"background_object_key", "background_content_type", "background_sha256", "background_size_bytes"}).
+			AddRow(key, "image/png", digest, int64(len(payload))))
+
+	got, contentType, err := svc.ReadBrandBackground(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, "image/png", contentType)
+	require.Equal(t, payload, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestReadBrandBackgroundFailsClosedOnIntegrityMismatch(t *testing.T) {
+	pngPayload := validPNG(t)
+	jpegPayload := validJPEG(t)
+	pngSum := sha256.Sum256(pngPayload)
+	pngDigest := hex.EncodeToString(pngSum[:])
+	key := "enterprises/7/branding/background-" + pngDigest + ".png"
+
+	for _, tc := range []struct {
+		name                string
+		storage             BrandObjectStorage
+		expectedContentType string
+		expectedSHA256      string
+		expectedSize        int64
+	}{
+		{
+			name: "storage MIME", storage: &memoryBrandStorage{objects: map[string]storedBrandObject{
+				key: {contentType: "image/jpeg", data: pngPayload},
+			}}, expectedContentType: "image/png", expectedSHA256: pngDigest, expectedSize: int64(len(pngPayload)),
+		},
+		{
+			name: "content MIME", storage: &memoryBrandStorage{objects: map[string]storedBrandObject{
+				key: {contentType: "image/png", data: jpegPayload},
+			}}, expectedContentType: "image/png", expectedSHA256: pngDigest, expectedSize: int64(len(jpegPayload)),
+		},
+		{
+			name: "SHA256", storage: &memoryBrandStorage{objects: map[string]storedBrandObject{
+				key: {contentType: "image/png", data: pngPayload},
+			}}, expectedContentType: "image/png", expectedSHA256: strings.Repeat("0", 64), expectedSize: int64(len(pngPayload)),
+		},
+		{
+			name: "size", storage: &memoryBrandStorage{objects: map[string]storedBrandObject{
+				key: {contentType: "image/png", data: pngPayload},
+			}}, expectedContentType: "image/png", expectedSHA256: pngDigest, expectedSize: int64(len(pngPayload) + 1),
+		},
+		{name: "storage disabled", expectedContentType: "image/png", expectedSHA256: pngDigest, expectedSize: int64(len(pngPayload))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, mock := newMockService(t)
+			svc.brandStorage = tc.storage
+			mock.ExpectQuery("SELECT background_object_key").WithArgs(int64(7)).
+				WillReturnRows(sqlmock.NewRows([]string{"background_object_key", "background_content_type", "background_sha256", "background_size_bytes"}).
+					AddRow(key, tc.expectedContentType, tc.expectedSHA256, tc.expectedSize))
+
+			_, _, err := svc.ReadBrandBackground(context.Background(), 7)
+			require.ErrorIs(t, err, errNotFound)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestGetBrandFallsBackPerEmptyField(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery("SELECT COALESCE\\(NULLIF\\(BTRIM\\(branding.enterprise_name").WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"enterprise_name", "title", "body", "slogan", "background_object_key", "background_content_type", "background_sha256", "background_size_bytes"}).
+			AddRow("", "Acme Workspace", "", "Build together", "", "", "", 0))
+
+	brand, err := svc.GetBrand(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, defaultBrandEnterpriseName, brand.EnterpriseName)
+	require.Equal(t, "Acme Workspace", brand.Title)
+	require.Equal(t, defaultBrandBody, brand.Body)
+	require.Equal(t, "Build together", brand.Slogan)
+	require.Equal(t, defaultBrandBackgroundURL, brand.BackgroundURL)
+	require.Equal(t, defaultBrandBackgroundContentType, brand.BackgroundContentType)
+	require.Equal(t, defaultBrandBackgroundSHA256, brand.BackgroundSHA256)
+	require.Equal(t, defaultBrandBackgroundSize, brand.BackgroundSize)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetBrandUsesControlledBackgroundURLForStoredObject(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery("SELECT COALESCE\\(NULLIF\\(BTRIM\\(branding.enterprise_name").WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"enterprise_name", "title", "body", "slogan", "background_object_key", "background_content_type", "background_sha256", "background_size_bytes"}).
+			AddRow("Acme", "Portal", "Body", "Slogan", "enterprises/1/branding/background-deadbeef.png", "image/png", strings.Repeat("a", 64), 123))
+
+	brand, err := svc.GetBrand(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, publicBrandBackgroundURL, brand.BackgroundURL)
+	require.Equal(t, "image/png", brand.BackgroundContentType)
+	require.Equal(t, strings.Repeat("a", 64), brand.BackgroundSHA256)
+	require.Equal(t, int64(123), brand.BackgroundSize)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateBrandAllowsEmptyFieldsForDefaultFallback(t *testing.T) {
+	require.NoError(t, validateBrand(BrandInput{}))
+	require.ErrorIs(t, validateBrand(BrandInput{BackgroundURL: "https://uncontrolled.example/background.png"}), errInvalidBrand)
 }
 
 func TestCreateEmployeeScopesSameEmailByEnterprise(t *testing.T) {

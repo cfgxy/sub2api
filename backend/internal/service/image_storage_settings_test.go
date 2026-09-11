@@ -61,11 +61,26 @@ func (reversibleEncryptor) Decrypt(ciphertext string) (string, error) {
 	return rest, nil
 }
 
-type recordingStorage struct{ saved []string }
+type recordingStorage struct {
+	saved   []string
+	objects map[string][]byte
+}
 
-func (s *recordingStorage) Save(_ context.Context, key, _ string, _ []byte) (string, error) {
+func (s *recordingStorage) Save(_ context.Context, key, _ string, data []byte) (string, error) {
 	s.saved = append(s.saved, key)
+	if s.objects == nil {
+		s.objects = make(map[string][]byte)
+	}
+	s.objects[key] = append([]byte(nil), data...)
 	return "https://cdn.example.com/" + key, nil
+}
+
+func (s *recordingStorage) Load(_ context.Context, key string) ([]byte, string, error) {
+	data, ok := s.objects[key]
+	if !ok {
+		return nil, "", errors.New("not found")
+	}
+	return append([]byte(nil), data...), "image/png", nil
 }
 
 func newImageStorageFixture(t *testing.T, fallback config.ImageStorageConfig) (*ImageStorageSettingService, *stubSettingRepo, *[]config.ImageStorageConfig) {
@@ -124,6 +139,66 @@ func TestImageStorageSettingsToggleTakesEffectWithoutRestart(t *testing.T) {
 	require.False(t, enabled, "turning it back off must also apply immediately")
 
 	require.Len(t, *built, 1, "the S3 client is built only when the feature is on")
+}
+
+func TestImageStorageSettingsObjectStorageFollowsEnabledState(t *testing.T) {
+	svc, repo, _ := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+	seedBackupS3(t, repo, BackupS3Config{
+		Endpoint: "https://acct.r2.cloudflarestorage.com", Region: "auto",
+		Bucket: "backup-bucket", AccessKeyID: "ak", SecretAccessKey: "sk",
+	})
+
+	storage, enabled := svc.ObjectStorage()
+	require.False(t, enabled)
+	require.Nil(t, storage)
+
+	_, err := svc.Update(ctx, ImageStorageSettings{Enabled: true, ReuseBackupS3: true})
+	require.NoError(t, err)
+	storage, enabled = svc.ObjectStorage()
+	require.True(t, enabled)
+	require.NotNil(t, storage)
+
+	_, err = svc.Update(ctx, ImageStorageSettings{Enabled: false, ReuseBackupS3: true})
+	require.NoError(t, err)
+	storage, enabled = svc.ObjectStorage()
+	require.False(t, enabled)
+	require.Nil(t, storage)
+}
+
+func TestImageStorageSettingsObjectStorageAppliesConfiguredPrefix(t *testing.T) {
+	repo := newStubSettingRepo()
+	encryptor := reversibleEncryptor{}
+	backup := NewBackupService(repo, &config.Config{
+		Totp: config.TotpConfig{EncryptionKeyConfigured: true},
+	}, encryptor, nil, nil)
+	seedBackupS3(t, repo, BackupS3Config{
+		Endpoint: "https://acct.r2.cloudflarestorage.com", Region: "auto",
+		Bucket: "backup-bucket", AccessKeyID: "ak", SecretAccessKey: "sk",
+	})
+	underlying := &recordingStorage{}
+	svc := NewImageStorageSettingService(repo, encryptor, backup, func(context.Context, *config.ImageStorageConfig) (ImageStorage, error) {
+		return underlying, nil
+	}, config.ImageStorageConfig{})
+	ctx := context.Background()
+
+	_, err := svc.Update(ctx, ImageStorageSettings{Enabled: true, ReuseBackupS3: true, Prefix: "images"})
+	require.NoError(t, err)
+	storage, enabled := svc.ObjectStorage()
+	require.True(t, enabled)
+	readable, ok := storage.(interface {
+		Load(context.Context, string) ([]byte, string, error)
+	})
+	require.True(t, ok)
+
+	logicalKey := "enterprises/7/branding/background.png"
+	_, err = storage.Save(ctx, logicalKey, "image/png", []byte("image"))
+	require.NoError(t, err)
+	require.Equal(t, []string{"images/" + logicalKey}, underlying.saved)
+	data, contentType, err := readable.Load(ctx, logicalKey)
+	require.NoError(t, err)
+	require.Equal(t, []byte("image"), data)
+	require.Equal(t, "image/png", contentType)
 }
 
 func TestImageStorageSettingsReuseBackupCredentials(t *testing.T) {

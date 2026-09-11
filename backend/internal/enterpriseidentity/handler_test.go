@@ -31,6 +31,8 @@ func TestRegisterRoutesIncludesEnterpriseAuthSessionsAndAdminAPIs(t *testing.T) 
 		"GET /api/v1/enterprise/admin/departments",
 		"POST /api/v1/enterprise/admin/employees",
 		"PUT /api/v1/enterprise/admin/brand",
+		"POST /api/v1/enterprise/admin/brand/background",
+		"GET /api/v1/enterprise/brand/background",
 	} {
 		require.True(t, routes[expected], expected)
 	}

@@ -32,7 +32,7 @@ func TestValidateBrandRejectsMarkupAndUnsafeBackground(t *testing.T) {
 		Title:                 "Acme",
 		Body:                  "Enterprise portal",
 		Slogan:                "Build faster",
-		BackgroundURL:         "https://cdn.example.com/background.webp",
+		BackgroundURL:         publicBrandBackgroundURL,
 		BackgroundContentType: "image/webp",
 		BackgroundSHA256:      strings.Repeat("a", 64),
 		BackgroundSize:        maxBrandBackgroundBytes,
