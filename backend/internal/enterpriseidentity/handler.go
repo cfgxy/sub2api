@@ -13,7 +13,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -132,6 +135,52 @@ func (h *Handler) authenticate() gin.HandlerFunc {
 	}
 }
 
+func (h *Handler) EnterpriseAdminOrJWT(jwtAuth gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth := strings.Fields(c.GetHeader("Authorization"))
+		if len(auth) != 2 || !strings.EqualFold(auth[0], "Bearer") || !looksLikeEnterpriseToken(auth[1]) {
+			jwtAuth(c)
+			return
+		}
+
+		claims, principal, err := h.service.Authenticate(c.Request.Context(), requestHost(c.Request), auth[1])
+		if err != nil {
+			response.ErrorFrom(c, err)
+			c.Abort()
+			return
+		}
+		if principal.ForceChange {
+			response.ErrorFrom(c, errForceChange)
+			c.Abort()
+			return
+		}
+
+		c.Set(claimsContextKey, claims)
+		c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: principal.PrincipalID})
+		c.Set(string(servermiddleware.ContextKeyUserRole), principal.Role)
+		c.Set(servermiddleware.ContextKeyAuthEmail, principal.Email)
+		c.Set(servermiddleware.ContextKeySessionID, claims.SessionID)
+		if principal.Role != "enterprise_admin" {
+			response.Forbidden(c, "enterprise administrator permission is required")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func looksLikeEnterpriseToken(raw string) bool {
+	if len(raw) > service.MaxTokenLength {
+		return false
+	}
+	claims := new(Claims)
+	if _, _, err := new(jwt.Parser).ParseUnverified(raw, claims); err != nil {
+		return false
+	}
+	return claims.EnterpriseID > 0 && claims.PrincipalID > 0 && claims.SessionID != "" &&
+		(claims.PrincipalType == "admin" || claims.PrincipalType == "employee")
+}
+
 func requireEnterpriseAdmin(c *gin.Context) {
 	claims := mustClaims(c)
 	if claims == nil || claims.Role != "enterprise_admin" {
@@ -149,6 +198,14 @@ func mustClaims(c *gin.Context) *Claims {
 	}
 	claims, _ := value.(*Claims)
 	return claims
+}
+
+func ClaimsFromContext(c *gin.Context) (Claims, bool) {
+	claims := mustClaims(c)
+	if claims == nil {
+		return Claims{}, false
+	}
+	return *claims, true
 }
 
 type loginRequest struct {

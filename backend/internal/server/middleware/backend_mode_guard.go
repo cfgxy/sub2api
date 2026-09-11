@@ -27,6 +27,23 @@ func BackendModeUserGuard(settingService *service.SettingService) gin.HandlerFun
 	}
 }
 
+// BackendModeAllocationGuard allows platform and enterprise administrators to manage allocations in backend mode.
+func BackendModeAllocationGuard(settingService *service.SettingService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if settingService == nil || !settingService.IsBackendModeEnabled(c.Request.Context()) {
+			c.Next()
+			return
+		}
+		role, _ := GetUserRoleFromContext(c)
+		if role == "admin" || role == "enterprise_admin" {
+			c.Next()
+			return
+		}
+		response.Forbidden(c, "Backend mode is active. User self-service is disabled.")
+		c.Abort()
+	}
+}
+
 func backendModeAllowsAuthPath(path string) bool {
 	path = strings.ToLower(strings.TrimSpace(path))
 	for _, suffix := range []string{

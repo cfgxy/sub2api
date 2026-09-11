@@ -50,8 +50,8 @@ var (
 	ErrCaptchaProviderConflict = infraerrors.ServiceUnavailable("CAPTCHA_PROVIDER_CONFLICT", "multiple captcha providers are enabled")
 )
 
-// maxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
-const maxTokenLength = 8192
+// MaxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
+const MaxTokenLength = 8192
 
 // refreshTokenPrefix is the prefix for refresh tokens to distinguish them from access tokens.
 const refreshTokenPrefix = "rt_"
@@ -1347,7 +1347,7 @@ func buildEmailSuffixNotAllowedError(whitelist []string) error {
 // ValidateToken 验证JWT token并返回用户声明
 func (s *AuthService) ValidateToken(tokenString string) (*JWTClaims, error) {
 	// 先做长度校验，尽早拒绝异常超长 token，降低 DoS 风险。
-	if len(tokenString) > maxTokenLength {
+	if len(tokenString) > MaxTokenLength {
 		return nil, ErrTokenTooLarge
 	}
 
