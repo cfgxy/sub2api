@@ -725,7 +725,7 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 			return nil, err
 		}
 		entry, _ := value.(*APIKeyAuthCacheEntry)
-		if apiKey, used, err := s.applyAuthCacheEntry(key, entry); used {
+		if apiKey, used, err := s.applyLoadedAuthCacheEntry(key, entry); used {
 			if err != nil {
 				return nil, fmt.Errorf("get api key: %w", err)
 			}
@@ -737,7 +737,7 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 		if err != nil {
 			return nil, err
 		}
-		if apiKey, used, err := s.applyAuthCacheEntry(key, entry); used {
+		if apiKey, used, err := s.applyLoadedAuthCacheEntry(key, entry); used {
 			if err != nil {
 				return nil, fmt.Errorf("get api key: %w", err)
 			}
@@ -767,6 +767,11 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 
 	// 验证所有权
 	if apiKey.UserID != userID {
+		return nil, ErrInsufficientPerms
+	}
+	if assigned, err := isEnterpriseAssignedAPIKey(ctx, s.apiKeyRepo, id); err != nil {
+		return nil, fmt.Errorf("check enterprise api key assignment: %w", err)
+	} else if assigned {
 		return nil, ErrInsufficientPerms
 	}
 
@@ -924,6 +929,11 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 	if ownerID != userID {
 		return ErrInsufficientPerms
 	}
+	if assigned, err := isEnterpriseAssignedAPIKey(ctx, s.apiKeyRepo, id); err != nil {
+		return fmt.Errorf("check enterprise api key assignment: %w", err)
+	} else if assigned {
+		return ErrInsufficientPerms
+	}
 
 	// 事务内:写审计 + 软删除(tombstone)。
 	if err := s.apiKeyRepo.DeleteWithAudit(ctx, id); err != nil {
@@ -938,6 +948,30 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 	s.lastUsedTouchL1.Delete(id)
 
 	return nil
+}
+
+type enterpriseAssignedAPIKeyChecker interface {
+	IsEnterpriseAssigned(context.Context, int64) (bool, error)
+}
+
+type enterpriseDedicatedUserChecker interface {
+	IsEnterpriseDedicatedUser(context.Context, int64) (bool, error)
+}
+
+func isEnterpriseAssignedAPIKey(ctx context.Context, repo APIKeyRepository, id int64) (bool, error) {
+	checker, ok := repo.(enterpriseAssignedAPIKeyChecker)
+	if !ok {
+		return false, nil
+	}
+	return checker.IsEnterpriseAssigned(ctx, id)
+}
+
+func isEnterpriseDedicatedUser(ctx context.Context, repo APIKeyRepository, userID int64) (bool, error) {
+	checker, ok := repo.(enterpriseDedicatedUserChecker)
+	if !ok {
+		return false, nil
+	}
+	return checker.IsEnterpriseDedicatedUser(ctx, userID)
 }
 
 // ValidateKey 验证API Key是否有效（用于认证中间件）

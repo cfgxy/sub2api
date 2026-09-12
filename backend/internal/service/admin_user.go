@@ -365,6 +365,11 @@ func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
 	if user.Role == "admin" {
 		return errors.New("cannot delete admin user")
 	}
+	if dedicated, err := isEnterpriseDedicatedUser(ctx, s.apiKeyRepo, id); err != nil {
+		return fmt.Errorf("check enterprise dedicated user: %w", err)
+	} else if dedicated {
+		return ErrInsufficientPerms
+	}
 
 	apiKeys, err := s.listUserAPIKeysForDeletion(ctx, id)
 	if err != nil {

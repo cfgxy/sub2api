@@ -1298,6 +1298,9 @@ func cleanupEnterpriseFixture(t *testing.T, enterpriseID, userID int64, suffix s
 		query string
 		args  []any
 	}{
+		{"DELETE FROM enterprise_key_lifecycle_idempotency WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_refresh_tokens WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_sessions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_usage_attributions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM usage_logs WHERE user_id = $1", []any{userID}},
 		{"DELETE FROM enterprise_allocation_revisions WHERE enterprise_id = $1", []any{enterpriseID}},

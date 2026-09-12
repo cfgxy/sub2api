@@ -1190,6 +1190,11 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		// nil 表示不修改，直接返回
 		return &AdminUpdateAPIKeyGroupIDResult{APIKey: apiKey}, nil
 	}
+	if assigned, err := isEnterpriseAssignedAPIKey(ctx, s.apiKeyRepo, keyID); err != nil {
+		return nil, fmt.Errorf("check enterprise api key assignment: %w", err)
+	} else if assigned {
+		return nil, ErrInsufficientPerms
+	}
 
 	if *groupID < 0 {
 		return nil, infraerrors.BadRequest("INVALID_GROUP_ID", "group_id must be non-negative")
@@ -1289,6 +1294,11 @@ func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 	if err != nil {
 		return nil, err
 	}
+	if assigned, err := isEnterpriseAssignedAPIKey(ctx, s.apiKeyRepo, keyID); err != nil {
+		return nil, fmt.Errorf("check enterprise api key assignment: %w", err)
+	} else if assigned {
+		return nil, ErrInsufficientPerms
+	}
 	apiKey.Usage5h = 0
 	apiKey.Usage1d = 0
 	apiKey.Usage7d = 0
@@ -1311,6 +1321,11 @@ func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (*ReplaceUserGroupResult, error) {
 	if oldGroupID == newGroupID {
 		return nil, infraerrors.BadRequest("SAME_GROUP", "old and new group must be different")
+	}
+	if dedicated, err := isEnterpriseDedicatedUser(ctx, s.apiKeyRepo, userID); err != nil {
+		return nil, fmt.Errorf("check enterprise dedicated user: %w", err)
+	} else if dedicated {
+		return nil, ErrInsufficientPerms
 	}
 
 	// 验证新分组存在且为活跃的专属标准分组

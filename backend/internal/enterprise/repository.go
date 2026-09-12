@@ -869,6 +869,26 @@ func (r *Repository) RebindKeyAssignment(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprise_employees
+		WHERE enterprise_id = $1 AND id = $2
+		FOR UPDATE`, params.EnterpriseID, params.EmployeeID).Scan(new(int64)); err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprises
+		WHERE id = $1
+		FOR UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM enterprise_key_assignments
+		WHERE enterprise_id = $1 AND employee_id = $2 AND api_key_id = $3 AND status = 'active'
+		FOR UPDATE`, params.EnterpriseID, params.EmployeeID, params.APIKeyID).Scan(new(int64)); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
 	var enterpriseUserID, keyUserID, upstreamUserID, upstreamGroupID int64
 	var keyGroupID sql.NullInt64
 	var keyStatus, apiKey string
@@ -1057,6 +1077,43 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var assignmentEmployeeID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT employee_id FROM enterprise_key_assignments
+		WHERE enterprise_id = $1 AND api_key_id = $2
+		ORDER BY generation DESC, assigned_at DESC, id DESC
+		LIMIT 1`, params.EnterpriseID, params.APIKeyID).Scan(&assignmentEmployeeID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		if err = tx.QueryRowContext(ctx, `
+			SELECT id FROM enterprise_employees
+			WHERE enterprise_id = $1 AND id = $2
+			FOR UPDATE`, params.EnterpriseID, assignmentEmployeeID).Scan(new(int64)); err != nil {
+			return err
+		}
+		if err = tx.QueryRowContext(ctx, `
+			SELECT id FROM enterprises
+			WHERE id = $1
+			FOR UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
+			return err
+		}
+		if err = tx.QueryRowContext(ctx, `
+			SELECT id FROM enterprise_key_assignments
+			WHERE enterprise_id = $1 AND employee_id = $2 AND api_key_id = $3
+			ORDER BY generation DESC, assigned_at DESC, id DESC
+			LIMIT 1
+			FOR UPDATE`, params.EnterpriseID, assignmentEmployeeID, params.APIKeyID).Scan(new(int64)); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	} else if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprises
+		WHERE id = $1
+		FOR UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
+		return err
+	}
 
 	var keyStatus, apiKey string
 	var keyUserID, enterpriseUserID int64

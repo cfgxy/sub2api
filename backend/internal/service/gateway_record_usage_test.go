@@ -66,6 +66,27 @@ type openAIRecordUsageBestEffortLogRepoStub struct {
 	lastCtxErr      error
 }
 
+type successorBillingCacheInvalidatorStub struct {
+	invalidatedKeys  []string
+	invalidatedUsers []int64
+}
+
+func (s *successorBillingCacheInvalidatorStub) UpdateQuotaUsed(context.Context, int64, float64) error {
+	return nil
+}
+
+func (s *successorBillingCacheInvalidatorStub) UpdateRateLimitUsage(context.Context, int64, float64) error {
+	return nil
+}
+
+func (s *successorBillingCacheInvalidatorStub) InvalidateAuthCacheByKey(_ context.Context, key string) {
+	s.invalidatedKeys = append(s.invalidatedKeys, key)
+}
+
+func (s *successorBillingCacheInvalidatorStub) InvalidateAuthCacheByUserID(_ context.Context, userID int64) {
+	s.invalidatedUsers = append(s.invalidatedUsers, userID)
+}
+
 func (s *openAIRecordUsageBestEffortLogRepoStub) CreateBestEffort(ctx context.Context, log *UsageLog) error {
 	s.bestEffortCalls++
 	s.lastLog = log
@@ -141,6 +162,49 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
+}
+
+func TestFinalizePostUsageBillingInvalidatesRateLimitCacheForBilledSuccessor(t *testing.T) {
+	queue := make(chan cacheWriteTask, 1)
+	cache := newBillingCacheStub(1)
+	billingCache := &BillingCacheService{
+		cache:          cache,
+		cacheWriteChan: queue,
+	}
+	finalizePostUsageBilling(context.Background(), &postUsageBillingParams{
+		Cost:    &CostBreakdown{ActualCost: 0.5},
+		APIKey:  &APIKey{ID: 101, RateLimit5h: 5},
+		Account: &Account{ID: 7},
+	}, &billingDeps{
+		billingCacheService: billingCache,
+		deferredService:     &DeferredService{},
+	}, &UsageBillingApplyResult{Applied: true, BilledAPIKeyID: 202})
+
+	select {
+	case keyID := <-cache.rateLimitInvalidations:
+		require.Equal(t, int64(202), keyID)
+	case <-time.After(time.Second):
+		t.Fatal("expected rate limit cache invalidation")
+	}
+	select {
+	case task := <-queue:
+		t.Fatalf("unexpected successor rate limit cache update: %+v", task)
+	default:
+	}
+}
+
+func TestInvalidateUsageBillingAuthCacheInvalidatesSuccessorOwner(t *testing.T) {
+	invalidator := &successorBillingCacheInvalidatorStub{}
+	invalidateUsageBillingAuthCache(context.Background(), &postUsageBillingParams{
+		APIKey:        &APIKey{ID: 101, UserID: 7, Key: "sk-old-key"},
+		APIKeyService: invalidator,
+	}, &UsageBillingApplyResult{
+		APIKeyQuotaExhausted: true,
+		BilledAPIKeyID:       202,
+	})
+
+	require.Equal(t, []int64{7}, invalidator.invalidatedUsers)
+	require.Empty(t, invalidator.invalidatedKeys)
 }
 
 func TestGatewayServiceRecordUsage_CapturesPricingAtAndSubscriptionWindowAnchors(t *testing.T) {

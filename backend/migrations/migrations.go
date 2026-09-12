@@ -30,5 +30,5 @@ import "embed"
 //	    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 //	);
 //
-//go:embed *.sql
+//go:embed *.sql rollback/*.sql
 var FS embed.FS

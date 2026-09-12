@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/enterprise"
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -25,12 +26,25 @@ const enterpriseAuthRateLimitScopeContextKey = "enterprise_auth_rate_limit_scope
 
 type Handler struct {
 	service                    *Service
+	keyRepository              employeeKeyStore
+	apiKeyService              employeeKeyGenerator
 	rateLimiter                *middleware.RateLimiter
 	resolveRateLimitEnterprise func(context.Context, string) (int64, error)
 }
 
-func NewHandler(service *Service, redisClient *redis.Client) *Handler {
-	h := &Handler{service: service, rateLimiter: middleware.NewRateLimiter(redisClient)}
+type employeeKeyStore interface {
+	GetEmployeeCurrentKey(context.Context, int64, int64) (*enterprise.EmployeeKey, error)
+	CreateEmployeeKey(context.Context, enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error)
+	DisableEmployeeKey(context.Context, enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error)
+	RotateEmployeeKey(context.Context, enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error)
+}
+
+type employeeKeyGenerator interface {
+	GenerateKey() (string, error)
+}
+
+func NewHandler(service *Service, keyRepository employeeKeyStore, apiKeyService employeeKeyGenerator, redisClient *redis.Client) *Handler {
+	h := &Handler{service: service, keyRepository: keyRepository, apiKeyService: apiKeyService, rateLimiter: middleware.NewRateLimiter(redisClient)}
 	if service != nil {
 		h.resolveRateLimitEnterprise = func(ctx context.Context, host string) (int64, error) {
 			enterprise, err := service.enterpriseByHost(ctx, host)
@@ -60,6 +74,10 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	authenticated.GET("/sessions/:id", h.getSession)
 	authenticated.DELETE("/sessions/:id", h.revokeSession)
 	authenticated.DELETE("/sessions", h.revokeAllSessions)
+	authenticated.GET("/keys/current", h.getCurrentKey)
+	authenticated.POST("/keys", h.createKey)
+	authenticated.POST("/keys/disable", h.disableKey)
+	authenticated.POST("/keys/rotate", h.rotateKey)
 
 	admin := authenticated.Group("/admin")
 	admin.Use(requireEnterpriseAdmin)
@@ -238,6 +256,9 @@ type employeeUpdateRequest struct {
 	Status       string `json:"status" binding:"required"`
 	DepartmentID *int64 `json:"department_id"`
 }
+type employeeKeyMutationRequest struct {
+	ExpectedAPIKeyID int64 `json:"expected_api_key_id"`
+}
 
 func (h *Handler) login(c *gin.Context) {
 	var req loginRequest
@@ -342,6 +363,105 @@ func (h *Handler) revokeAllSessions(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
+}
+
+func (h *Handler) getCurrentKey(c *gin.Context) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	if h.keyRepository == nil {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		return
+	}
+	key, err := h.keyRepository.GetEmployeeCurrentKey(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, key)
+}
+
+func (h *Handler) createKey(c *gin.Context) {
+	h.mutateKey(c, "create")
+}
+
+func (h *Handler) disableKey(c *gin.Context) {
+	h.mutateKey(c, "disable")
+}
+
+func (h *Handler) rotateKey(c *gin.Context) {
+	h.mutateKey(c, "rotate")
+}
+
+func (h *Handler) mutateKey(c *gin.Context, operation string) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	if h.keyRepository == nil || h.apiKeyService == nil {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		return
+	}
+	var req employeeKeyMutationRequest
+	if operation != "create" && !bind(c, &req) {
+		return
+	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 128 {
+		response.BadRequest(c, "Idempotency-Key header is required and must not exceed 128 characters")
+		return
+	}
+	plaintext := ""
+	if operation == "create" || operation == "rotate" {
+		var err error
+		plaintext, err = h.apiKeyService.GenerateKey()
+		if response.ErrorFrom(c, err) {
+			return
+		}
+	}
+	params := enterprise.EmployeeKeyMutationParams{
+		EnterpriseID: claims.EnterpriseID, EmployeeID: claims.PrincipalID,
+		ExpectedAPIKeyID: req.ExpectedAPIKeyID, IdempotencyKey: idempotencyKey,
+		Plaintext: plaintext, ActorRef: "enterprise_session:" + claims.SessionID,
+	}
+	var result *enterprise.EmployeeKeyMutationResult
+	var err error
+	switch operation {
+	case "create":
+		result, err = h.keyRepository.CreateEmployeeKey(c.Request.Context(), params)
+	case "disable":
+		result, err = h.keyRepository.DisableEmployeeKey(c.Request.Context(), params)
+	case "rotate":
+		result, err = h.keyRepository.RotateEmployeeKey(c.Request.Context(), params)
+	}
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	if result == nil || result.Key == nil {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		return
+	}
+	if result.Replayed {
+		result.Plaintext = ""
+	}
+	if result.Plaintext != "" {
+		c.Header("Cache-Control", "no-store")
+		c.Header("Pragma", "no-cache")
+	}
+	if operation == "create" && !result.Replayed {
+		response.Created(c, result)
+		return
+	}
+	response.Success(c, result)
+}
+
+func employeeClaims(c *gin.Context) (*Claims, bool) {
+	claims := mustClaims(c)
+	if claims == nil || claims.PrincipalType != "employee" || claims.Role != "enterprise_employee" {
+		response.Forbidden(c, "enterprise employee permission is required")
+		return nil, false
+	}
+	return claims, true
 }
 
 func (h *Handler) getPublicBrand(c *gin.Context) {

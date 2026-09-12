@@ -45,3 +45,19 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.Nil(t, out.LastUsedAt)
 	require.Nil(t, out.LastUsedIP)
 }
+
+func TestAPIKeyFromService_MasksEnterpriseDedicatedUserKey(t *testing.T) {
+	const plaintext = "sk-enterprise-credential-must-not-leak"
+	out := APIKeyFromService(&service.APIKey{
+		ID:                             1,
+		UserID:                         2,
+		Key:                            plaintext,
+		Name:                           "Enterprise employee key",
+		Status:                         service.StatusActive,
+		EnterpriseAttributionCandidate: true,
+	})
+
+	require.NotNil(t, out)
+	require.NotEqual(t, plaintext, out.Key)
+	require.NotContains(t, out.Key, "credential")
+}

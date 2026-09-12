@@ -251,8 +251,9 @@ var ProviderSet = wire.NewSet(
 	NewModelPlazaHandler,
 	NewAsyncImageHandler,
 	ProvideBatchImageHandler,
+	enterpriseidentity.ProvideAPIKeyAuthCacheInvalidator,
 	enterpriseidentity.NewService,
-	enterpriseidentity.NewHandler,
+	enterpriseidentity.ProvideHandler,
 	NewEnterpriseAllocationHandler,
 
 	// Admin handlers

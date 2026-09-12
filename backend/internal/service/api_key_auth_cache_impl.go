@@ -105,7 +105,7 @@ func (s *APIKeyService) initAuthCache(cfg *config.Config) {
 // StartAuthCacheInvalidationSubscriber starts the Pub/Sub subscriber for L1 cache invalidation.
 // This should be called after the service is fully initialized.
 func (s *APIKeyService) StartAuthCacheInvalidationSubscriber(ctx context.Context) {
-	if s.cache == nil || (s.authCacheL1 == nil && s.authNegativeCacheL1 == nil) {
+	if s.cache == nil || (s.authCacheL1 == nil && s.authNegativeCacheL1 == nil && !s.authCfg.singleflight) {
 		return
 	}
 	s.authInvalidationStart.Do(func() {
@@ -156,6 +156,8 @@ func (s *APIKeyService) invalidateLocalAuthCache(cacheKey string) {
 	if s == nil {
 		return
 	}
+	// 跨实例失效也必须断开本地旧 flight，避免新请求复用撤销前快照。
+	s.authGroup.Forget(cacheKey)
 	if s.authCacheL1 != nil {
 		s.authCacheL1.Del(cacheKey)
 	}
@@ -200,6 +202,10 @@ func (s *APIKeyService) getAuthCacheEntry(ctx context.Context, cacheKey string) 
 	if s.authCacheL1 != nil {
 		if val, ok := s.authCacheL1.Get(cacheKey); ok {
 			if entry, ok := val.(*APIKeyAuthCacheEntry); ok {
+				if isEnterpriseCandidateAuthCacheEntry(entry) {
+					s.authCacheL1.Del(cacheKey)
+					return nil, false
+				}
 				return entry, true
 			}
 		}
@@ -218,6 +224,10 @@ func (s *APIKeyService) getAuthCacheEntry(ctx context.Context, cacheKey string) 
 	if err != nil {
 		return nil, false
 	}
+	if isEnterpriseCandidateAuthCacheEntry(entry) {
+		s.deleteAuthCache(ctx, cacheKey)
+		return nil, false
+	}
 	s.setAuthCacheL1(cacheKey, entry)
 	return entry, true
 }
@@ -232,6 +242,9 @@ func (s *APIKeyService) setAuthCacheL1(cacheKey string, entry *APIKeyAuthCacheEn
 		}
 		return
 	}
+	if isEnterpriseCandidateAuthCacheEntry(entry) {
+		return
+	}
 	if s.authCacheL1 == nil {
 		return
 	}
@@ -244,6 +257,9 @@ func (s *APIKeyService) setAuthCacheEntry(ctx context.Context, cacheKey string, 
 	if entry == nil {
 		return
 	}
+	if isEnterpriseCandidateAuthCacheEntry(entry) {
+		return
+	}
 	s.setAuthCacheL1(cacheKey, entry)
 	if s.cache == nil || !s.authCfg.l2Enabled() {
 		return
@@ -252,6 +268,8 @@ func (s *APIKeyService) setAuthCacheEntry(ctx context.Context, cacheKey string, 
 }
 
 func (s *APIKeyService) deleteAuthCache(ctx context.Context, cacheKey string) {
+	// 忘记当前 singleflight，确保失效后新认证不会加入撤销前已读取旧快照的 flight。
+	s.authGroup.Forget(cacheKey)
 	if s.authCacheL1 != nil {
 		s.authCacheL1.Del(cacheKey)
 	}
@@ -328,7 +346,21 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
 		return nil, false, nil
 	}
+	if entry.Snapshot.EnterpriseAttributionCandidate {
+		return nil, false, nil
+	}
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
+}
+
+func (s *APIKeyService) applyLoadedAuthCacheEntry(key string, entry *APIKeyAuthCacheEntry) (*APIKey, bool, error) {
+	if entry != nil && entry.Snapshot != nil && entry.Snapshot.EnterpriseAttributionCandidate {
+		return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
+	}
+	return s.applyAuthCacheEntry(key, entry)
+}
+
+func isEnterpriseCandidateAuthCacheEntry(entry *APIKeyAuthCacheEntry) bool {
+	return entry != nil && entry.Snapshot != nil && entry.Snapshot.EnterpriseAttributionCandidate
 }
 
 func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) *APIKeyAuthSnapshot {

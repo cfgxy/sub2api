@@ -108,6 +108,46 @@ func (r *apiKeyRepository) GetKeyAndOwnerID(ctx context.Context, id int64) (stri
 	return m.Key, m.UserID, nil
 }
 
+func (r *apiKeyRepository) IsEnterpriseAssigned(ctx context.Context, id int64) (bool, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM enterprise_key_assignments WHERE api_key_id = $1
+		)`, id)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return false, rows.Err()
+	}
+	var assigned bool
+	if err := rows.Scan(&assigned); err != nil {
+		return false, err
+	}
+	return assigned, rows.Err()
+}
+
+func (r *apiKeyRepository) IsEnterpriseDedicatedUser(ctx context.Context, userID int64) (bool, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM enterprises
+			WHERE dedicated_upstream_user_id = $1
+		)`, userID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return false, rows.Err()
+	}
+	var dedicated bool
+	if err := rows.Scan(&dedicated); err != nil {
+		return false, err
+	}
+	return dedicated, rows.Err()
+}
+
 func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.APIKey, error) {
 	m, err := r.activeQuery().
 		Where(apikey.KeyEQ(key)).

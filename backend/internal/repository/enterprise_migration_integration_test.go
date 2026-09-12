@@ -656,7 +656,7 @@ func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {
 	`, userID)
 	require.NoError(t, err)
 
-	svc := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil)
+	svc := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil, nil)
 	oldPair, err := svc.Login(ctx, "acme.example.com", "admin@example.com", "old-password-strong", "integration", "127.0.0.1")
 	require.NoError(t, err)
 	_, _, err = svc.Authenticate(ctx, "acme.example.com", oldPair.AccessToken)
@@ -763,7 +763,7 @@ func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(
 
 	employeeBefore := readEmployee()
 	sessionBefore := readSession()
-	svc := enterpriseidentity.NewService(db, &config.Config{}, nil, nil)
+	svc := enterpriseidentity.NewService(db, &config.Config{}, nil, nil, nil)
 	err := svc.UpdateEmployee(ctx, requestEnterpriseID, targetEmployeeID, "disabled", nil)
 	statusCode, body := infraerrors.ToHTTP(err)
 
