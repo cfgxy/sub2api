@@ -50,8 +50,8 @@ var (
 	ErrCaptchaProviderConflict = infraerrors.ServiceUnavailable("CAPTCHA_PROVIDER_CONFLICT", "multiple captcha providers are enabled")
 )
 
-// maxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
-const maxTokenLength = 8192
+// MaxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
+const MaxTokenLength = 8192
 
 // refreshTokenPrefix is the prefix for refresh tokens to distinguish them from access tokens.
 const refreshTokenPrefix = "rt_"
@@ -1347,7 +1347,7 @@ func buildEmailSuffixNotAllowedError(whitelist []string) error {
 // ValidateToken 验证JWT token并返回用户声明
 func (s *AuthService) ValidateToken(tokenString string) (*JWTClaims, error) {
 	// 先做长度校验，尽早拒绝异常超长 token，降低 DoS 风险。
-	if len(tokenString) > maxTokenLength {
+	if len(tokenString) > MaxTokenLength {
 		return nil, ErrTokenTooLarge
 	}
 
@@ -1923,11 +1923,17 @@ func resolvedTokenVersion(user *User) int64 {
 	if user.TokenVersionResolved {
 		return user.TokenVersion
 	}
+	return ResolveTokenVersion(user.Email, user.PasswordHash, user.TokenVersion)
+}
 
-	material := strings.ToLower(strings.TrimSpace(user.Email)) + "\n" + user.PasswordHash
+// ResolveTokenVersion derives the stateless token version used when users has
+// no token_version column. Password or normalized email changes invalidate all
+// access and refresh tokens issued from the previous fingerprint.
+func ResolveTokenVersion(email, passwordHash string, tokenVersion int64) int64 {
+	material := strings.ToLower(strings.TrimSpace(email)) + "\n" + passwordHash
 	sum := sha256.Sum256([]byte(material))
 	fingerprint := int64(binary.BigEndian.Uint64(sum[:8]) & 0x7fffffffffffffff)
-	return user.TokenVersion ^ fingerprint
+	return tokenVersion ^ fingerprint
 }
 
 // snapshotPlatformQuotaDefaults 把 plan.PlatformQuotas（platform × 3 window）以

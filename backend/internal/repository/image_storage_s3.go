@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -77,4 +78,24 @@ func (s *S3ImageStorage) Save(ctx context.Context, key, contentType string, data
 		return "", fmt.Errorf("presign url: %w", err)
 	}
 	return result.URL, nil
+}
+
+// Load 通过已认证的 S3 客户端读取对象。
+func (s *S3ImageStorage) Load(ctx context.Context, key string) ([]byte, string, error) {
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key})
+	finish()
+	if err != nil {
+		return nil, "", fmt.Errorf("S3 GetObject: %w", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(result.Body, 5*1024*1024+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read S3 object: %w", err)
+	}
+	contentType := ""
+	if result.ContentType != nil {
+		contentType = *result.ContentType
+	}
+	return data, contentType, nil
 }

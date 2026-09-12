@@ -114,16 +114,6 @@ export default defineConfig(({ mode }) => {
          */
         manualChunks(id: string) {
           if (id.includes('node_modules')) {
-            // Vue 核心库
-            if (
-              id.includes('/vue/') ||
-              id.includes('/vue-router/') ||
-              id.includes('/pinia/') ||
-              id.includes('/@vue/')
-            ) {
-              return 'vendor-vue'
-            }
-
             // UI 工具库（较大，单独分离）
             if (id.includes('/@vueuse/') || id.includes('/xlsx/')) {
               return 'vendor-ui'
@@ -144,8 +134,8 @@ export default defineConfig(({ mode }) => {
               return 'vendor-stripe'
             }
 
-            // 其他小型第三方库合并
-            return 'vendor-misc'
+            // 其他依赖由 Rollup 根据实际引用关系分包，避免人为制造循环依赖
+            return undefined
           }
 
           // 应用代码：按入口点自动分包，不手动干预

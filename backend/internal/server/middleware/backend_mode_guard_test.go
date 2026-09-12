@@ -154,6 +154,40 @@ func TestBackendModeUserGuard(t *testing.T) {
 	}
 }
 
+func TestBackendModeAllocationGuard(t *testing.T) {
+	tests := []struct {
+		name       string
+		role       string
+		wantStatus int
+	}{
+		{name: "enabled_admin_allowed", role: "admin", wantStatus: http.StatusOK},
+		{name: "enabled_enterprise_admin_allowed", role: "enterprise_admin", wantStatus: http.StatusOK},
+		{name: "enabled_user_blocked", role: "user", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				c.Set(string(ContextKeyUserRole), tc.role)
+				c.Next()
+			})
+			r.Use(BackendModeAllocationGuard(newBackendModeSettingService(t, "true")))
+			r.GET("/test", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"ok": true})
+			})
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, tc.wantStatus, w.Code)
+		})
+	}
+}
+
 func TestBackendModeAuthGuard(t *testing.T) {
 	tests := []struct {
 		name       string

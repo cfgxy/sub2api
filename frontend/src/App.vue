@@ -117,6 +117,10 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
 
+  if (route.path.startsWith('/enterprise')) {
+    return
+  }
+
   // Check if setup is needed
   try {
     const status = await getSetupStatus()

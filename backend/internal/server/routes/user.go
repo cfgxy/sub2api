@@ -17,6 +17,13 @@ func RegisterUserRoutes(
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
+	enterpriseAllocations := v1.Group("")
+	enterpriseAllocations.Use(h.Enterprise.EnterpriseAdminOrJWT(gin.HandlerFunc(jwtAuth)))
+	enterpriseAllocations.Use(middleware.BackendModeAllocationGuard(settingService))
+	enterpriseAllocations.Use(panelRateLimiter.Global())
+	enterpriseAllocations.Use(gin.HandlerFunc(auditLog))
+	RegisterEnterpriseAllocationRoutes(enterpriseAllocations, h.EnterpriseAllocation)
+
 	authenticated := v1.Group("")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
@@ -134,8 +141,6 @@ func RegisterUserRoutes(
 			subscriptions.GET("/progress", h.Subscription.GetProgress)
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
 		}
-
-		RegisterEnterpriseAllocationRoutes(authenticated, h.EnterpriseAllocation)
 
 		// 渠道监控（用户只读）
 		monitors := authenticated.Group("/channel-monitors")

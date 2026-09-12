@@ -22,6 +22,32 @@ var ErrImageStorageIncomplete = errors.New("image storage is enabled but bucket/
 // 与 BackupObjectStoreFactory 同样的注入方式，避免 service 反向依赖 repository。
 type ImageStorageFactory func(ctx context.Context, cfg *config.ImageStorageConfig) (ImageStorage, error)
 
+type readableImageStorage interface {
+	ImageStorage
+	Load(ctx context.Context, key string) ([]byte, string, error)
+}
+
+type prefixedImageStorage struct {
+	storage readableImageStorage
+	prefix  string
+}
+
+func (s *prefixedImageStorage) Save(ctx context.Context, key, contentType string, data []byte) (string, error) {
+	return s.storage.Save(ctx, s.key(key), contentType, data)
+}
+
+func (s *prefixedImageStorage) Load(ctx context.Context, key string) ([]byte, string, error) {
+	return s.storage.Load(ctx, s.key(key))
+}
+
+func (s *prefixedImageStorage) key(key string) string {
+	prefix := strings.Trim(s.prefix, "/")
+	if prefix == "" {
+		return strings.TrimLeft(key, "/")
+	}
+	return prefix + "/" + strings.TrimLeft(key, "/")
+}
+
 // ImageStorageSettings 是后台可编辑的异步生图对象存储配置。
 //
 // ReuseBackupS3 为真时不保存自己的凭证，直接借用数据库备份已配置的 S3 端点与密钥，
@@ -60,6 +86,7 @@ type ImageStorageSettingService struct {
 
 	mu       sync.Mutex
 	resolved bool
+	storage  ImageStorage
 	uploader *ImageResultUploader
 	enabled  bool
 }
@@ -99,7 +126,7 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 
 	ctx := context.Background()
 	s.resolved = true
-	s.uploader, s.enabled = nil, false
+	s.storage, s.uploader, s.enabled = nil, nil, false
 
 	cfg, err := s.effectiveConfig(ctx)
 	if err != nil {
@@ -120,6 +147,9 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 		logger.L().Error("image_storage.client_build_failed; async image tasks stay disabled", zap.Error(err))
 		return nil, false
 	}
+	if readable, ok := storage.(readableImageStorage); ok {
+		s.storage = &prefixedImageStorage{storage: readable, prefix: cfg.Prefix}
+	}
 	s.uploader = NewImageResultUploader(storage, cfg.Prefix, cfg.MaxDownloadByte, nil)
 	s.enabled = true
 	return s.uploader, true
@@ -132,9 +162,21 @@ func (s *ImageStorageSettingService) Invalidate() {
 	}
 	s.mu.Lock()
 	s.resolved = false
+	s.storage = nil
 	s.uploader = nil
 	s.enabled = false
 	s.mu.Unlock()
+}
+
+// ObjectStorage 返回当前已启用的底层对象存储客户端。
+func (s *ImageStorageSettingService) ObjectStorage() (ImageStorage, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.resolve()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.storage, s.enabled && s.storage != nil
 }
 
 // Get 返回后台设置（SecretAccessKey 已脱敏）。从未保存过时返回 config.yaml 的等价值。

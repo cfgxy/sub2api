@@ -42,8 +42,8 @@ func TestEnterpriseSchemaConstraints(t *testing.T) {
 	fixture := seedEnterpriseFixture(t, ctx)
 
 	expectEnterpriseConstraintError(t, ctx, `
-		INSERT INTO enterprise_employees (enterprise_id, email, status)
-		SELECT enterprise_id, ' ' || UPPER(email) || ' ', 'active'
+		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, status)
+		SELECT enterprise_id, ' ' || UPPER(email) || ' ', ' ' || UPPER(current_email) || ' ', password_hash, 'active'
 		FROM enterprise_employees WHERE id = $1
 	`, fixture.employeeID)
 	expectEnterpriseConstraintName(t, ctx, "uq_enterprise_subscriptions_one_active", `
@@ -69,9 +69,9 @@ func TestEnterpriseSchemaConstraints(t *testing.T) {
 	`, fixture.enterpriseID, fixture.employeeID, secondAPIKeyID,
 		fixture.upstreamSubscriptionID, fixture.groupID)
 
-	expectEnterpriseConstraintName(t, ctx, "ck_enterprise_employees_status_disabled_at", `
-		INSERT INTO enterprise_employees (enterprise_id, email, status, disabled_at)
-		VALUES ($1, 'invalid-employee@example.com', 'disabled', NULL)
+	expectEnterpriseConstraintName(t, ctx, "ck_enterprise_employees_lifecycle", `
+		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, status, disabled_at)
+		VALUES ($1, 'invalid-employee@example.com', 'invalid-employee@example.com', '$2a$12$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuu', 'disabled', NULL)
 	`, fixture.enterpriseID)
 	expectEnterpriseConstraintName(t, ctx, "ck_enterprise_subscriptions_status_timestamps", `
 		INSERT INTO enterprise_subscriptions (
@@ -1225,18 +1225,18 @@ func seedEnterpriseFixture(t *testing.T, ctx context.Context) enterpriseFixture 
 
 	var enterpriseID int64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		INSERT INTO enterprises (name, dedicated_upstream_user_id)
-		VALUES ($1, $2) RETURNING id
-	`, "Enterprise "+suffix, userID).Scan(&enterpriseID))
+		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host)
+		VALUES ($1, $2, $2, $3) RETURNING id
+	`, "Enterprise "+suffix, userID, "enterprise-"+suffix+".example.com").Scan(&enterpriseID))
 
 	var employeeID, secondEmployeeID int64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		INSERT INTO enterprise_employees (enterprise_id, email, status)
-		VALUES ($1, $2, 'active') RETURNING id
+		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, status)
+		VALUES ($1, $2, $2, '$2a$12$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuu', 'active') RETURNING id
 	`, enterpriseID, "member-"+suffix+"@example.com").Scan(&employeeID))
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		INSERT INTO enterprise_employees (enterprise_id, email, status)
-		VALUES ($1, $2, 'active') RETURNING id
+		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, status)
+		VALUES ($1, $2, $2, '$2a$12$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuu', 'active') RETURNING id
 	`, enterpriseID, "second-"+suffix+"@example.com").Scan(&secondEmployeeID))
 
 	var subscriptionID int64

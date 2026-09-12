@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseidentity"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 )
@@ -68,6 +69,7 @@ type Handlers struct {
 	ModelPlaza           *ModelPlazaHandler
 	AsyncImage           *AsyncImageHandler
 	BatchImage           *BatchImageHandler
+	Enterprise           *enterpriseidentity.Handler
 	EnterpriseAllocation *EnterpriseAllocationHandler
 }
 

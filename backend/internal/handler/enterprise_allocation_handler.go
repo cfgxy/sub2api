@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/enterprise"
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseidentity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,10 @@ func (h *EnterpriseAllocationHandler) Set(c *gin.Context) {
 		response.BadRequest(c, "Invalid request")
 		return
 	}
+	if claims, exists := enterpriseidentity.ClaimsFromContext(c); exists && claims.EnterpriseID != req.EnterpriseID {
+		response.NotFound(c, "Allocation not found")
+		return
+	}
 	anchor, err := time.Parse(time.RFC3339, req.WindowAnchor)
 	if err != nil {
 		response.BadRequest(c, "Invalid window anchor")
@@ -99,6 +104,10 @@ func (h *EnterpriseAllocationHandler) Summary(c *gin.Context) {
 	enterpriseID, err := strconv.ParseInt(c.Query("enterprise_id"), 10, 64)
 	if err != nil || enterpriseID <= 0 {
 		response.BadRequest(c, "Invalid enterprise ID")
+		return
+	}
+	if claims, exists := enterpriseidentity.ClaimsFromContext(c); exists && claims.EnterpriseID != enterpriseID {
+		response.NotFound(c, "Allocation not found")
 		return
 	}
 	subscriptionID, err := strconv.ParseInt(c.Param("subscription_id"), 10, 64)
