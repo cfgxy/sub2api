@@ -23,6 +23,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/enterprise"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	platformservice "github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/golang-jwt/jwt/v5"
@@ -900,7 +901,7 @@ func revokeEmployeeActiveKeys(ctx context.Context, tx *sql.Tx, enterpriseID, emp
 		FROM enterprise_key_assignments AS assignment
 		JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
 		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2 AND assignment.status = 'active'
-		FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID)
+		ORDER BY assignment.api_key_id`, enterpriseID, employeeID)
 	if err != nil {
 		return nil, err
 	}
@@ -923,6 +924,25 @@ func revokeEmployeeActiveKeys(ctx context.Context, tx *sql.Tx, enterpriseID, emp
 
 	revokedKeys := make([]string, 0, len(keys))
 	for _, key := range keys {
+		if err := lockEnterpriseKeyCredential(ctx, tx, key.key); err != nil {
+			return nil, err
+		}
+		var lockedKey string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT api_key.key
+			FROM enterprise_key_assignments AS assignment
+			JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+			WHERE assignment.enterprise_id = $1
+			  AND assignment.employee_id = $2
+			  AND assignment.api_key_id = $3
+			  AND assignment.status = 'active'
+			  AND api_key.key = $4
+			FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID, key.id, key.key).Scan(&lockedKey); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, errConflict
+			}
+			return nil, err
+		}
 		result, err := tx.ExecContext(ctx, `
 			UPDATE enterprise_key_assignments
 			SET status = 'revoked', ended_at = NOW(), revoked_at = NOW(), actor_ref = $3, updated_at = NOW()
@@ -939,7 +959,7 @@ func revokeEmployeeActiveKeys(ctx context.Context, tx *sql.Tx, enterpriseID, emp
 		}
 		result, err = tx.ExecContext(ctx, `
 			UPDATE api_keys
-			SET key = 'revoked-' || id::text, status = 'disabled', updated_at = NOW()
+			SET key = ':revoked:' || id::text, status = 'disabled', updated_at = NOW()
 			WHERE id = $1`, key.id)
 		if err != nil {
 			return nil, err
@@ -953,6 +973,15 @@ func revokeEmployeeActiveKeys(ctx context.Context, tx *sql.Tx, enterpriseID, emp
 		revokedKeys = append(revokedKeys, key.key)
 	}
 	return revokedKeys, nil
+}
+
+func lockEnterpriseKeyCredential(ctx context.Context, tx *sql.Tx, credential string) error {
+	if strings.TrimSpace(credential) == "" {
+		return errConflict
+	}
+	fingerprint := enterprise.EmployeeKeyCredentialFingerprint(credential)
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, fingerprint)
+	return err
 }
 
 func (s *Service) invalidateAuthCacheByKeys(ctx context.Context, keys []string) {

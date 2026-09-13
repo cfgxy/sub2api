@@ -869,24 +869,42 @@ func (r *Repository) RebindKeyAssignment(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Match lifecycle and billing: employee -> enterprise -> assignment -> API key.
+	// NO KEY UPDATE still serializes mutations while allowing FK KEY SHARE checks.
 	if err = tx.QueryRowContext(ctx, `
 		SELECT id FROM enterprise_employees
 		WHERE enterprise_id = $1 AND id = $2
-		FOR UPDATE`, params.EnterpriseID, params.EmployeeID).Scan(new(int64)); err != nil {
+		FOR NO KEY UPDATE`, params.EnterpriseID, params.EmployeeID).Scan(new(int64)); err != nil {
 		return nil, err
 	}
 	if err = tx.QueryRowContext(ctx, `
 		SELECT id FROM enterprises
 		WHERE id = $1
-		FOR UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
+		FOR NO KEY UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
 		return nil, err
 	}
-	if err = tx.QueryRowContext(ctx, `
-		SELECT id
+
+	var activeAssignment KeyAssignment
+	assignmentErr := tx.QueryRowContext(ctx, `
+		SELECT id, enterprise_id, employee_id, api_key_id,
+		       upstream_user_subscription_id, upstream_group_id, generation, assigned_at
 		FROM enterprise_key_assignments
-		WHERE enterprise_id = $1 AND employee_id = $2 AND api_key_id = $3 AND status = 'active'
-		FOR UPDATE`, params.EnterpriseID, params.EmployeeID, params.APIKeyID).Scan(new(int64)); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
+		WHERE api_key_id = $1 AND status = 'active'
+		ORDER BY generation DESC, assigned_at DESC, id DESC
+		LIMIT 1
+		FOR UPDATE
+	`, params.APIKeyID).Scan(
+		&activeAssignment.ID,
+		&activeAssignment.EnterpriseID,
+		&activeAssignment.EmployeeID,
+		&activeAssignment.APIKeyID,
+		&activeAssignment.UpstreamSubscriptionID,
+		&activeAssignment.UpstreamGroupID,
+		&activeAssignment.Generation,
+		&activeAssignment.AssignedAt,
+	)
+	if assignmentErr != nil && !errors.Is(assignmentErr, sql.ErrNoRows) {
+		return nil, assignmentErr
 	}
 
 	var enterpriseUserID, keyUserID, upstreamUserID, upstreamGroupID int64
@@ -900,6 +918,7 @@ func (r *Repository) RebindKeyAssignment(
 	`, params.APIKeyID).Scan(&keyUserID, &keyGroupID, &keyStatus, &apiKey); err != nil {
 		return nil, err
 	}
+
 	if err = tx.QueryRowContext(ctx, `
 		SELECT dedicated_upstream_user_id
 		FROM enterprises
@@ -970,27 +989,10 @@ func (r *Repository) RebindKeyAssignment(
 		return nil, ErrUsageAttributionMismatch
 	}
 
-	var activeAssignment KeyAssignment
-	err = tx.QueryRowContext(ctx, `
-		SELECT id, enterprise_id, employee_id, api_key_id,
-		       upstream_user_subscription_id, upstream_group_id, generation, assigned_at
-		FROM enterprise_key_assignments
-		WHERE api_key_id = $1 AND status = 'active'
-		FOR UPDATE
-	`, params.APIKeyID).Scan(
-		&activeAssignment.ID,
-		&activeAssignment.EnterpriseID,
-		&activeAssignment.EmployeeID,
-		&activeAssignment.APIKeyID,
-		&activeAssignment.UpstreamSubscriptionID,
-		&activeAssignment.UpstreamGroupID,
-		&activeAssignment.Generation,
-		&activeAssignment.AssignedAt,
-	)
 	switch {
-	case err == nil && activeAssignment.EmployeeID != params.EmployeeID:
+	case assignmentErr == nil && activeAssignment.EmployeeID != params.EmployeeID:
 		return nil, ErrKeyAlreadyAssigned
-	case err == nil && activeAssignment.UpstreamSubscriptionID == params.UpstreamSubscriptionID &&
+	case assignmentErr == nil && activeAssignment.UpstreamSubscriptionID == params.UpstreamSubscriptionID &&
 		activeAssignment.UpstreamGroupID == upstreamGroupID:
 		if err = tx.Commit(); err != nil {
 			return nil, err
@@ -999,7 +1001,7 @@ func (r *Repository) RebindKeyAssignment(
 			r.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey)
 		}
 		return &activeAssignment, nil
-	case err == nil:
+	case assignmentErr == nil:
 		if _, err = tx.ExecContext(ctx, `
 			UPDATE enterprise_key_assignments
 			SET status = 'ended', ended_at = $3, actor_ref = $2, updated_at = $3
@@ -1007,9 +1009,9 @@ func (r *Repository) RebindKeyAssignment(
 		`, activeAssignment.ID, params.ActorRef, segmentBoundary); err != nil {
 			return nil, err
 		}
-	case errors.Is(err, sql.ErrNoRows):
-	case err != nil:
-		return nil, err
+	case errors.Is(assignmentErr, sql.ErrNoRows):
+	case assignmentErr != nil:
+		return nil, assignmentErr
 	}
 
 	assignment := &KeyAssignment{}
@@ -1100,6 +1102,24 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 			FOR UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
 			return err
 		}
+	} else if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprises
+		WHERE id = $1
+		FOR UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
+		return err
+	}
+
+	var originalKey string
+	if err = tx.QueryRowContext(ctx, `
+		SELECT key FROM api_keys
+		WHERE id = $1 AND deleted_at IS NULL`, params.APIKeyID).Scan(&originalKey); err != nil {
+		return err
+	}
+	if err = lockEmployeeKeyCredential(ctx, tx, originalKey); err != nil {
+		return err
+	}
+
+	if assignmentEmployeeID > 0 {
 		if err = tx.QueryRowContext(ctx, `
 			SELECT id FROM enterprise_key_assignments
 			WHERE enterprise_id = $1 AND employee_id = $2 AND api_key_id = $3
@@ -1108,11 +1128,6 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 			FOR UPDATE`, params.EnterpriseID, assignmentEmployeeID, params.APIKeyID).Scan(new(int64)); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-	} else if err = tx.QueryRowContext(ctx, `
-		SELECT id FROM enterprises
-		WHERE id = $1
-		FOR UPDATE`, params.EnterpriseID).Scan(new(int64)); err != nil {
-		return err
 	}
 
 	var keyStatus, apiKey string
@@ -1121,9 +1136,12 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 			SELECT api_key.status, api_key.key, api_key.user_id, enterprise.dedicated_upstream_user_id
 		FROM api_keys AS api_key
 		JOIN enterprises AS enterprise ON enterprise.id = $1
-		WHERE api_key.id = $2 AND api_key.deleted_at IS NULL
+		WHERE api_key.id = $2 AND api_key.key = $3 AND api_key.deleted_at IS NULL
 		FOR UPDATE OF api_key, enterprise
-		`, params.EnterpriseID, params.APIKeyID).Scan(&keyStatus, &apiKey, &keyUserID, &enterpriseUserID); err != nil {
+		`, params.EnterpriseID, params.APIKeyID, originalKey).Scan(&keyStatus, &apiKey, &keyUserID, &enterpriseUserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrKeyGenerationRevoked
+		}
 		return err
 	}
 	if keyUserID != enterpriseUserID {

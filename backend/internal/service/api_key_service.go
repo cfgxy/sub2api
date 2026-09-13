@@ -24,14 +24,15 @@ import (
 )
 
 var (
-	ErrAPIKeyNotFound       = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
-	ErrGroupNotAllowed      = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
-	ErrAPIKeyExists         = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
-	ErrAPIKeyTooShort       = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
-	ErrAPIKeyInvalidChars   = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
-	ErrAPIKeyRateLimited    = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
-	ErrAPIKeyAuthOverloaded = infraerrors.ServiceUnavailable("API_KEY_AUTH_OVERLOADED", "api key authentication is temporarily overloaded")
-	ErrInvalidIPPattern     = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
+	ErrAPIKeyNotFound                   = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
+	ErrGroupNotAllowed                  = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
+	ErrAPIKeyExists                     = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
+	ErrAPIKeyTooShort                   = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
+	ErrAPIKeyInvalidChars               = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
+	ErrAPIKeyRateLimited                = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
+	ErrAPIKeyAuthOverloaded             = infraerrors.ServiceUnavailable("API_KEY_AUTH_OVERLOADED", "api key authentication is temporarily overloaded")
+	ErrEnterpriseAttributionUnavailable = infraerrors.ServiceUnavailable("ENTERPRISE_ATTRIBUTION_UNAVAILABLE", "enterprise attribution is temporarily unavailable")
+	ErrInvalidIPPattern                 = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
@@ -119,6 +120,10 @@ type APIKeyRepository interface {
 	IncrementRateLimitUsage(ctx context.Context, id int64, cost float64) error
 	ResetRateLimitWindows(ctx context.Context, id int64) error
 	GetRateLimitData(ctx context.Context, id int64) (*APIKeyRateLimitData, error)
+}
+
+type enterpriseUsageAttributionIdentityResolver interface {
+	ResolveEnterpriseUsageAttributionIdentity(context.Context, int64, string, *int64) (*EnterpriseUsageAttributionIdentity, error)
 }
 
 type apiKeyAllByUserIDLister interface {
@@ -753,6 +758,49 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 	apiKey.Key = key
 	s.compileAPIKeyIPRules(apiKey)
 	return apiKey, nil
+}
+
+// FinalizeEnterpriseUsageAttribution rechecks enterprise candidate credentials against
+// the primary database and freezes the identity selected by that read snapshot.
+func (s *APIKeyService) FinalizeEnterpriseUsageAttribution(
+	ctx context.Context,
+	apiKey *APIKey,
+	credential string,
+	subscription *UserSubscription,
+) error {
+	if apiKey == nil || !apiKey.EnterpriseAttributionCandidate {
+		return nil
+	}
+	// 无订阅入口保持原有放行语义，不从企业表补猜订阅或员工归属。
+	// 主中间件、Google 入口和直接调用必须共享这一 fail-open 兼容边界。
+	if subscription == nil {
+		apiKey.EnterpriseAttributionIdentity = nil
+		return nil
+	}
+	resolver, ok := s.apiKeyRepo.(enterpriseUsageAttributionIdentityResolver)
+	if !ok {
+		return ErrEnterpriseAttributionUnavailable
+	}
+	var upstreamSubscriptionID *int64
+	if subscription != nil {
+		value := subscription.ID
+		upstreamSubscriptionID = &value
+	}
+	identity, err := resolver.ResolveEnterpriseUsageAttributionIdentity(ctx, apiKey.ID, credential, upstreamSubscriptionID)
+	if err != nil {
+		return err
+	}
+	if identity == nil {
+		apiKey.EnterpriseAttributionIdentity = nil
+		return nil
+	}
+	copy := *identity
+	copy.EmployeeID = cloneUsageAttributionInt64(identity.EmployeeID)
+	copy.DailyWindowAnchor = cloneUsageAttributionTime(identity.DailyWindowAnchor)
+	copy.WeeklyWindowAnchor = cloneUsageAttributionTime(identity.WeeklyWindowAnchor)
+	copy.MonthlyWindowAnchor = cloneUsageAttributionTime(identity.MonthlyWindowAnchor)
+	apiKey.EnterpriseAttributionIdentity = &copy
+	return nil
 }
 
 // Update 更新API Key

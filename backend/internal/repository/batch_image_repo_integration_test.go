@@ -345,6 +345,41 @@ func TestBatchImageRepository_AppendEvent(t *testing.T) {
 	require.Contains(t, payload, batchID)
 }
 
+func TestBatchImageRepositoryPersistsEnterpriseAttributionSnapshot(t *testing.T) {
+	ctx := context.Background()
+	tx := testTx(t)
+	repo := newBatchImageRepositoryWithSQL(tx)
+	employeeID := int64(55)
+	anchor := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	weeklyAnchor := anchor.Add(7 * 24 * time.Hour)
+	monthlyAnchor := anchor.Add(18 * 24 * time.Hour)
+	snapshot := &service.EnterpriseUsageAttributionSnapshot{
+		EnterpriseID:         66,
+		SubscriptionID:       77,
+		EmployeeID:           &employeeID,
+		AssignmentGeneration: 3,
+		Classification:       "employee",
+		RequestAt:            anchor.Add(time.Hour),
+		DailyWindowAnchor:    &anchor,
+		WeeklyWindowAnchor:   &weeklyAnchor,
+		MonthlyWindowAnchor:  &monthlyAnchor,
+	}
+	batchID := batchImageTestID(t, "attribution-snapshot")
+	_, err := repo.CreateBatchImageJob(ctx, service.CreateBatchImageJobParams{
+		BatchID:               batchID,
+		UserID:                1001,
+		Provider:              service.BatchImageProviderGeminiAPI,
+		Model:                 "gemini-2.5-flash-image",
+		ItemCount:             1,
+		EnterpriseAttribution: snapshot,
+	})
+	require.NoError(t, err)
+
+	loaded, err := repo.GetBatchImageJobByBatchID(ctx, batchID)
+	require.NoError(t, err)
+	require.Equal(t, snapshot, loaded.EnterpriseAttribution)
+}
+
 func batchImageTestID(t *testing.T, prefix string) string {
 	t.Helper()
 	safePrefix := batchImageSafeTestIDSegment(prefix, 20)

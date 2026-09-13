@@ -242,6 +242,63 @@ func TestGatewayServiceRecordUsage_CapturesPricingAtAndSubscriptionWindowAnchors
 	require.Nil(t, usageRepo.lastLog.EnterpriseAttribution)
 }
 
+func TestGatewayServiceRecordUsage_PersistsFrozenEnterpriseSnapshot(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	requestAt := time.Date(2026, 9, 13, 8, 0, 0, 0, time.UTC)
+	dailyAnchor := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	weeklyAnchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	monthlyAnchor := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	employeeID := int64(902)
+	apiKey := &APIKey{
+		ID:                             502,
+		EnterpriseAttributionCandidate: true,
+		EnterpriseAttributionIdentity: &EnterpriseUsageAttributionIdentity{
+			EnterpriseID:             903,
+			EnterpriseSubscriptionID: 904,
+			UpstreamSubscriptionID:   905,
+			EmployeeID:               &employeeID,
+			AssignmentGeneration:     6,
+			Classification:           "employee",
+			WindowAnchorsResolved:    true,
+			DailyWindowAnchor:        &dailyAnchor,
+			WeeklyWindowAnchor:       &weeklyAnchor,
+			MonthlyWindowAnchor:      &monthlyAnchor,
+		},
+	}
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_enterprise_snapshot",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey: apiKey,
+		User:   &User{ID: 601}, Account: &Account{ID: 701}, PricingAt: requestAt,
+		Subscription: &UserSubscription{
+			ID:                 905,
+			DailyWindowStart:   timePtr(dailyAnchor.Add(-time.Hour)),
+			WeeklyWindowStart:  timePtr(weeklyAnchor.Add(-time.Hour)),
+			MonthlyWindowStart: timePtr(monthlyAnchor.Add(-time.Hour)),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	snapshot := usageRepo.lastLog.EnterpriseAttribution
+	require.NotNil(t, snapshot)
+	require.Equal(t, int64(903), snapshot.EnterpriseID)
+	require.Equal(t, int64(904), snapshot.SubscriptionID)
+	require.Equal(t, employeeID, *snapshot.EmployeeID)
+	require.Equal(t, int64(6), snapshot.AssignmentGeneration)
+	require.Equal(t, "employee", snapshot.Classification)
+	require.Equal(t, requestAt, snapshot.RequestAt)
+	require.Equal(t, dailyAnchor, *snapshot.DailyWindowAnchor)
+	require.Equal(t, weeklyAnchor, *snapshot.WeeklyWindowAnchor)
+	require.Equal(t, monthlyAnchor, *snapshot.MonthlyWindowAnchor)
+}
+
 func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

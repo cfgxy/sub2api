@@ -78,6 +78,86 @@ type fakeAPIKeyRepo struct {
 	updateLastUsed func(ctx context.Context, id int64, usedAt time.Time) error
 }
 
+type enterpriseAttributionNoSubscriptionRepo struct {
+	service.APIKeyRepository
+	resolveCalls atomic.Int32
+}
+
+func (r *enterpriseAttributionNoSubscriptionRepo) apiKey(key string) *service.APIKey {
+	return &service.APIKey{
+		ID:                             1,
+		Key:                            key,
+		Status:                         service.StatusAPIKeyActive,
+		EnterpriseAttributionCandidate: true,
+		User:                           &service.User{ID: 2, Status: service.StatusActive},
+	}
+}
+
+func (r *enterpriseAttributionNoSubscriptionRepo) GetByKey(ctx context.Context, key string) (*service.APIKey, error) {
+	return r.apiKey(key), nil
+}
+
+func (r *enterpriseAttributionNoSubscriptionRepo) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
+	return r.apiKey(key), nil
+}
+
+func (r *enterpriseAttributionNoSubscriptionRepo) ResolveEnterpriseUsageAttributionIdentity(
+	context.Context,
+	int64,
+	string,
+	*int64,
+) (*service.EnterpriseUsageAttributionIdentity, error) {
+	r.resolveCalls.Add(1)
+	return nil, errors.New("enterprise resolver must not run without subscription")
+}
+
+func (r *enterpriseAttributionNoSubscriptionRepo) UpdateLastUsed(context.Context, int64, time.Time) error {
+	return nil
+}
+
+func TestEnterpriseCandidateWithoutSubscriptionKeepsBothMiddlewarePathsOpen(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name       string
+		header     string
+		middleware func(*service.APIKeyService, *config.Config) gin.HandlerFunc
+	}{
+		{
+			name:   "standard",
+			header: "x-api-key",
+			middleware: func(apiKeyService *service.APIKeyService, cfg *config.Config) gin.HandlerFunc {
+				return gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, cfg))
+			},
+		},
+		{
+			name:   "google",
+			header: "x-goog-api-key",
+			middleware: func(apiKeyService *service.APIKeyService, cfg *config.Config) gin.HandlerFunc {
+				return APIKeyAuthWithSubscriptionGoogle(apiKeyService, nil, cfg)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{RunMode: config.RunModeSimple}
+			repo := &enterpriseAttributionNoSubscriptionRepo{}
+			apiKeyService := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+			r := gin.New()
+			r.Use(tt.middleware(apiKeyService, cfg))
+			r.GET("/v1/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
+			req.Header.Set(tt.header, "test-credential")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Zero(t, repo.resolveCalls.Load())
+		})
+	}
+}
+
 type fakeGoogleSubscriptionRepo struct {
 	getByID        func(ctx context.Context, id int64) (*service.UserSubscription, error)
 	getActive      func(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error)

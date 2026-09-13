@@ -56,8 +56,10 @@ type employeeKeyStoreStub struct {
 	current       *enterprise.EmployeeKey
 	currentParams [2]int64
 	createParams  []enterprise.EmployeeKeyMutationParams
+	disableParams []enterprise.EmployeeKeyMutationParams
 	rotateParams  []enterprise.EmployeeKeyMutationParams
 	createResult  *enterprise.EmployeeKeyMutationResult
+	disableResult *enterprise.EmployeeKeyMutationResult
 	rotateResult  *enterprise.EmployeeKeyMutationResult
 }
 
@@ -71,8 +73,9 @@ func (s *employeeKeyStoreStub) CreateEmployeeKey(_ context.Context, params enter
 	return s.createResult, nil
 }
 
-func (s *employeeKeyStoreStub) DisableEmployeeKey(_ context.Context, _ enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error) {
-	panic("unexpected disable")
+func (s *employeeKeyStoreStub) DisableEmployeeKey(_ context.Context, params enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error) {
+	s.disableParams = append(s.disableParams, params)
+	return s.disableResult, nil
 }
 
 func (s *employeeKeyStoreStub) RotateEmployeeKey(_ context.Context, params enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error) {
@@ -85,6 +88,16 @@ type employeeKeyGeneratorStub struct {
 }
 
 func (s employeeKeyGeneratorStub) GenerateKey() (string, error) {
+	return s.value, nil
+}
+
+type countingEmployeeKeyGenerator struct {
+	value string
+	calls int
+}
+
+func (s *countingEmployeeKeyGenerator) GenerateKey() (string, error) {
+	s.calls++
 	return s.value, nil
 }
 
@@ -165,6 +178,56 @@ func TestEmployeeKeyHandlersRejectUntrustedOrIncompleteRequests(t *testing.T) {
 	h.getCurrentKey(adminContext)
 	require.Equal(t, http.StatusForbidden, adminRecorder.Code)
 	require.Equal(t, [2]int64{}, store.currentParams)
+}
+
+func TestEmployeeKeyMutationRateLimitFailsClosedBeforeGeneratorAndRepository(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "create", path: "/keys"},
+		{name: "disable", path: "/keys/disable", body: `{"expected_api_key_id":67}`},
+		{name: "rotate", path: "/keys/rotate", body: `{"expected_api_key_id":67}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rdb := redis.NewClient(&redis.Options{
+				Addr:         "127.0.0.1:1",
+				DialTimeout:  25 * time.Millisecond,
+				ReadTimeout:  25 * time.Millisecond,
+				WriteTimeout: 25 * time.Millisecond,
+			})
+			t.Cleanup(func() { _ = rdb.Close() })
+			store := &employeeKeyStoreStub{}
+			generator := &countingEmployeeKeyGenerator{value: "must-not-be-generated"}
+			h := NewHandler(nil, store, generator, rdb)
+			router := gin.New()
+			root := router.Group("")
+			root.Use(func(c *gin.Context) {
+				c.Set(claimsContextKey, &Claims{
+					EnterpriseID: 11, PrincipalType: "employee", PrincipalID: 22,
+					Role: "enterprise_employee", SessionID: "session-1",
+				})
+				c.Next()
+			})
+			root.POST("/keys", h.employeeKeyMutationRateLimit(), h.createKey)
+			root.POST("/keys/disable", h.employeeKeyMutationRateLimit(), h.disableKey)
+			root.POST("/keys/rotate", h.employeeKeyMutationRateLimit(), h.rotateKey)
+
+			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", "must-not-reach-repository")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+			require.Empty(t, store.createParams)
+			require.Empty(t, store.disableParams)
+			require.Empty(t, store.rotateParams)
+			require.Zero(t, generator.calls)
+		})
+	}
 }
 
 func TestEmployeeKeyRotationPlaintextResponseIsNeverStoredByHTTPCaches(t *testing.T) {

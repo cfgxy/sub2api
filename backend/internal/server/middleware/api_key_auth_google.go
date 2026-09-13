@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -130,9 +131,13 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			abortWithGoogleError(c, 403, "API Key 所属专属分组不再允许当前用户使用")
 			return
 		}
+		var subscription *service.UserSubscription
 
 		// 简易模式：跳过余额和订阅检查
 		if cfg.RunMode == config.RunModeSimple {
+			if finalizeErr := finalizeEnterpriseAttributionGoogle(c, apiKeyService, apiKey, apiKeyString, nil); finalizeErr != nil {
+				return
+			}
 			c.Set(string(ContextKeyAPIKey), apiKey)
 			c.Set(string(ContextKeyUser), AuthSubject{
 				UserID:      apiKey.User.ID,
@@ -167,7 +172,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 		if isSubscriptionType && subscriptionService != nil {
-			subscription, err := subscriptionService.GetActiveSubscription(
+			subscription, err = subscriptionService.GetActiveSubscription(
 				c.Request.Context(),
 				apiKey.User.ID,
 				apiKey.Group.ID,
@@ -198,14 +203,19 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 				return
 			}
 
-			c.Set(string(ContextKeySubscription), subscription)
 		} else {
 			if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
 				abortWithGoogleError(c, 403, "Insufficient account balance")
 				return
 			}
 		}
+		if finalizeErr := finalizeEnterpriseAttributionGoogle(c, apiKeyService, apiKey, apiKeyString, subscription); finalizeErr != nil {
+			return
+		}
 
+		if subscription != nil {
+			c.Set(string(ContextKeySubscription), subscription)
+		}
 		c.Set(string(ContextKeyAPIKey), apiKey)
 		c.Set(string(ContextKeyUser), AuthSubject{
 			UserID:      apiKey.User.ID,
@@ -216,6 +226,31 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 		c.Next()
 	}
+}
+
+func finalizeEnterpriseAttributionGoogle(
+	c *gin.Context,
+	apiKeyService *service.APIKeyService,
+	apiKey *service.APIKey,
+	credential string,
+	subscription *service.UserSubscription,
+) error {
+	if err := apiKeyService.FinalizeEnterpriseUsageAttribution(c.Request.Context(), apiKey, credential, subscription); err != nil {
+		if errors.Is(err, service.ErrAPIKeyNotFound) {
+			recordInvalidAuthFailure(c, apiKeyService)
+			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+			abortWithGoogleError(c, http.StatusUnauthorized, "Invalid API key")
+			return err
+		}
+		if errors.Is(err, service.ErrEnterpriseAttributionUnavailable) {
+			MarkIngressRejected(c, IngressRejectAPIKeyAuthOverloaded)
+			abortWithGoogleError(c, http.StatusServiceUnavailable, "Enterprise attribution is temporarily unavailable")
+			return err
+		}
+		abortWithGoogleError(c, http.StatusInternalServerError, "Failed to finalize enterprise API key attribution")
+		return err
+	}
+	return nil
 }
 
 // extractAPIKeyForGoogle extracts API key for Google/Gemini endpoints.

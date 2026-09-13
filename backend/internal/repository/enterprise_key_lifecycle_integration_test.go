@@ -29,6 +29,7 @@ type employeeKeyAuthCacheInvalidatorStub struct {
 
 type employeeKeyHTTPGenerator struct {
 	value string
+	calls int
 }
 
 func installEmployeeKeyLifecycleGate(t *testing.T, ctx context.Context, enterpriseID, employeeID, gate int64, applicationName string) func() {
@@ -129,6 +130,7 @@ func employeeKeyUsageSnapshot(t *testing.T, ctx context.Context, apiKeyID int64)
 }
 
 func (g *employeeKeyHTTPGenerator) GenerateKey() (string, error) {
+	g.calls++
 	return g.value, nil
 }
 
@@ -480,6 +482,93 @@ func TestEnterpriseEmployeeKeyRotationAfterBillingInheritsFinalSnapshotUnderLock
 	require.Equal(t, 7.25, usage7d)
 }
 
+func TestEnterpriseKeyRebindWaitsForEmployeeKeyRotationBeforeLockingAPIKey(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := seedEnterpriseFixture(t, ctx)
+	var originalCredential string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT key FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&originalCredential))
+
+	const rotationApplication = "shan153-rotation-before-rebind"
+	const rebindApplication = "shan153-rebind-during-rotation"
+	gate := time.Now().UnixNano()
+	rotationDB := openPartitionCleanupDB(t, ctx, "public", rotationApplication)
+	rebindDB := openPartitionCleanupDB(t, ctx, "public", rebindApplication)
+	cleanupTrigger := installEmployeeKeyLifecycleGate(t, ctx, fixture.enterpriseID, fixture.employeeID, gate, rotationApplication)
+	t.Cleanup(cleanupTrigger)
+	releaseGate := holdEmployeeKeyGate(t, ctx, gate)
+	rotationRepo := enterprise.NewRepository(rotationDB, enterpriseNoopAuthCacheInvalidator{})
+	rebindRepo := enterprise.NewRepository(rebindDB, enterpriseNoopAuthCacheInvalidator{})
+	rotationDone := make(chan error, 1)
+	rebindDone := make(chan error, 1)
+	var successor *enterprise.EmployeeKeyMutationResult
+
+	go func() {
+		result, rotateErr := rotationRepo.RotateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
+			EnterpriseID: fixture.enterpriseID, EmployeeID: fixture.employeeID,
+			ExpectedAPIKeyID: fixture.apiKeyID, IdempotencyKey: "rotation-before-rebind",
+			Plaintext: fmt.Sprintf("sk-rotation-before-rebind-%d", time.Now().UnixNano()), ActorRef: "test:concurrent",
+		})
+		successor = result
+		rotationDone <- rotateErr
+	}()
+	requireEmployeeKeyApplicationWaitingOnLock(t, ctx, rotationApplication, rotationDone)
+
+	go func() {
+		_, err := rebindRepo.RebindKeyAssignment(ctx, enterprise.RebindKeyAssignmentParams{
+			EnterpriseID: fixture.enterpriseID, EmployeeID: fixture.employeeID, APIKeyID: fixture.apiKeyID,
+			UpstreamSubscriptionID: fixture.upstreamSubscriptionID, ActorRef: "test:concurrent-rebind",
+		})
+		rebindDone <- err
+	}()
+	requireEmployeeKeyApplicationWaitingOnLock(t, ctx, rebindApplication, rebindDone)
+
+	releaseGate()
+	rotationErr := <-rotationDone
+	rebindErr := <-rebindDone
+	for _, result := range []struct {
+		name string
+		err  error
+	}{
+		{name: "rotation", err: rotationErr},
+		{name: "rebind", err: rebindErr},
+	} {
+		var pqErr *pq.Error
+		if errors.As(result.err, &pqErr) {
+			require.NotEqual(t, pq.ErrorCode("40P01"), pqErr.Code, "%s must not be aborted by a PostgreSQL deadlock", result.name)
+		}
+	}
+	require.NoError(t, rotationErr)
+	require.ErrorIs(t, rebindErr, enterprise.ErrKeyGenerationRevoked)
+	require.NotNil(t, successor)
+	require.NotNil(t, successor.Key)
+
+	var oldStatus, oldCredential, oldAssignmentStatus string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT api_key.status, api_key.key, assignment.status
+		FROM api_keys AS api_key
+		JOIN enterprise_key_assignments AS assignment ON assignment.api_key_id = api_key.id
+		WHERE api_key.id = $1
+		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC
+		LIMIT 1`, fixture.apiKeyID).Scan(&oldStatus, &oldCredential, &oldAssignmentStatus))
+	require.Equal(t, "disabled", oldStatus)
+	require.Equal(t, "revoked", oldAssignmentStatus)
+	require.NotEqual(t, originalCredential, oldCredential)
+
+	var activeAPIKeyID int64
+	var activeKeyStatus, activeAssignmentStatus string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT assignment.api_key_id, api_key.status, assignment.status
+		FROM enterprise_key_assignments AS assignment
+		JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2 AND assignment.status = 'active'`,
+		fixture.enterpriseID, fixture.employeeID).Scan(&activeAPIKeyID, &activeKeyStatus, &activeAssignmentStatus))
+	require.Equal(t, successor.Key.ID, activeAPIKeyID)
+	require.Equal(t, "active", activeKeyStatus)
+	require.Equal(t, "active", activeAssignmentStatus)
+}
+
 func TestEnterpriseKeyRebindAndSubscriptionBillingUseConsistentLockOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -632,7 +721,7 @@ func TestEnterpriseEmployeeKeyDisablePreservesHistoryAndReplaysWithoutPlaintext(
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		SELECT status, key FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&keyStatus, &storedKey))
 	require.Equal(t, "disabled", keyStatus)
-	require.Equal(t, fmt.Sprintf("revoked-%d", fixture.apiKeyID), storedKey)
+	require.Equal(t, fmt.Sprintf(":revoked:%d", fixture.apiKeyID), storedKey)
 	require.NotEqual(t, originalKey, storedKey)
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		SELECT status, ended_at, revoked_at FROM enterprise_key_assignments
@@ -694,13 +783,109 @@ func TestEnterpriseEmployeeStatusChangeRevokesCurrentKey(t *testing.T) {
 			require.Equal(t, operation.expectedStatus, employeeStatus)
 			require.Equal(t, "revoked", assignmentStatus)
 			require.Equal(t, "disabled", keyStatus)
-			require.Equal(t, fmt.Sprintf("revoked-%d", fixture.apiKeyID), storedKey)
+			require.Equal(t, fmt.Sprintf(":revoked:%d", fixture.apiKeyID), storedKey)
 			require.NotEqual(t, originalKey, storedKey)
 			require.Equal(t, []string{originalKey}, invalidator.keys)
 
 			var originalKeyCount int
 			require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE key = $1`, originalKey).Scan(&originalKeyCount))
 			require.Zero(t, originalKeyCount)
+		})
+	}
+}
+
+func TestEnterpriseEmployeeKeyMutationRateLimitRejectsBeforeIdempotencyWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name string
+		path string
+		body func(enterpriseFixture) string
+	}{
+		{name: "create", path: "/api/v1/enterprise/keys", body: func(enterpriseFixture) string { return "" }},
+		{name: "disable", path: "/api/v1/enterprise/keys/disable", body: func(fixture enterpriseFixture) string {
+			return fmt.Sprintf(`{"expected_api_key_id":%d}`, fixture.apiKeyID)
+		}},
+		{name: "rotate", path: "/api/v1/enterprise/keys/rotate", body: func(fixture enterpriseFixture) string {
+			return fmt.Sprintf(`{"expected_api_key_id":%d}`, fixture.apiKeyID)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			fixture := seedEnterpriseFixture(t, ctx)
+			employeeID := fixture.employeeID
+			if test.name == "create" {
+				employeeID = fixture.secondEmployee
+			}
+			const password = "employee-rate-limit-password"
+			var host, email string
+			require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT portal_host FROM enterprises WHERE id = $1`, fixture.enterpriseID).Scan(&host))
+			require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT current_email FROM enterprise_employees WHERE id = $1`, employeeID).Scan(&email))
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+			require.NoError(t, err)
+			_, err = integrationDB.ExecContext(ctx, `
+				UPDATE enterprise_employees
+				SET password_hash = $1, must_change_password = FALSE
+				WHERE id = $2`, string(hash), employeeID)
+			require.NoError(t, err)
+
+			identityService := enterpriseidentity.NewService(integrationDB, &config.Config{JWT: config.JWTConfig{Secret: "enterprise-key-rate-limit-secret"}}, nil, nil, nil)
+			session, err := identityService.Login(ctx, host, email, password, "integration", "127.0.0.1")
+			require.NoError(t, err)
+			generator := &employeeKeyHTTPGenerator{value: fmt.Sprintf("sk-rate-limit-%d", time.Now().UnixNano())}
+			handler := enterpriseidentity.NewHandler(
+				identityService,
+				enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{}),
+				generator,
+				testRedis(t),
+			)
+			router := gin.New()
+			handler.RegisterRoutes(router.Group("/api/v1"))
+
+			perform := func(idempotencyKey string) *httptest.ResponseRecorder {
+				body := test.body(fixture)
+				req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(body))
+				req.Host = host
+				req.Header.Set("Authorization", "Bearer "+session.AccessToken)
+				if body != "" {
+					req.Header.Set("Content-Type", "application/json")
+				}
+				if idempotencyKey != "" {
+					req.Header.Set("Idempotency-Key", idempotencyKey)
+				}
+				recorder := httptest.NewRecorder()
+				router.ServeHTTP(recorder, req)
+				return recorder
+			}
+
+			for attempt := 0; attempt < 10; attempt++ {
+				recorder := perform("")
+				require.Equal(t, http.StatusBadRequest, recorder.Code)
+			}
+
+			var beforeCount int
+			require.NoError(t, integrationDB.QueryRowContext(ctx, `
+				SELECT COUNT(*)
+				FROM enterprise_key_lifecycle_idempotency
+				WHERE enterprise_id = $1 AND employee_id = $2`, fixture.enterpriseID, employeeID).Scan(&beforeCount))
+			for attempt := 0; attempt < 2; attempt++ {
+				idempotencyKey := fmt.Sprintf("rate-limit-overflow-%s-%d", test.name, attempt)
+				recorder := perform(idempotencyKey)
+				require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+				var persisted int
+				require.NoError(t, integrationDB.QueryRowContext(ctx, `
+					SELECT COUNT(*)
+					FROM enterprise_key_lifecycle_idempotency
+					WHERE enterprise_id = $1 AND employee_id = $2 AND idempotency_key = $3`,
+					fixture.enterpriseID, employeeID, idempotencyKey).Scan(&persisted))
+				require.Zero(t, persisted)
+			}
+			var afterCount int
+			require.NoError(t, integrationDB.QueryRowContext(ctx, `
+				SELECT COUNT(*)
+				FROM enterprise_key_lifecycle_idempotency
+				WHERE enterprise_id = $1 AND employee_id = $2`, fixture.enterpriseID, employeeID).Scan(&afterCount))
+			require.Equal(t, beforeCount, afterCount)
+			require.Zero(t, generator.calls)
 		})
 	}
 }
@@ -742,7 +927,7 @@ func TestEnterpriseEmployeeKeyHTTPProtocolUsesAuthenticatedEmployeeAndHost(t *te
 	require.NoError(t, err)
 
 	generator := &employeeKeyHTTPGenerator{value: fmt.Sprintf("sk-http-rotate-%d", time.Now().UnixNano())}
-	handler := enterpriseidentity.NewHandler(identityService, enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{}), generator, nil)
+	handler := enterpriseidentity.NewHandler(identityService, enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{}), generator, testRedis(t))
 	router := gin.New()
 	handler.RegisterRoutes(router.Group("/api/v1"))
 

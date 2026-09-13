@@ -1218,12 +1218,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		CreatedAt:                time.Now(),
 		AttributionRequestAt:     pricingAt,
 	}
-	if subscription != nil {
-		usageLog.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
-		usageLog.AttributionDailyWindowAnchor = copyUsageAttributionAnchor(subscription.DailyWindowStart)
-		usageLog.AttributionWeeklyWindowAnchor = copyUsageAttributionAnchor(subscription.WeeklyWindowStart)
-		usageLog.AttributionMonthlyWindowAnchor = copyUsageAttributionAnchor(subscription.MonthlyWindowStart)
-	}
+	ApplyEnterpriseUsageAttribution(usageLog, apiKey, subscription, pricingAt)
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}

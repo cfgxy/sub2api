@@ -21,8 +21,9 @@ func TestGrokVideoCompletionUsageSnapshotUsesCreateRequestValues(t *testing.T) {
 	pollSubscription := &service.UserSubscription{ID: 22, DailyWindowStart: &pollDay}
 	employeeID := int64(42)
 	pending := &service.GrokVideoPendingBilling{
-		PricingAt:         createAt,
-		DailyWindowAnchor: &createDay, WeeklyWindowAnchor: &createWeek, MonthlyWindowAnchor: &createMonth,
+		PricingAt:              createAt,
+		UpstreamSubscriptionID: 11,
+		DailyWindowAnchor:      &createDay, WeeklyWindowAnchor: &createWeek, MonthlyWindowAnchor: &createMonth,
 		EnterpriseAttribution: &service.EnterpriseUsageAttributionSnapshot{
 			EnterpriseID: 11, SubscriptionID: 22, EmployeeID: &employeeID,
 			AssignmentGeneration: 3, Classification: "employee", RequestAt: createAt,
@@ -32,6 +33,7 @@ func TestGrokVideoCompletionUsageSnapshotUsesCreateRequestValues(t *testing.T) {
 	pricingAt, subscription, attribution := grokVideoCompletionUsageSnapshot(pollAt, pollSubscription, pending)
 	require.Equal(t, createAt, pricingAt)
 	require.NotSame(t, pollSubscription, subscription)
+	require.Equal(t, int64(11), subscription.ID)
 	require.Equal(t, createDay, *subscription.DailyWindowStart)
 	require.Equal(t, createWeek, *subscription.WeeklyWindowStart)
 	require.Equal(t, createMonth, *subscription.MonthlyWindowStart)

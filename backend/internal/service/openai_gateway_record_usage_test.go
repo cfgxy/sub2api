@@ -611,6 +611,69 @@ func TestOpenAIGatewayServiceRecordUsage_CapturesEnterpriseAttributionCandidate(
 	require.Nil(t, usageRepo.lastLog.EnterpriseAttribution)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_PreservesDeferredEnterpriseSnapshot(t *testing.T) {
+	groupID := int64(19)
+	requestAt := time.Date(2026, time.September, 9, 1, 0, 0, 0, time.UTC)
+	createDaily := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	createWeekly := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	createMonthly := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	employeeID := int64(701)
+	frozen := &EnterpriseUsageAttributionSnapshot{
+		EnterpriseID:         702,
+		SubscriptionID:       703,
+		EmployeeID:           &employeeID,
+		AssignmentGeneration: 8,
+		Classification:       "employee",
+		RequestAt:            requestAt,
+		DailyWindowAnchor:    &createDaily,
+		WeeklyWindowAnchor:   &createWeekly,
+		MonthlyWindowAnchor:  &createMonthly,
+	}
+	pollEmployeeID := int64(799)
+	pollDaily := createDaily.Add(24 * time.Hour)
+	pollWeekly := createWeekly.Add(7 * 24 * time.Hour)
+	pollMonthly := createMonthly.Add(31 * 24 * time.Hour)
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "openai_deferred_snapshot",
+			Model:     "grok-video-test",
+			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 5},
+		},
+		APIKey: &APIKey{
+			ID: 1009, GroupID: i64p(groupID), EnterpriseAttributionCandidate: true,
+			EnterpriseAttributionIdentity: &EnterpriseUsageAttributionIdentity{
+				EnterpriseID:             702,
+				EnterpriseSubscriptionID: 703,
+				UpstreamSubscriptionID:   704,
+				EmployeeID:               &pollEmployeeID,
+				AssignmentGeneration:     9,
+				Classification:           "employee",
+				WindowAnchorsResolved:    true,
+				DailyWindowAnchor:        &pollDaily,
+				WeeklyWindowAnchor:       &pollWeekly,
+				MonthlyWindowAnchor:      &pollMonthly,
+			},
+			Group: &Group{ID: groupID, RateMultiplier: 1, SubscriptionType: SubscriptionTypeSubscription},
+		},
+		User:                  &User{ID: 2009},
+		Account:               &Account{ID: 3009},
+		PricingAt:             requestAt.Add(2 * time.Hour),
+		EnterpriseAttribution: frozen,
+		Subscription:          &UserSubscription{ID: 704},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, frozen, usageRepo.lastLog.EnterpriseAttribution)
+	require.Equal(t, requestAt, usageRepo.lastLog.AttributionRequestAt)
+	require.Equal(t, createDaily, *usageRepo.lastLog.AttributionDailyWindowAnchor)
+	require.Equal(t, createWeekly, *usageRepo.lastLog.AttributionWeeklyWindowAnchor)
+	require.Equal(t, createMonthly, *usageRepo.lastLog.AttributionMonthlyWindowAnchor)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_IncludesEndpointMetadata(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

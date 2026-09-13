@@ -279,7 +279,9 @@ func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *B
 		ImageSize:             &imageSize,
 		SessionID:             job.SessionID,
 		CreatedAt:             createdAt,
+		EnterpriseAttribution: CloneEnterpriseUsageAttributionSnapshot(job.EnterpriseAttribution),
 	}
+	applyEnterpriseUsageAttributionSnapshot(usageLog, usageLog.EnterpriseAttribution)
 	writeUsageLogBestEffort(ctx, s.UsageLogRepo, usageLog, "service.batch_image_settlement")
 }
 

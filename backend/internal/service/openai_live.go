@@ -229,6 +229,7 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			IPAddress:             identity.IPAddress,
 			InboundEndpoint:       identity.InboundEndpoint,
 			AttestationCiphertext: attestationCiphertext,
+			EnterpriseAttribution: CloneEnterpriseUsageAttributionSnapshot(identity.EnterpriseAttribution),
 		}
 		mappingTTL := s.liveMaxSessionDuration() + 5*time.Minute
 		if saveErr := store.SaveLiveCall(ctx, record, mappingTTL); saveErr != nil {
@@ -832,23 +833,26 @@ func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
 	//
 	// 这是该会话唯一一次落库机会（MarkLiveCallClosed 已标记 first），失败即永久
 	// 丢失，因此走带日志与同步兜底的 writeUsageLogBestEffort（issue #3656）。
-	writeUsageLogBestEffort(context.Background(), s.usageLogRepo, &UsageLog{
-		UserID:           record.UserID,
-		APIKeyID:         record.APIKeyID,
-		AccountID:        record.AccountID,
-		RequestID:        record.CallHash,
-		Model:            record.Model,
-		RequestedModel:   record.Model,
-		GroupID:          liveOptionalID(record.GroupID),
-		SubscriptionID:   liveOptionalID(record.SubscriptionID),
-		RateMultiplier:   1,
-		BillingType:      billingType,
-		RequestType:      RequestTypeLive,
-		DurationMs:       &duration,
-		UserAgent:        &userAgent,
-		IPAddress:        &ipAddress,
-		InboundEndpoint:  &inboundEndpoint,
-		UpstreamEndpoint: &upstreamEndpoint,
-		CreatedAt:        record.CreatedAt,
-	}, "service.openai_live")
+	usageLog := &UsageLog{
+		UserID:                record.UserID,
+		APIKeyID:              record.APIKeyID,
+		AccountID:             record.AccountID,
+		RequestID:             record.CallHash,
+		Model:                 record.Model,
+		RequestedModel:        record.Model,
+		GroupID:               liveOptionalID(record.GroupID),
+		SubscriptionID:        liveOptionalID(record.SubscriptionID),
+		RateMultiplier:        1,
+		BillingType:           billingType,
+		RequestType:           RequestTypeLive,
+		DurationMs:            &duration,
+		UserAgent:             &userAgent,
+		IPAddress:             &ipAddress,
+		InboundEndpoint:       &inboundEndpoint,
+		UpstreamEndpoint:      &upstreamEndpoint,
+		CreatedAt:             record.CreatedAt,
+		EnterpriseAttribution: CloneEnterpriseUsageAttributionSnapshot(record.EnterpriseAttribution),
+	}
+	applyEnterpriseUsageAttributionSnapshot(usageLog, usageLog.EnterpriseAttribution)
+	writeUsageLogBestEffort(context.Background(), s.usageLogRepo, usageLog, "service.openai_live")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -404,23 +405,32 @@ func (c *gatewayCache) SaveLiveCall(ctx context.Context, record *service.LiveCal
 	if record == nil || record.CallHash == "" || record.CallID == "" {
 		return fmt.Errorf("invalid live call record")
 	}
+	var enterpriseAttribution string
+	if record.EnterpriseAttribution != nil {
+		raw, err := json.Marshal(record.EnterpriseAttribution)
+		if err != nil {
+			return err
+		}
+		enterpriseAttribution = string(raw)
+	}
 	values := map[string]any{
-		"call_id":          record.CallID,
-		"account_id":       record.AccountID,
-		"api_key_id":       record.APIKeyID,
-		"user_id":          record.UserID,
-		"group_id":         record.GroupID,
-		"subscription_id":  record.SubscriptionID,
-		"lease_id":         record.LeaseID,
-		"model":            record.Model,
-		"created_at":       record.CreatedAt.UnixMilli(),
-		"expires_at":       record.ExpiresAt.UnixMilli(),
-		"controller":       record.Controller,
-		"controller_owner": record.ControllerOwner,
-		"user_agent":       record.UserAgent,
-		"ip_address":       record.IPAddress,
-		"inbound_endpoint": record.InboundEndpoint,
-		"attestation":      record.AttestationCiphertext,
+		"call_id":                record.CallID,
+		"account_id":             record.AccountID,
+		"api_key_id":             record.APIKeyID,
+		"user_id":                record.UserID,
+		"group_id":               record.GroupID,
+		"subscription_id":        record.SubscriptionID,
+		"lease_id":               record.LeaseID,
+		"model":                  record.Model,
+		"created_at":             record.CreatedAt.UnixMilli(),
+		"expires_at":             record.ExpiresAt.UnixMilli(),
+		"controller":             record.Controller,
+		"controller_owner":       record.ControllerOwner,
+		"user_agent":             record.UserAgent,
+		"ip_address":             record.IPAddress,
+		"inbound_endpoint":       record.InboundEndpoint,
+		"attestation":            record.AttestationCiphertext,
+		"enterprise_attribution": enterpriseAttribution,
 	}
 	key := liveCallKey(record.CallHash)
 	pipe := c.rdb.TxPipeline()
@@ -444,7 +454,7 @@ func (c *gatewayCache) GetLiveCall(ctx context.Context, callHash string) (*servi
 	}
 	createdAt := time.UnixMilli(parseInt("created_at"))
 	expiresAt := time.UnixMilli(parseInt("expires_at"))
-	return &service.LiveCallRecord{
+	record := &service.LiveCallRecord{
 		CallID:                values["call_id"],
 		CallHash:              callHash,
 		AccountID:             parseInt("account_id"),
@@ -462,7 +472,15 @@ func (c *gatewayCache) GetLiveCall(ctx context.Context, callHash string) (*servi
 		IPAddress:             values["ip_address"],
 		InboundEndpoint:       values["inbound_endpoint"],
 		AttestationCiphertext: values["attestation"],
-	}, nil
+	}
+	if raw := values["enterprise_attribution"]; raw != "" {
+		var snapshot service.EnterpriseUsageAttributionSnapshot
+		if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+			return nil, err
+		}
+		record.EnterpriseAttribution = &snapshot
+	}
+	return record, nil
 }
 
 func (c *gatewayCache) ClaimLiveController(ctx context.Context, callHash, controller, owner string) (bool, error) {

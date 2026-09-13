@@ -336,17 +336,20 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	Model                 string                              `json:"model"`
-	BillingModel          string                              `json:"billing_model,omitempty"`
-	UpstreamModel         string                              `json:"upstream_model,omitempty"`
-	VideoResolution       string                              `json:"video_resolution,omitempty"`
-	VideoDurationSeconds  int                                 `json:"video_duration_seconds,omitempty"`
-	OriginalModel         string                              `json:"original_model,omitempty"`
-	PricingAt             time.Time                           `json:"pricing_at,omitempty"`
-	DailyWindowAnchor     *time.Time                          `json:"daily_window_anchor,omitempty"`
-	WeeklyWindowAnchor    *time.Time                          `json:"weekly_window_anchor,omitempty"`
-	MonthlyWindowAnchor   *time.Time                          `json:"monthly_window_anchor,omitempty"`
-	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot `json:"enterprise_attribution,omitempty"`
+	Model                string    `json:"model"`
+	BillingModel         string    `json:"billing_model,omitempty"`
+	UpstreamModel        string    `json:"upstream_model,omitempty"`
+	VideoResolution      string    `json:"video_resolution,omitempty"`
+	VideoDurationSeconds int       `json:"video_duration_seconds,omitempty"`
+	OriginalModel        string    `json:"original_model,omitempty"`
+	PricingAt            time.Time `json:"pricing_at,omitempty"`
+	// UpstreamSubscriptionID is frozen at video creation so deferred billing
+	// cannot charge a later subscription after the employee key is rebound.
+	UpstreamSubscriptionID int64                               `json:"upstream_subscription_id,omitempty"`
+	DailyWindowAnchor      *time.Time                          `json:"daily_window_anchor,omitempty"`
+	WeeklyWindowAnchor     *time.Time                          `json:"weekly_window_anchor,omitempty"`
+	MonthlyWindowAnchor    *time.Time                          `json:"monthly_window_anchor,omitempty"`
+	EnterpriseAttribution  *EnterpriseUsageAttributionSnapshot `json:"enterprise_attribution,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
@@ -369,6 +372,15 @@ func (s *OpenAIGatewayService) FreezeEnterpriseUsageAttribution(
 	if s == nil || apiKey == nil || apiKey.User == nil || subscription == nil ||
 		!apiKey.EnterpriseAttributionCandidate || pricingAt.IsZero() {
 		return nil, nil
+	}
+	if snapshot := SnapshotEnterpriseUsageAttribution(
+		apiKey.EnterpriseAttributionIdentity,
+		pricingAt,
+		subscription.DailyWindowStart,
+		subscription.WeeklyWindowStart,
+		subscription.MonthlyWindowStart,
+	); snapshot != nil {
+		return snapshot, nil
 	}
 	resolver, ok := s.usageLogRepo.(enterpriseUsageAttributionSnapshotResolver)
 	if !ok {

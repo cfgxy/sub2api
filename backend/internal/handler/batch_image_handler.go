@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -280,10 +281,22 @@ func batchImageOwnerFromContext(c *gin.Context) (service.BatchImageOwner, bool) 
 	if !ok || apiKey == nil || apiKey.ID <= 0 || apiKey.UserID <= 0 {
 		return service.BatchImageOwner{}, false
 	}
+	subscription, _ := middleware.GetSubscriptionFromContext(c)
+	var attribution *service.EnterpriseUsageAttributionSnapshot
+	if subscription != nil {
+		attribution = service.SnapshotEnterpriseUsageAttribution(
+			apiKey.EnterpriseAttributionIdentity,
+			time.Now(),
+			subscription.DailyWindowStart,
+			subscription.WeeklyWindowStart,
+			subscription.MonthlyWindowStart,
+		)
+	}
 	return service.BatchImageOwner{
-		UserID:   apiKey.UserID,
-		APIKeyID: apiKey.ID,
-		GroupID:  apiKey.GroupID,
+		UserID:                apiKey.UserID,
+		APIKeyID:              apiKey.ID,
+		GroupID:               apiKey.GroupID,
+		EnterpriseAttribution: attribution,
 	}, true
 }
 

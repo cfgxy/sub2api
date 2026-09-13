@@ -266,6 +266,10 @@ func TestRunLiveControllerClosesExpiredSession(t *testing.T) {
 }
 
 func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
+	employeeID := int64(504)
+	dailyAnchor := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	weeklyAnchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	monthlyAnchor := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	record := &LiveCallRecord{
 		CallID:          "call_secret",
 		CallHash:        hashLiveCallID("call_secret"),
@@ -279,6 +283,17 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 		ExpiresAt:       time.Now().Add(time.Hour),
 		Controller:      LiveControllerPending,
 		InboundEndpoint: "/v1/live",
+		EnterpriseAttribution: &EnterpriseUsageAttributionSnapshot{
+			EnterpriseID:         505,
+			SubscriptionID:       506,
+			EmployeeID:           &employeeID,
+			AssignmentGeneration: 7,
+			Classification:       "employee",
+			RequestAt:            dailyAnchor.Add(time.Hour),
+			DailyWindowAnchor:    &dailyAnchor,
+			WeeklyWindowAnchor:   &weeklyAnchor,
+			MonthlyWindowAnchor:  &monthlyAnchor,
+		},
 	}
 	store := &liveTestStore{}
 	require.NoError(t, store.SaveLiveCall(context.Background(), record, time.Hour))
@@ -308,6 +323,16 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 	require.Zero(t, log.OutputTokens)
 	require.Zero(t, log.TotalCost)
 	require.Zero(t, log.ActualCost)
+	require.NotNil(t, log.EnterpriseAttribution)
+	require.Equal(t, int64(505), log.EnterpriseAttribution.EnterpriseID)
+	require.Equal(t, int64(506), log.EnterpriseAttribution.SubscriptionID)
+	require.Equal(t, int64(504), *log.EnterpriseAttribution.EmployeeID)
+	require.Equal(t, int64(7), log.EnterpriseAttribution.AssignmentGeneration)
+	require.Equal(t, "employee", log.EnterpriseAttribution.Classification)
+	require.Equal(t, dailyAnchor.Add(time.Hour), log.EnterpriseAttribution.RequestAt)
+	require.Equal(t, dailyAnchor, *log.EnterpriseAttribution.DailyWindowAnchor)
+	require.Equal(t, weeklyAnchor, *log.EnterpriseAttribution.WeeklyWindowAnchor)
+	require.Equal(t, monthlyAnchor, *log.EnterpriseAttribution.MonthlyWindowAnchor)
 }
 
 func TestGetLiveCallForIdentityRejectsMismatchedCaller(t *testing.T) {

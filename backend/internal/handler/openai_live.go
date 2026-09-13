@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -166,14 +167,25 @@ func liveCallIdentity(
 		value := subscription.ID
 		subscriptionID = &value
 	}
+	var attribution *service.EnterpriseUsageAttributionSnapshot
+	if subscription != nil {
+		attribution = service.SnapshotEnterpriseUsageAttribution(
+			apiKey.EnterpriseAttributionIdentity,
+			time.Now(),
+			subscription.DailyWindowStart,
+			subscription.WeeklyWindowStart,
+			subscription.MonthlyWindowStart,
+		)
+	}
 	return service.LiveCallIdentity{
-		APIKeyID:        apiKey.ID,
-		UserID:          userID,
-		GroupID:         apiKey.GroupID,
-		SubscriptionID:  subscriptionID,
-		UserAgent:       c.GetHeader("User-Agent"),
-		IPAddress:       ip.GetClientIP(c),
-		InboundEndpoint: GetInboundEndpoint(c),
+		APIKeyID:              apiKey.ID,
+		UserID:                userID,
+		GroupID:               apiKey.GroupID,
+		SubscriptionID:        subscriptionID,
+		EnterpriseAttribution: attribution,
+		UserAgent:             c.GetHeader("User-Agent"),
+		IPAddress:             ip.GetClientIP(c),
+		InboundEndpoint:       GetInboundEndpoint(c),
 	}
 }
 

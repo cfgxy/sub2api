@@ -21,12 +21,14 @@ var (
 	ErrEmployeeKeyVersionConflict = infraerrors.Conflict("ENTERPRISE_KEY_VERSION_CONFLICT", "enterprise employee key changed; refresh and retry")
 	ErrEmployeeKeyIdempotency     = infraerrors.Conflict("ENTERPRISE_KEY_IDEMPOTENCY_CONFLICT", "idempotency key was already used with a different request")
 	ErrEmployeeKeyUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "ENTERPRISE_KEY_UNAVAILABLE", "enterprise employee key service is unavailable")
+	ErrEmployeeKeyProvisionLimit  = infraerrors.TooManyRequests("ENTERPRISE_KEY_PROVISION_LIMIT", "enterprise employee key provision limit reached")
 )
 
 const (
-	keyOperationCreate  = "create"
-	keyOperationDisable = "disable"
-	keyOperationRotate  = "rotate"
+	keyOperationCreate        = "create"
+	keyOperationDisable       = "disable"
+	keyOperationRotate        = "rotate"
+	employeeKeyProvisionLimit = 10
 )
 
 type EmployeeKey struct {
@@ -82,6 +84,11 @@ type employeeKeyRow struct {
 
 func EmployeeKeyRequestHash(operation string, expectedAPIKeyID int64) string {
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d", operation, expectedAPIKeyID)))
+	return hex.EncodeToString(digest[:])
+}
+
+func EmployeeKeyCredentialFingerprint(credential string) string {
+	digest := sha256.Sum256([]byte(credential))
 	return hex.EncodeToString(digest[:])
 }
 
@@ -170,7 +177,13 @@ func (r *Repository) mutateEmployeeKey(ctx context.Context, operation string, pa
 		return &EmployeeKeyMutationResult{Key: &row.EmployeeKey, Replayed: true}, nil
 	}
 
-	current, err := lockCurrentEmployeeKey(ctx, tx, params.EnterpriseID, params.EmployeeID)
+	if operation == keyOperationCreate || operation == keyOperationRotate {
+		if err := enforceEmployeeKeyProvisionLimit(ctx, tx, params.EnterpriseID, params.EmployeeID); err != nil {
+			return nil, err
+		}
+	}
+
+	current, err := readCurrentEmployeeKey(ctx, tx, params.EnterpriseID, params.EmployeeID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -192,6 +205,19 @@ func (r *Repository) mutateEmployeeKey(ctx context.Context, operation string, pa
 			return nil, ErrEmployeeKeyNotFound
 		}
 		if params.ExpectedAPIKeyID <= 0 || current.ID != params.ExpectedAPIKeyID {
+			return nil, ErrEmployeeKeyVersionConflict
+		}
+		if err := lockEmployeeKeyCredential(ctx, tx, current.Plaintext); err != nil {
+			return nil, err
+		}
+		current, err = lockCurrentEmployeeKey(ctx, tx, params.EnterpriseID, params.EmployeeID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrEmployeeKeyVersionConflict
+		}
+		if err != nil {
+			return nil, err
+		}
+		if current.ID != params.ExpectedAPIKeyID {
 			return nil, ErrEmployeeKeyVersionConflict
 		}
 	}
@@ -288,6 +314,24 @@ func lockEmployeeKeyIdempotency(ctx context.Context, tx *sql.Tx, params Employee
 	return resultID.Int64, true, nil
 }
 
+func enforceEmployeeKeyProvisionLimit(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) error {
+	var count int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM enterprise_key_lifecycle_idempotency
+		WHERE enterprise_id = $1
+		  AND employee_id = $2
+		  AND operation IN ('create', 'rotate')
+		  AND completed_at IS NOT NULL
+		  AND completed_at >= statement_timestamp() - INTERVAL '24 hours'`, enterpriseID, employeeID).Scan(&count); err != nil {
+		return err
+	}
+	if count >= employeeKeyProvisionLimit {
+		return ErrEmployeeKeyProvisionLimit
+	}
+	return nil
+}
+
 const employeeKeySelect = `
 	SELECT api_key.id, api_key.key, api_key.name, api_key.status,
 	       api_key.quota, api_key.quota_used, api_key.group_id, api_key.expires_at,
@@ -308,6 +352,22 @@ func lockCurrentEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, emplo
 		  AND assignment.status = 'active' AND api_key.deleted_at IS NULL
 		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC LIMIT 1
 		FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID))
+}
+
+func readCurrentEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) (employeeKeyRow, error) {
+	return scanEmployeeKey(tx.QueryRowContext(ctx, employeeKeySelect+`
+		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
+		  AND assignment.status = 'active' AND api_key.deleted_at IS NULL
+		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC LIMIT 1`, enterpriseID, employeeID))
+}
+
+func lockEmployeeKeyCredential(ctx context.Context, tx *sql.Tx, credential string) error {
+	if credential == "" {
+		return ErrEmployeeKeyVersionConflict
+	}
+	fingerprint := EmployeeKeyCredentialFingerprint(credential)
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, fingerprint)
+	return err
 }
 
 func lockLatestEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) (employeeKeyRow, error) {
@@ -441,7 +501,7 @@ func disableCurrentEmployeeKey(ctx context.Context, tx *sql.Tx, params EmployeeK
 		}
 		return ErrEmployeeKeyVersionConflict
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE api_keys SET key = 'revoked-' || id::text, status = 'disabled', updated_at = $2 WHERE id = $1`, current.ID, boundary)
+	result, err = tx.ExecContext(ctx, `UPDATE api_keys SET key = ':revoked:' || id::text, status = 'disabled', updated_at = $2 WHERE id = $1`, current.ID, boundary)
 	if err != nil {
 		return err
 	}

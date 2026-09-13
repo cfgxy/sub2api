@@ -21,8 +21,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const claimsContextKey = "enterprise_identity_claims"
-const enterpriseAuthRateLimitScopeContextKey = "enterprise_auth_rate_limit_scope"
+const (
+	claimsContextKey                       = "enterprise_identity_claims"
+	enterpriseAuthRateLimitScopeContextKey = "enterprise_auth_rate_limit_scope"
+	employeeKeyMutationRateLimitKey        = "enterprise-employee-key-mutation"
+	employeeKeyMutationRateLimit           = 10
+	employeeKeyMutationRateLimitWindow     = time.Minute
+)
 
 type Handler struct {
 	service                    *Service
@@ -75,9 +80,9 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	authenticated.DELETE("/sessions/:id", h.revokeSession)
 	authenticated.DELETE("/sessions", h.revokeAllSessions)
 	authenticated.GET("/keys/current", h.getCurrentKey)
-	authenticated.POST("/keys", h.createKey)
-	authenticated.POST("/keys/disable", h.disableKey)
-	authenticated.POST("/keys/rotate", h.rotateKey)
+	authenticated.POST("/keys", h.employeeKeyMutationRateLimit(), h.createKey)
+	authenticated.POST("/keys/disable", h.employeeKeyMutationRateLimit(), h.disableKey)
+	authenticated.POST("/keys/rotate", h.employeeKeyMutationRateLimit(), h.rotateKey)
 
 	admin := authenticated.Group("/admin")
 	admin.Use(requireEnterpriseAdmin)
@@ -122,6 +127,26 @@ func (h *Handler) publicAuthRateLimits(key string, limit int) []gin.HandlerFunc 
 		},
 	})
 	return []gin.HandlerFunc{resolveEnterprise, enterpriseClientLimit}
+}
+
+func (h *Handler) employeeKeyMutationRateLimit() gin.HandlerFunc {
+	return h.rateLimiter.LimitWithOptions(
+		employeeKeyMutationRateLimitKey,
+		employeeKeyMutationRateLimit,
+		employeeKeyMutationRateLimitWindow,
+		middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailClose,
+			KeyFunc: func(c *gin.Context, _ string) string {
+				claims := mustClaims(c)
+				if claims == nil {
+					return hashRateLimitScope("0\x000")
+				}
+				return hashRateLimitScope(
+					strconv.FormatInt(claims.EnterpriseID, 10) + "\x00" + strconv.FormatInt(claims.PrincipalID, 10),
+				)
+			},
+		},
+	)
 }
 
 func hashRateLimitScope(scope string) string {

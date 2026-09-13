@@ -283,6 +283,146 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 	return apiKeyEntityToService(m), nil
 }
 
+// ResolveEnterpriseUsageAttributionIdentity 在最终校验候选凭据的同一读取快照内冻结企业归属。
+func (r *apiKeyRepository) ResolveEnterpriseUsageAttributionIdentity(
+	ctx context.Context,
+	apiKeyID int64,
+	credential string,
+	upstreamSubscriptionID *int64,
+) (*service.EnterpriseUsageAttributionIdentity, error) {
+	if r.sql == nil || apiKeyID <= 0 || credential == "" {
+		return nil, service.ErrAPIKeyNotFound
+	}
+	var enterpriseID int64
+	var enterpriseSubscriptionID, userSubscriptionID, resolvedUpstreamSubscriptionID sql.NullInt64
+	var employeeID, generation, assignmentSubscriptionID, assignmentGroupID sql.NullInt64
+	var dailyWindowStart, weeklyWindowStart, monthlyWindowStart sql.NullTime
+	var hasActiveAssignment bool
+	err := scanSingleRow(ctx, r.sql, `
+		WITH candidate AS (
+			SELECT api_key.id,
+			       api_key.user_id,
+			       api_key.group_id,
+			       enterprise.id AS enterprise_id,
+			       assignment.id AS assignment_id,
+			       assignment.employee_id,
+			       assignment.generation,
+			       assignment.upstream_user_subscription_id AS assignment_subscription_id,
+			       assignment.upstream_group_id AS assignment_group_id
+			FROM api_keys AS api_key
+			JOIN enterprises AS enterprise
+			  ON enterprise.dedicated_upstream_user_id = api_key.user_id
+			 AND enterprise.status = 'active'
+			LEFT JOIN LATERAL (
+			    SELECT candidate.id, candidate.employee_id, candidate.generation,
+			           candidate.upstream_user_subscription_id,
+			           candidate.upstream_group_id
+			    FROM enterprise_key_assignments AS candidate
+			    JOIN enterprise_employees AS employee
+			      ON employee.enterprise_id = candidate.enterprise_id
+			     AND employee.id = candidate.employee_id
+			     AND employee.status = 'active'
+			    WHERE candidate.enterprise_id = enterprise.id
+			      AND candidate.api_key_id = api_key.id
+			      AND candidate.status = 'active'
+			    ORDER BY candidate.generation DESC, candidate.id DESC
+			    LIMIT 1
+			) AS assignment ON TRUE
+			WHERE api_key.id = $1
+			  AND api_key.key = $2
+			  AND api_key.deleted_at IS NULL
+			  AND api_key.status IN ('active', 'expired', 'quota_exhausted')
+			  AND api_key.enterprise_attribution_candidate = TRUE
+		)
+		SELECT candidate.enterprise_id,
+		       enterprise_subscription.id,
+		       user_subscription.id,
+		       COALESCE(candidate.assignment_subscription_id, $3::bigint),
+		       candidate.employee_id,
+		       candidate.generation,
+		       candidate.assignment_subscription_id,
+		       candidate.assignment_group_id,
+		       user_subscription.daily_window_start,
+		       user_subscription.weekly_window_start,
+		       user_subscription.monthly_window_start,
+		       EXISTS (
+		           SELECT 1
+		           FROM enterprise_key_assignments AS active_assignment
+		           WHERE active_assignment.api_key_id = candidate.id
+		             AND active_assignment.status = 'active'
+		       ) AS has_active_assignment
+		FROM candidate
+		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
+		  ON enterprise_subscription.enterprise_id = candidate.enterprise_id
+		 AND enterprise_subscription.upstream_user_subscription_id =
+		     COALESCE(candidate.assignment_subscription_id, $3::bigint)
+		 AND enterprise_subscription.status = 'active'
+		 AND enterprise_subscription.activated_at IS NOT NULL
+		 AND enterprise_subscription.ended_at IS NULL
+		LEFT JOIN user_subscriptions AS user_subscription
+		  ON user_subscription.id = COALESCE(candidate.assignment_subscription_id, $3::bigint)
+		 AND user_subscription.user_id = candidate.user_id
+		 AND user_subscription.deleted_at IS NULL
+		 AND user_subscription.status = 'active'
+		 AND user_subscription.starts_at <= CURRENT_TIMESTAMP
+		 AND user_subscription.expires_at > CURRENT_TIMESTAMP
+		 AND (
+		     (candidate.assignment_id IS NOT NULL AND user_subscription.group_id = candidate.assignment_group_id
+		       AND candidate.group_id = candidate.assignment_group_id)
+		     OR (candidate.assignment_id IS NULL AND
+		       (candidate.group_id IS NULL OR user_subscription.group_id = candidate.group_id))
+		 )
+		ORDER BY enterprise_subscription.activated_at DESC, enterprise_subscription.id DESC
+			LIMIT 1`, []any{apiKeyID, credential, upstreamSubscriptionID},
+		&enterpriseID, &enterpriseSubscriptionID, &userSubscriptionID, &resolvedUpstreamSubscriptionID,
+		&employeeID, &generation, &assignmentSubscriptionID, &assignmentGroupID,
+		&dailyWindowStart, &weeklyWindowStart, &monthlyWindowStart, &hasActiveAssignment)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrAPIKeyNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if upstreamSubscriptionID != nil && assignmentSubscriptionID.Valid &&
+		assignmentSubscriptionID.Int64 != *upstreamSubscriptionID {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+	if !employeeID.Valid && hasActiveAssignment {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+	if !enterpriseSubscriptionID.Valid || !userSubscriptionID.Valid || !resolvedUpstreamSubscriptionID.Valid {
+		if hasActiveAssignment {
+			return nil, service.ErrEnterpriseAttributionUnavailable
+		}
+		return nil, nil
+	}
+	identity := &service.EnterpriseUsageAttributionIdentity{
+		EnterpriseID:             enterpriseID,
+		EnterpriseSubscriptionID: enterpriseSubscriptionID.Int64,
+		UpstreamSubscriptionID:   resolvedUpstreamSubscriptionID.Int64,
+		Classification:           "controlled_external",
+		WindowAnchorsResolved:    true,
+		DailyWindowAnchor:        apiKeyNullTimePointer(dailyWindowStart),
+		WeeklyWindowAnchor:       apiKeyNullTimePointer(weeklyWindowStart),
+		MonthlyWindowAnchor:      apiKeyNullTimePointer(monthlyWindowStart),
+	}
+	if employeeID.Valid {
+		value := employeeID.Int64
+		identity.EmployeeID = &value
+		identity.AssignmentGeneration = generation.Int64
+		identity.Classification = "employee"
+	}
+	return identity, nil
+}
+
+func apiKeyNullTimePointer(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Time.UTC()
+	return &result
+}
+
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
 	// 空掩码代表调用方不改任何列，直接返回，避免产生一次无意义的整行写。
 	if fields.IsEmpty() {
@@ -479,7 +619,10 @@ func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service
 	if filters.Search != "" {
 		q = q.Where(apikey.Or(
 			apikey.NameContainsFold(filters.Search),
-			apikey.KeyContainsFold(filters.Search),
+			apikey.And(
+				apikey.EnterpriseAttributionCandidateEQ(false),
+				apikey.KeyContainsFold(filters.Search),
+			),
 		))
 	}
 	if filters.Status != "" {

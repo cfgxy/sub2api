@@ -446,6 +446,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				CreatedAt: videoCreateStartedAt,
 			}
 			if subscription != nil {
+				pending.UpstreamSubscriptionID = subscription.ID
 				pending.DailyWindowAnchor = copyGrokUsageAnchor(subscription.DailyWindowStart)
 				pending.WeeklyWindowAnchor = copyGrokUsageAnchor(subscription.WeeklyWindowStart)
 				pending.MonthlyWindowAnchor = copyGrokUsageAnchor(subscription.MonthlyWindowStart)
@@ -678,6 +679,15 @@ func grokVideoCompletionUsageSnapshot(
 		copy.WeeklyWindowStart = copyGrokUsageAnchor(pending.WeeklyWindowAnchor)
 		copy.MonthlyWindowStart = copyGrokUsageAnchor(pending.MonthlyWindowAnchor)
 		subscription = &copy
+	}
+	if pending.UpstreamSubscriptionID > 0 {
+		if subscription == nil {
+			subscription = &service.UserSubscription{}
+		} else if subscription == pollSubscription {
+			copy := *subscription
+			subscription = &copy
+		}
+		subscription.ID = pending.UpstreamSubscriptionID
 	}
 	return pricingAt, subscription, pending.EnterpriseAttribution
 }
