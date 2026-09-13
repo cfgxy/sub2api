@@ -170,10 +170,14 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		// authenticated key and must remain available after the completed
 		// generation consumes the key's remaining balance.
 		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
+		var subscription *service.UserSubscription
 
 		// ── 4. SimpleMode → early return ─────────────────────────────
 
 		if cfg.RunMode == config.RunModeSimple {
+			if err := finalizeEnterpriseAttribution(c, apiKeyService, apiKey, apiKeyString, nil); err != nil {
+				return
+			}
 			c.Set(string(ContextKeyAPIKey), apiKey)
 			c.Set(string(ContextKeyUser), AuthSubject{
 				UserID:      apiKey.User.ID,
@@ -190,7 +194,6 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// ── 5. 按端点需要加载订阅 ───────────────────────────────────
 
-		var subscription *service.UserSubscription
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 
 		// 倍率自省不需要订阅数据；/v1/usage 仍保留原有订阅读取行为。
@@ -268,6 +271,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		}
 
 		// ── 7. 设置上下文 → Next ─────────────────────────────────────
+		if err := finalizeEnterpriseAttribution(c, apiKeyService, apiKey, apiKeyString, subscription); err != nil {
+			return
+		}
 
 		if subscription != nil {
 			c.Set(string(ContextKeySubscription), subscription)
@@ -285,6 +291,32 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		c.Next()
 	}
+}
+
+func finalizeEnterpriseAttribution(
+	c *gin.Context,
+	apiKeyService *service.APIKeyService,
+	apiKey *service.APIKey,
+	credential string,
+	subscription *service.UserSubscription,
+) error {
+	// 有订阅上下文时由 service 从主库快照冻结归属；无订阅入口由 service 保持原有放行语义。
+	if err := apiKeyService.FinalizeEnterpriseUsageAttribution(c.Request.Context(), apiKey, credential, subscription); err != nil {
+		if errors.Is(err, service.ErrAPIKeyNotFound) {
+			recordInvalidAuthFailure(c, apiKeyService)
+			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
+			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
+			return err
+		}
+		if errors.Is(err, service.ErrEnterpriseAttributionUnavailable) {
+			MarkIngressRejected(c, IngressRejectAPIKeyAuthOverloaded)
+			AbortWithError(c, http.StatusServiceUnavailable, "ENTERPRISE_ATTRIBUTION_UNAVAILABLE", "Enterprise attribution is temporarily unavailable")
+			return err
+		}
+		AbortWithError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to finalize enterprise API key attribution")
+		return err
+	}
+	return nil
 }
 
 func apiKeyHeadersTooLarge(c *gin.Context) bool {

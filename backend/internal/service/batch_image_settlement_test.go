@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -19,6 +20,21 @@ func TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly(t *te
 	job.FailCount = 2
 	job.ItemCount = 5
 	job.SessionID = batchImageStringPtr("batch-settlement-session")
+	employeeID := int64(412)
+	dailyAnchor := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	weeklyAnchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	monthlyAnchor := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	job.EnterpriseAttribution = &EnterpriseUsageAttributionSnapshot{
+		EnterpriseID:         413,
+		SubscriptionID:       414,
+		EmployeeID:           &employeeID,
+		AssignmentGeneration: 5,
+		Classification:       "employee",
+		RequestAt:            dailyAnchor.Add(2 * time.Hour),
+		DailyWindowAnchor:    &dailyAnchor,
+		WeeklyWindowAnchor:   &weeklyAnchor,
+		MonthlyWindowAnchor:  &monthlyAnchor,
+	}
 	repo.jobs[job.BatchID] = job
 	billing := &fakeBatchImageBillingRepo{}
 	usageLogs := &openAIRecordUsageLogRepoStub{}
@@ -38,6 +54,16 @@ func TestBatchImageSettlementService_SettlesAndChargesSuccessfulImagesOnly(t *te
 	require.NotEmpty(t, batchImageDerefString(repo.jobs[job.BatchID].ManifestHash))
 	require.NotNil(t, repo.jobs[job.BatchID].SettledAt)
 	require.Equal(t, "batch-settlement-session", batchImageDerefString(usageLogs.lastLog.SessionID))
+	require.NotNil(t, usageLogs.lastLog.EnterpriseAttribution)
+	require.Equal(t, int64(413), usageLogs.lastLog.EnterpriseAttribution.EnterpriseID)
+	require.Equal(t, int64(414), usageLogs.lastLog.EnterpriseAttribution.SubscriptionID)
+	require.Equal(t, int64(412), *usageLogs.lastLog.EnterpriseAttribution.EmployeeID)
+	require.Equal(t, int64(5), usageLogs.lastLog.EnterpriseAttribution.AssignmentGeneration)
+	require.Equal(t, "employee", usageLogs.lastLog.EnterpriseAttribution.Classification)
+	require.Equal(t, dailyAnchor.Add(2*time.Hour), usageLogs.lastLog.EnterpriseAttribution.RequestAt)
+	require.Equal(t, dailyAnchor, *usageLogs.lastLog.EnterpriseAttribution.DailyWindowAnchor)
+	require.Equal(t, weeklyAnchor, *usageLogs.lastLog.EnterpriseAttribution.WeeklyWindowAnchor)
+	require.Equal(t, monthlyAnchor, *usageLogs.lastLog.EnterpriseAttribution.MonthlyWindowAnchor)
 	require.Len(t, billing.captures, 1)
 	require.Equal(t, int64(321), billing.captures[0].APIKeyID)
 	require.Equal(t, job.UserID, billing.captures[0].UserID)

@@ -237,6 +237,131 @@ type EnterpriseUsageAttributionSnapshot struct {
 	MonthlyWindowAnchor  *time.Time
 }
 
+// EnterpriseUsageAttributionIdentity 是 API Key 认证成功时冻结的企业归属身份。
+// 定价时刻和窗口锚点由实际 usage 产生处补齐，避免改变现有 PricingAt 契约。
+type EnterpriseUsageAttributionIdentity struct {
+	EnterpriseID             int64
+	EnterpriseSubscriptionID int64
+	UpstreamSubscriptionID   int64
+	EmployeeID               *int64
+	AssignmentGeneration     int64
+	Classification           string
+	// WindowAnchorsResolved 表示三个窗口锚点来自认证时的主库快照。
+	// 为 false 时，调用方仍可用当前订阅对象作为兼容回退。
+	WindowAnchorsResolved bool
+	DailyWindowAnchor     *time.Time
+	WeeklyWindowAnchor    *time.Time
+	MonthlyWindowAnchor   *time.Time
+}
+
+func CloneEnterpriseUsageAttributionSnapshot(value *EnterpriseUsageAttributionSnapshot) *EnterpriseUsageAttributionSnapshot {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	copy.EmployeeID = cloneUsageAttributionInt64(value.EmployeeID)
+	copy.DailyWindowAnchor = cloneUsageAttributionTime(value.DailyWindowAnchor)
+	copy.WeeklyWindowAnchor = cloneUsageAttributionTime(value.WeeklyWindowAnchor)
+	copy.MonthlyWindowAnchor = cloneUsageAttributionTime(value.MonthlyWindowAnchor)
+	return &copy
+}
+
+func SnapshotEnterpriseUsageAttribution(
+	identity *EnterpriseUsageAttributionIdentity,
+	requestAt time.Time,
+	dailyWindowAnchor, weeklyWindowAnchor, monthlyWindowAnchor *time.Time,
+) *EnterpriseUsageAttributionSnapshot {
+	if identity == nil || identity.EnterpriseID <= 0 || identity.EnterpriseSubscriptionID <= 0 || requestAt.IsZero() {
+		return nil
+	}
+	if identity.WindowAnchorsResolved {
+		dailyWindowAnchor = identity.DailyWindowAnchor
+		weeklyWindowAnchor = identity.WeeklyWindowAnchor
+		monthlyWindowAnchor = identity.MonthlyWindowAnchor
+	}
+	return &EnterpriseUsageAttributionSnapshot{
+		EnterpriseID:         identity.EnterpriseID,
+		SubscriptionID:       identity.EnterpriseSubscriptionID,
+		EmployeeID:           cloneUsageAttributionInt64(identity.EmployeeID),
+		AssignmentGeneration: identity.AssignmentGeneration,
+		Classification:       identity.Classification,
+		RequestAt:            requestAt.UTC(),
+		DailyWindowAnchor:    cloneUsageAttributionTime(dailyWindowAnchor),
+		WeeklyWindowAnchor:   cloneUsageAttributionTime(weeklyWindowAnchor),
+		MonthlyWindowAnchor:  cloneUsageAttributionTime(monthlyWindowAnchor),
+	}
+}
+
+func ApplyEnterpriseUsageAttribution(
+	log *UsageLog,
+	apiKey *APIKey,
+	subscription *UserSubscription,
+	requestAt time.Time,
+) {
+	if log == nil {
+		return
+	}
+	// 异步载体传入的快照已在创建请求认证时冻结，轮询时的 API Key 或订阅对象
+	// 只能用于兼容旧路径，不能覆盖已经冻结的员工、代次和窗口。
+	if log.EnterpriseAttribution != nil {
+		applyEnterpriseUsageAttributionSnapshot(log, log.EnterpriseAttribution)
+		return
+	}
+	if apiKey == nil {
+		return
+	}
+	log.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
+	if subscription == nil {
+		return
+	}
+	log.AttributionDailyWindowAnchor = cloneUsageAttributionTime(subscription.DailyWindowStart)
+	log.AttributionWeeklyWindowAnchor = cloneUsageAttributionTime(subscription.WeeklyWindowStart)
+	log.AttributionMonthlyWindowAnchor = cloneUsageAttributionTime(subscription.MonthlyWindowStart)
+	identity := apiKey.EnterpriseAttributionIdentity
+	if identity == nil || identity.UpstreamSubscriptionID != subscription.ID {
+		return
+	}
+	log.EnterpriseAttribution = SnapshotEnterpriseUsageAttribution(
+		identity,
+		requestAt,
+		log.AttributionDailyWindowAnchor,
+		log.AttributionWeeklyWindowAnchor,
+		log.AttributionMonthlyWindowAnchor,
+	)
+	if log.EnterpriseAttribution == nil {
+		return
+	}
+	applyEnterpriseUsageAttributionSnapshot(log, log.EnterpriseAttribution)
+}
+
+func applyEnterpriseUsageAttributionSnapshot(log *UsageLog, snapshot *EnterpriseUsageAttributionSnapshot) {
+	if log == nil || snapshot == nil {
+		return
+	}
+	log.EnterpriseAttributionCandidate = true
+	log.EnterpriseAttribution = CloneEnterpriseUsageAttributionSnapshot(snapshot)
+	log.AttributionRequestAt = snapshot.RequestAt
+	log.AttributionDailyWindowAnchor = cloneUsageAttributionTime(snapshot.DailyWindowAnchor)
+	log.AttributionWeeklyWindowAnchor = cloneUsageAttributionTime(snapshot.WeeklyWindowAnchor)
+	log.AttributionMonthlyWindowAnchor = cloneUsageAttributionTime(snapshot.MonthlyWindowAnchor)
+}
+
+func cloneUsageAttributionInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneUsageAttributionTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := value.UTC()
+	return &copy
+}
+
 func (u *UsageLog) TotalTokens() int {
 	return u.InputTokens + u.OutputTokens + u.CacheCreationTokens + u.CacheReadTokens
 }

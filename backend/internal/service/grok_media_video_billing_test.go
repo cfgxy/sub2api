@@ -56,8 +56,9 @@ func TestGrokVideoPendingBillingCarriesCreateTimeUsageSnapshot(t *testing.T) {
 	monthAnchor := pricingAt.AddDate(0, 0, -7)
 	employeeID := int64(42)
 	pending := GrokVideoPendingBilling{
-		PricingAt:         pricingAt,
-		DailyWindowAnchor: &dayAnchor, WeeklyWindowAnchor: &weekAnchor, MonthlyWindowAnchor: &monthAnchor,
+		PricingAt:              pricingAt,
+		UpstreamSubscriptionID: 21,
+		DailyWindowAnchor:      &dayAnchor, WeeklyWindowAnchor: &weekAnchor, MonthlyWindowAnchor: &monthAnchor,
 		EnterpriseAttribution: &EnterpriseUsageAttributionSnapshot{
 			EnterpriseID: 11, SubscriptionID: 22, EmployeeID: &employeeID,
 			AssignmentGeneration: 3, Classification: "employee", RequestAt: pricingAt,
@@ -70,6 +71,7 @@ func TestGrokVideoPendingBillingCarriesCreateTimeUsageSnapshot(t *testing.T) {
 	var restored GrokVideoPendingBilling
 	require.NoError(t, json.Unmarshal(payload, &restored))
 	require.Equal(t, pricingAt, restored.PricingAt)
+	require.Equal(t, int64(21), restored.UpstreamSubscriptionID)
 	require.Equal(t, dayAnchor, *restored.DailyWindowAnchor)
 	require.Equal(t, weekAnchor, *restored.WeeklyWindowAnchor)
 	require.Equal(t, monthAnchor, *restored.MonthlyWindowAnchor)

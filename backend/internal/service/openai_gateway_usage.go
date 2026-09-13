@@ -401,12 +401,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		AttributionRequestAt:     pricingAt,
 		EnterpriseAttribution:    input.EnterpriseAttribution,
 	}
-	if subscription != nil {
-		usageLog.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
-		usageLog.AttributionDailyWindowAnchor = copyUsageAttributionAnchor(subscription.DailyWindowStart)
-		usageLog.AttributionWeeklyWindowAnchor = copyUsageAttributionAnchor(subscription.WeeklyWindowStart)
-		usageLog.AttributionMonthlyWindowAnchor = copyUsageAttributionAnchor(subscription.MonthlyWindowStart)
-	}
+	ApplyEnterpriseUsageAttribution(usageLog, apiKey, subscription, pricingAt)
 	isVideoUsage := isGrokVideoUsageResult(result, billingModels)
 	if isVideoUsage {
 		usageLog.VideoCount = result.VideoCount

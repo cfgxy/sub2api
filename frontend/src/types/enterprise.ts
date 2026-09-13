@@ -62,3 +62,34 @@ export interface EmployeeUpdateInput {
   status: 'active' | 'disabled'
   department_id: number | null
 }
+
+export interface EnterpriseEmployeeKey {
+  id: number
+  masked_key: string
+  name: string
+  status: 'active' | 'disabled' | 'quota_exhausted' | 'expired'
+  quota: number
+  quota_used: number
+  group_id?: number | null
+  expires_at?: string
+  rate_limit_5h: number
+  rate_limit_1d: number
+  rate_limit_7d: number
+  usage_5h: number
+  usage_1d: number
+  usage_7d: number
+  window_5h_start?: string
+  window_1d_start?: string
+  window_7d_start?: string
+  reset_5h_at?: string
+  reset_1d_at?: string
+  reset_7d_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface EnterpriseEmployeeKeyMutationResult {
+  key: EnterpriseEmployeeKey
+  plaintext?: string
+  replayed: boolean
+}

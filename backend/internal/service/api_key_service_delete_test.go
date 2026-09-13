@@ -42,6 +42,9 @@ type apiKeyRepoStub struct {
 	listAllByUserIDErr     error
 	listAllByUserIDCalls   []int64
 	listAllByUserIDFilters []APIKeyListFilters
+	enterpriseAssigned     bool
+	enterpriseAssignedErr  error
+	enterpriseDedicated    bool
 	updateLastUsed         func(ctx context.Context, id int64, usedAt time.Time) error
 	touchedIDs             []int64
 	touchedUsedAts         []time.Time
@@ -72,6 +75,14 @@ func (s *apiKeyRepoStub) GetKeyAndOwnerID(ctx context.Context, id int64) (string
 		return s.apiKey.Key, s.apiKey.UserID, nil
 	}
 	return "", 0, ErrAPIKeyNotFound
+}
+
+func (s *apiKeyRepoStub) IsEnterpriseAssigned(context.Context, int64) (bool, error) {
+	return s.enterpriseAssigned, s.enterpriseAssignedErr
+}
+
+func (s *apiKeyRepoStub) IsEnterpriseDedicatedUser(context.Context, int64) (bool, error) {
+	return s.enterpriseDedicated, nil
 }
 
 func (s *apiKeyRepoStub) GetByKey(ctx context.Context, key string) (*APIKey, error) {
@@ -333,6 +344,21 @@ func TestApiKeyService_Delete_Success(t *testing.T) {
 	require.Equal(t, []string{svc.authCacheKey("k")}, cache.deleteAuthKeys)
 	_, exists := svc.lastUsedTouchL1.Load(int64(42))
 	require.False(t, exists, "delete should clear touch debounce cache")
+}
+
+func TestAPIKeyService_Delete_RejectsEnterpriseAssignedKey(t *testing.T) {
+	repo := &apiKeyRepoStub{
+		apiKey:             &APIKey{ID: 42, UserID: 7, Key: "sk-enterprise-key"},
+		enterpriseAssigned: true,
+	}
+	cache := &apiKeyCacheStub{}
+	svc := &APIKeyService{apiKeyRepo: repo, cache: cache}
+
+	err := svc.Delete(context.Background(), 42, 7)
+	require.ErrorIs(t, err, ErrInsufficientPerms)
+	require.Empty(t, repo.deletedIDs)
+	require.Empty(t, cache.invalidated)
+	require.Empty(t, cache.deleteAuthKeys)
 }
 
 // TestApiKeyService_Delete_NotFound 测试删除不存在的 API Key 时返回正确的错误。

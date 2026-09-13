@@ -172,6 +172,17 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
+	apiKeyID := cmd.APIKeyID
+	if cmd.APIKeyQuotaCost > 0 || cmd.APIKeyRateLimitCost > 0 {
+		var err error
+		// 与员工 Key 生命周期统一采用员工→Key→订阅的锁顺序，避免订阅计费和并发轮换死锁。
+		apiKeyID, err = resolveUsageBillingAPIKeyID(ctx, tx, cmd.APIKeyID)
+		if err != nil {
+			return err
+		}
+		result.BilledAPIKeyID = apiKeyID
+	}
+
 	if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
 		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
 			return err
@@ -188,7 +199,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
-		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
+		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, apiKeyID, cmd.APIKeyQuotaCost)
 		if err != nil {
 			return err
 		}
@@ -196,7 +207,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.APIKeyRateLimitCost > 0 {
-		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, cmd.APIKeyRateLimitCost); err != nil {
+		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, apiKeyID, cmd.APIKeyRateLimitCost); err != nil {
 			return err
 		}
 	}
@@ -210,6 +221,65 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+// resolveUsageBillingAPIKeyID serializes billing with employee Key lifecycle
+// changes. A billing request that started before rotation keeps its original
+// target until the lifecycle transaction copies the final counters; a request
+// that arrives after rotation is charged to the current active successor.
+func resolveUsageBillingAPIKeyID(ctx context.Context, tx *sql.Tx, apiKeyID int64) (int64, error) {
+	var enterpriseID, employeeID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT enterprise_id, employee_id
+		FROM enterprise_key_assignments
+		WHERE api_key_id = $1
+		ORDER BY generation DESC
+		LIMIT 1`, apiKeyID).Scan(&enterpriseID, &employeeID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+
+	targetAPIKeyID := apiKeyID
+	if err == nil {
+		var lockedEmployeeID int64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id
+			FROM enterprise_employees
+			WHERE enterprise_id = $1 AND id = $2
+			FOR UPDATE`, enterpriseID, employeeID).Scan(&lockedEmployeeID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, service.ErrAPIKeyNotFound
+			}
+			return 0, err
+		}
+
+		err = tx.QueryRowContext(ctx, `
+			SELECT api_key_id
+			FROM enterprise_key_assignments
+			WHERE enterprise_id = $1 AND employee_id = $2
+			ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, generation DESC
+			LIMIT 1
+			FOR UPDATE`, enterpriseID, employeeID).Scan(&targetAPIKeyID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			targetAPIKeyID = apiKeyID
+		}
+	}
+
+	var lockedAPIKeyID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM api_keys
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR UPDATE`, targetAPIKeyID).Scan(&lockedAPIKeyID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, service.ErrAPIKeyNotFound
+		}
+		return 0, err
+	}
+	return lockedAPIKeyID, nil
 }
 
 func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {

@@ -18,6 +18,21 @@ func TestGatewayCacheLiveCallIdentityAndController(t *testing.T) {
 	require.True(t, ok)
 	otherInstance, ok := NewGatewayCache(client).(service.LiveCallStore)
 	require.True(t, ok)
+	employeeID := int64(55)
+	anchor := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	weeklyAnchor := anchor.Add(-5 * 24 * time.Hour)
+	monthlyAnchor := anchor.Add(-12 * 24 * time.Hour)
+	snapshot := &service.EnterpriseUsageAttributionSnapshot{
+		EnterpriseID:         66,
+		SubscriptionID:       77,
+		EmployeeID:           &employeeID,
+		AssignmentGeneration: 3,
+		Classification:       "employee",
+		RequestAt:            anchor.Add(time.Hour),
+		DailyWindowAnchor:    &anchor,
+		WeeklyWindowAnchor:   &weeklyAnchor,
+		MonthlyWindowAnchor:  &monthlyAnchor,
+	}
 	record := &service.LiveCallRecord{
 		CallID:                "call_secret",
 		CallHash:              HashLiveCallID("call_secret"),
@@ -31,6 +46,7 @@ func TestGatewayCacheLiveCallIdentityAndController(t *testing.T) {
 		CreatedAt:             time.Now(),
 		ExpiresAt:             time.Now().Add(time.Hour),
 		Controller:            service.LiveControllerPending,
+		EnterpriseAttribution: snapshot,
 	}
 	require.NoError(t, cache.SaveLiveCall(context.Background(), record, time.Hour))
 
@@ -39,6 +55,7 @@ func TestGatewayCacheLiveCallIdentityAndController(t *testing.T) {
 	require.Equal(t, record.CallID, loaded.CallID)
 	require.Equal(t, record.AccountID, loaded.AccountID)
 	require.Equal(t, record.AttestationCiphertext, loaded.AttestationCiphertext)
+	require.Equal(t, snapshot, loaded.EnterpriseAttribution)
 
 	claimed, err := cache.ClaimLiveController(context.Background(), record.CallHash, service.LiveControllerObserver, "observer-1")
 	require.NoError(t, err)

@@ -66,6 +66,10 @@ type apiKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
 }
 
+type apiKeyAuthCacheUserInvalidator interface {
+	InvalidateAuthCacheByUserID(ctx context.Context, userID int64)
+}
+
 type usageLogBestEffortWriter interface {
 	CreateBestEffort(ctx context.Context, log *UsageLog) error
 }
@@ -355,11 +359,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return false, nil
 	}
 
-	if result.APIKeyQuotaExhausted {
-		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
-			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
-		}
-	}
+	invalidateUsageBillingAuthCache(billingCtx, p, result)
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
 	return true, nil
@@ -379,7 +379,13 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
-		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, p.Cost.ActualCost)
+		billedKeyID := billedAPIKeyID(p, result)
+		if billedKeyID != p.APIKey.ID {
+			// 数据库已向 successor 记账；直接失效缓存，避免缓存 miss 回填提交后数值后又异步重复累加。
+			_ = deps.billingCacheService.InvalidateAPIKeyRateLimit(ctx, billedKeyID)
+		} else {
+			deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(billedKeyID, p.Cost.ActualCost)
+		}
 	}
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
@@ -422,6 +428,31 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	// no dependency on the request context or upstream connection.
 	go notifyBalanceLow(p, deps, result)
 	go notifyAccountQuota(p, deps, result)
+}
+
+func billedAPIKeyID(p *postUsageBillingParams, result *UsageBillingApplyResult) int64 {
+	if result != nil && result.BilledAPIKeyID > 0 {
+		return result.BilledAPIKeyID
+	}
+	if p == nil || p.APIKey == nil {
+		return 0
+	}
+	return p.APIKey.ID
+}
+
+func invalidateUsageBillingAuthCache(ctx context.Context, p *postUsageBillingParams, result *UsageBillingApplyResult) {
+	if result == nil || !result.APIKeyQuotaExhausted || p == nil || p.APIKey == nil || p.APIKeyService == nil {
+		return
+	}
+	if result.BilledAPIKeyID > 0 && result.BilledAPIKeyID != p.APIKey.ID {
+		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheUserInvalidator); ok {
+			invalidator.InvalidateAuthCacheByUserID(ctx, p.APIKey.UserID)
+			return
+		}
+	}
+	if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey.Key != "" {
+		invalidator.InvalidateAuthCacheByKey(ctx, p.APIKey.Key)
+	}
 }
 
 func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -1187,12 +1218,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		CreatedAt:                time.Now(),
 		AttributionRequestAt:     pricingAt,
 	}
-	if subscription != nil {
-		usageLog.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
-		usageLog.AttributionDailyWindowAnchor = copyUsageAttributionAnchor(subscription.DailyWindowStart)
-		usageLog.AttributionWeeklyWindowAnchor = copyUsageAttributionAnchor(subscription.WeeklyWindowStart)
-		usageLog.AttributionMonthlyWindowAnchor = copyUsageAttributionAnchor(subscription.MonthlyWindowStart)
-	}
+	ApplyEnterpriseUsageAttribution(usageLog, apiKey, subscription, pricingAt)
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}

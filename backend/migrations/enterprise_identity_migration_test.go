@@ -50,3 +50,24 @@ func TestEnterpriseBrandObjectMigrationContract(t *testing.T) {
 	require.Contains(t, sql, "set enterprise_name = enterprise.name")
 	require.NotContains(t, sql, "alter column background_url")
 }
+
+func TestEnterpriseEmployeeKeyLifecycleMigrationContract(t *testing.T) {
+	raw, err := FS.ReadFile("239_enterprise_employee_key_lifecycle.sql")
+	require.NoError(t, err)
+	sql := strings.ToLower(string(raw))
+	for _, fragment := range []string{
+		"enterprise_key_lifecycle_idempotency",
+		"request_hash char(64)",
+		"result_api_key_id",
+		"unique (enterprise_id, employee_id, operation, idempotency_key)",
+		"references enterprise_employees (enterprise_id, id)",
+	} {
+		require.Contains(t, sql, fragment)
+	}
+	require.NotContains(t, sql, "response_body")
+	require.NotContains(t, sql, "plaintext")
+
+	rollback, err := FS.ReadFile("rollback/239_enterprise_employee_key_lifecycle.sql")
+	require.NoError(t, err)
+	require.Contains(t, strings.ToLower(string(rollback)), "drop table if exists enterprise_key_lifecycle_idempotency")
+}

@@ -277,9 +277,342 @@ func seedEnterprise237MigrationAllocation(t *testing.T, ctx context.Context, db 
 
 func readEnterprise237Rollback(t *testing.T) string {
 	t.Helper()
+	return readEnterpriseRollback(t, "237_enterprise_subscription_allocations.sql")
+}
+
+const (
+	enterpriseCredentialRevocationMigration = "240_enterprise_key_credential_revocation.sql"
+	enterpriseAttributionSnapshotMigration  = "241_batch_image_enterprise_attribution_snapshot.sql"
+)
+
+func TestEnterprise240RejectsUnrecoverable239OnlyTombstones(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "239_enterprise_employee_key_lifecycle.sql")))
+	apiKeyID := seedEnterprise239TombstoneFixture(t, ctx, db)
+	_, err := db.ExecContext(ctx, `
+		UPDATE enterprise_key_assignments
+		SET status = 'revoked', ended_at = NOW(), revoked_at = NOW(), actor_ref = 'test:239-only'
+		WHERE api_key_id = $1 AND status = 'active'
+	`, apiKeyID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		UPDATE api_keys
+		SET key = 'revoked-' || id::text, status = 'disabled'
+		WHERE id = $1
+	`, apiKeyID)
+	require.NoError(t, err)
+
+	err = applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseCredentialRevocationMigration))
+	require.ErrorContains(t, err, "cannot apply SHAN-153 credential guard after unrecoverable 239-only enterprise key tombstones")
+	require.False(t, relationExists(t, ctx, db, "api_key_revoked_credential_reservations"))
+	require.Zero(t, migrationRecordCount(t, ctx, db, enterpriseCredentialRevocationMigration))
+}
+
+func seedEnterprise239TombstoneFixture(t *testing.T, ctx context.Context, db *sql.DB) int64 {
+	t.Helper()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	anchor := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	var userID, groupID, upstreamSubscriptionID, enterpriseID, employeeID, apiKeyID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+		"shan153-239-tombstone-"+suffix+"@example.com").Scan(&userID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO groups (name) VALUES ($1) RETURNING id",
+		"shan153-239-tombstone-"+suffix).Scan(&groupID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO user_subscriptions (
+			user_id, group_id, starts_at, expires_at, status,
+			daily_window_start, weekly_window_start, monthly_window_start
+		) VALUES ($1, $2, $3::timestamptz, $3::timestamptz + INTERVAL '1 year', 'active', $3::timestamptz, $3::timestamptz, $3::timestamptz)
+		RETURNING id
+	`, userID, groupID, anchor).Scan(&upstreamSubscriptionID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host)
+		VALUES ($1, $2, $2, $3) RETURNING id
+	`, "SHAN-153 239 tombstone", userID, "shan153-239-tombstone-"+suffix+".example.com").Scan(&enterpriseID))
+	legacyEmployeeEmail := "employee-" + suffix + "@example.com"
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, status)
+		VALUES ($1, $2, $2, '$2a$12$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuu', 'active') RETURNING id
+	`, enterpriseID, legacyEmployeeEmail).Scan(&employeeID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprise_subscriptions (
+			enterprise_id, upstream_user_subscription_id, status,
+			observed_weekly_window_start, activated_at, actor_ref
+		) VALUES ($1, $2, 'active', $3, $3, 'test:239-tombstone') RETURNING id
+	`, enterpriseID, upstreamSubscriptionID, anchor).Scan(new(int64)))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO api_keys (user_id, group_id, key, name)
+		VALUES ($1, $2, $3, '239-tombstone-key') RETURNING id
+	`, userID, groupID, "sk-shan153-239-"+suffix).Scan(&apiKeyID))
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO enterprise_key_assignments (
+			enterprise_id, employee_id, api_key_id, upstream_user_subscription_id,
+			upstream_group_id, generation, status, actor_ref, assigned_at
+		) VALUES ($1, $2, $3, $4, $5, 1, 'active', 'test:239-tombstone', $6)
+	`, enterpriseID, employeeID, apiKeyID, upstreamSubscriptionID, groupID, anchor)
+	require.NoError(t, err)
+	return apiKeyID
+}
+
+func TestEnterprise240PreflightWaitsForLegacyMutation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "239_enterprise_employee_key_lifecycle.sql")))
+	apiKeyID := seedEnterprise239TombstoneFixture(t, ctx, db)
+
+	writerTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = writerTx.Rollback() }()
+	_, err = writerTx.ExecContext(ctx, `
+		UPDATE enterprise_key_assignments
+		SET status = 'revoked', ended_at = NOW(), revoked_at = NOW(), actor_ref = 'test:239-race'
+		WHERE api_key_id = $1 AND status = 'active'
+	`, apiKeyID)
+	require.NoError(t, err)
+	_, err = writerTx.ExecContext(ctx, `
+		UPDATE api_keys
+		SET key = 'revoked-' || id::text, status = 'disabled'
+		WHERE id = $1
+	`, apiKeyID)
+	require.NoError(t, err)
+
+	migrationFS := migrationOnly(t, enterpriseCredentialRevocationMigration)
+	migrationDone := make(chan error, 1)
+	go func() {
+		migrationDone <- applyMigrationsFS(ctx, db, migrationFS)
+	}()
+	require.Eventually(t, func() bool {
+		var waiting bool
+		queryErr := db.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_locks
+				WHERE relation = 'api_keys'::regclass
+				  AND mode = 'ShareRowExclusiveLock'
+				  AND NOT granted
+			)
+		`).Scan(&waiting)
+		return queryErr == nil && waiting
+	}, 5*time.Second, 10*time.Millisecond)
+
+	require.NoError(t, writerTx.Commit())
+	err = <-migrationDone
+	require.ErrorContains(t, err, "cannot apply SHAN-153 credential guard after unrecoverable 239-only enterprise key tombstones")
+	require.False(t, relationExists(t, ctx, db, "api_key_revoked_credential_reservations"))
+	require.Zero(t, migrationRecordCount(t, ctx, db, enterpriseCredentialRevocationMigration))
+}
+
+func TestEnterprise240Through242MigrationRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "239_enterprise_employee_key_lifecycle.sql")))
+	assertEnterprise240Through242MigrationState(t, ctx, db, false)
+
+	for _, migration := range []string{
+		enterpriseCredentialRevocationMigration,
+		enterpriseAttributionSnapshotMigration,
+		enterpriseKeyLifecycleProvisionLimitIndexMigration,
+	} {
+		require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, migration)), migration)
+	}
+	assertEnterprise240Through242MigrationState(t, ctx, db, true)
+
+	for _, migration := range []string{
+		enterpriseKeyLifecycleProvisionLimitIndexMigration,
+		enterpriseAttributionSnapshotMigration,
+		enterpriseCredentialRevocationMigration,
+	} {
+		require.NoError(t, executeEnterpriseRollback(t, ctx, db, migration), migration)
+	}
+	assertEnterprise240Through242MigrationState(t, ctx, db, false)
+
+	// A completed rollback must be safe to retry without touching the 239 baseline.
+	for _, migration := range []string{
+		enterpriseKeyLifecycleProvisionLimitIndexMigration,
+		enterpriseAttributionSnapshotMigration,
+		enterpriseCredentialRevocationMigration,
+	} {
+		require.NoError(t, executeEnterpriseRollback(t, ctx, db, migration), migration)
+	}
+
+	for _, migration := range []string{
+		enterpriseCredentialRevocationMigration,
+		enterpriseAttributionSnapshotMigration,
+		enterpriseKeyLifecycleProvisionLimitIndexMigration,
+	} {
+		require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, migration)), migration)
+	}
+	assertEnterprise240Through242MigrationState(t, ctx, db, true)
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, "239_enterprise_employee_key_lifecycle.sql"))
+}
+
+func TestEnterprise240RollbackRejectsReservationsWithoutClearingTracking(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "239_enterprise_employee_key_lifecycle.sql")))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseCredentialRevocationMigration)))
+
+	suffix := time.Now().UnixNano()
+	var userID, groupID, apiKeyID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+		fmt.Sprintf("shan153-rollback-%d@example.com", suffix)).Scan(&userID))
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO groups (name) VALUES ($1) RETURNING id",
+		fmt.Sprintf("shan153-rollback-%d", suffix)).Scan(&groupID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO api_keys (user_id, group_id, key, name)
+		VALUES ($1, $2, $3, 'rollback-reservation') RETURNING id
+	`, userID, groupID, fmt.Sprintf("sk-shan153-rollback-%d", suffix)).Scan(&apiKeyID))
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO api_key_revoked_credential_reservations (fingerprint, api_key_id)
+		VALUES ($1, $2)
+	`, strings.Repeat("a", 64), apiKeyID)
+	require.NoError(t, err)
+
+	err = executeEnterpriseRollback(t, ctx, db, enterpriseCredentialRevocationMigration)
+	require.ErrorContains(t, err, "cannot rollback SHAN-153 credential guard while revoked credential reservations exist")
+	require.True(t, relationExists(t, ctx, db, "api_key_revoked_credential_reservations"))
+	require.True(t, triggerExists(t, ctx, db, "trg_guard_enterprise_revoked_api_key_credential"))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, enterpriseCredentialRevocationMigration))
+}
+
+func TestEnterprise240RollbackIgnoresBatchAttributionSnapshots(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "239_enterprise_employee_key_lifecycle.sql")))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseCredentialRevocationMigration)))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseAttributionSnapshotMigration)))
+
+	var userID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+		fmt.Sprintf("shan153-independent-rollback-%d@example.com", time.Now().UnixNano())).Scan(&userID))
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO batch_image_jobs (
+			batch_id, user_id, provider, model, item_count, enterprise_attribution_snapshot
+		) VALUES ($1, $2, 'gemini', 'migration-test', 1, '{"enterprise_id":1}'::jsonb)
+	`, fmt.Sprintf("shan153-independent-rollback-%d", time.Now().UnixNano()), userID)
+	require.NoError(t, err)
+
+	require.NoError(t, executeEnterpriseRollback(t, ctx, db, enterpriseCredentialRevocationMigration))
+	require.False(t, relationExists(t, ctx, db, "api_key_revoked_credential_reservations"))
+	require.False(t, triggerExists(t, ctx, db, "trg_guard_enterprise_revoked_api_key_credential"))
+	require.True(t, columnExists(t, ctx, db, "batch_image_jobs", "enterprise_attribution_snapshot"))
+	require.Equal(t, 0, migrationRecordCount(t, ctx, db, enterpriseCredentialRevocationMigration))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, enterpriseAttributionSnapshotMigration))
+}
+
+func TestEnterprise241RollbackRejectsFrozenSnapshotWithoutClearingTracking(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "239_enterprise_employee_key_lifecycle.sql")))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseCredentialRevocationMigration)))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseAttributionSnapshotMigration)))
+
+	var userID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+		fmt.Sprintf("shan153-snapshot-%d@example.com", time.Now().UnixNano())).Scan(&userID))
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO batch_image_jobs (
+			batch_id, user_id, provider, model, item_count, enterprise_attribution_snapshot
+		) VALUES ($1, $2, 'gemini', 'migration-test', 1, '{"enterprise_id":1}'::jsonb)
+	`, fmt.Sprintf("shan153-snapshot-%d", time.Now().UnixNano()), userID)
+	require.NoError(t, err)
+
+	err = executeEnterpriseRollback(t, ctx, db, enterpriseAttributionSnapshotMigration)
+	require.ErrorContains(t, err, "cannot rollback SHAN-153 batch image attribution while frozen snapshots exist")
+	require.True(t, columnExists(t, ctx, db, "batch_image_jobs", "enterprise_attribution_snapshot"))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, enterpriseAttributionSnapshotMigration))
+}
+
+func TestEnterprise241RollbackSerializesWithInFlightSnapshotInsert(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "239_enterprise_employee_key_lifecycle.sql")))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseCredentialRevocationMigration)))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, enterpriseAttributionSnapshotMigration)))
+
+	var userID int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		"INSERT INTO users (email, password_hash) VALUES ($1, 'test') RETURNING id",
+		fmt.Sprintf("shan153-concurrent-rollback-%d@example.com", time.Now().UnixNano())).Scan(&userID))
+	writerTx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = writerTx.ExecContext(ctx, `
+		INSERT INTO batch_image_jobs (
+			batch_id, user_id, provider, model, item_count, enterprise_attribution_snapshot
+		) VALUES ($1, $2, 'gemini', 'rollback-race', 1, '{"enterprise_id":1}'::jsonb)
+	`, fmt.Sprintf("shan153-concurrent-rollback-%d", time.Now().UnixNano()), userID)
+	require.NoError(t, err)
+
+	rollbackSQL := readEnterpriseRollback(t, enterpriseAttributionSnapshotMigration)
+	rollbackDone := make(chan error, 1)
+	go func() {
+		_, rollbackErr := db.ExecContext(ctx, rollbackSQL)
+		rollbackDone <- rollbackErr
+	}()
+	select {
+	case err := <-rollbackDone:
+		t.Fatalf("rollback completed before the in-flight insert committed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	require.NoError(t, writerTx.Commit())
+	err = <-rollbackDone
+	require.ErrorContains(t, err, "cannot rollback SHAN-153 batch image attribution while frozen snapshots exist")
+	require.True(t, columnExists(t, ctx, db, "batch_image_jobs", "enterprise_attribution_snapshot"))
+	require.Equal(t, 1, migrationRecordCount(t, ctx, db, enterpriseAttributionSnapshotMigration))
+}
+
+func assertEnterprise240Through242MigrationState(t *testing.T, ctx context.Context, db *sql.DB, exists bool) {
+	t.Helper()
+	require.Equal(t, exists, relationExists(t, ctx, db, "api_key_revoked_credential_reservations"))
+	require.Equal(t, exists, triggerExists(t, ctx, db, "trg_guard_enterprise_revoked_api_key_credential"))
+	require.Equal(t, exists, columnExists(t, ctx, db, "batch_image_jobs", "enterprise_attribution_snapshot"))
+	require.Equal(t, exists, relationExists(t, ctx, db, enterpriseKeyLifecycleProvisionLimitIndex))
+
+	expectedRecordCount := 0
+	if exists {
+		expectedRecordCount = 1
+	}
+	for _, migration := range []string{
+		enterpriseCredentialRevocationMigration,
+		enterpriseAttributionSnapshotMigration,
+		enterpriseKeyLifecycleProvisionLimitIndexMigration,
+	} {
+		require.Equal(t, expectedRecordCount, migrationRecordCount(t, ctx, db, migration), migration)
+	}
+}
+
+func executeEnterpriseRollback(t *testing.T, ctx context.Context, db *sql.DB, migration string) error {
+	t.Helper()
+	content := readEnterpriseRollback(t, migration)
+	if !strings.HasSuffix(migration, nonTransactionalMigrationSuffix) {
+		_, err := db.ExecContext(ctx, content)
+		return err
+	}
+
+	for i, statement := range splitSQLStatements(content) {
+		trimmed := strings.TrimSpace(statement)
+		if stripSQLLineComment(trimmed) == "" {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, trimmed); err != nil {
+			return fmt.Errorf("rollback migration %s (non-tx statement %d): %w", migration, i+1, err)
+		}
+	}
+	return nil
+}
+
+func readEnterpriseRollback(t *testing.T, migration string) string {
+	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
 	require.True(t, ok)
-	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "migrations", "rollback", "237_enterprise_subscription_allocations.sql"))
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "migrations", "rollback", migration))
 	require.NoError(t, err)
 	return string(content)
 }
@@ -656,7 +989,7 @@ func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {
 	`, userID)
 	require.NoError(t, err)
 
-	svc := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil)
+	svc := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil, nil)
 	oldPair, err := svc.Login(ctx, "acme.example.com", "admin@example.com", "old-password-strong", "integration", "127.0.0.1")
 	require.NoError(t, err)
 	_, _, err = svc.Authenticate(ctx, "acme.example.com", oldPair.AccessToken)
@@ -763,7 +1096,7 @@ func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(
 
 	employeeBefore := readEmployee()
 	sessionBefore := readSession()
-	svc := enterpriseidentity.NewService(db, &config.Config{}, nil, nil)
+	svc := enterpriseidentity.NewService(db, &config.Config{}, nil, nil, nil)
 	err := svc.UpdateEmployee(ctx, requestEnterpriseID, targetEmployeeID, "disabled", nil)
 	statusCode, body := infraerrors.ToHTTP(err)
 
@@ -907,6 +1240,17 @@ func constraintExists(t *testing.T, ctx context.Context, db *sql.DB, name string
 	var exists bool
 	require.NoError(t, db.QueryRowContext(ctx,
 		"SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = $1)", name).Scan(&exists))
+	return exists
+}
+
+func triggerExists(t *testing.T, ctx context.Context, db *sql.DB, name string) bool {
+	t.Helper()
+	var exists bool
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgname = $1
+		)
+	`, name).Scan(&exists))
 	return exists
 }
 

@@ -544,7 +544,10 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 				dbuser.EmailContainsFold(filters.Search),
 				dbuser.UsernameContainsFold(filters.Search),
 				dbuser.NotesContainsFold(filters.Search),
-				dbuser.HasAPIKeysWith(apikey.KeyContainsFold(filters.Search)),
+				dbuser.HasAPIKeysWith(
+					apikey.KeyContainsFold(filters.Search),
+					apikey.EnterpriseAttributionCandidateEQ(false),
+				),
 			),
 		)
 	}

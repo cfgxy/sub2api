@@ -21,6 +21,7 @@ import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
 describe('enterprise auth store isolation', () => {
   beforeEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     setActivePinia(createPinia())
     vi.clearAllMocks()
   })
@@ -97,5 +98,16 @@ describe('enterprise auth store isolation', () => {
     expect(post).toHaveBeenCalledWith('/enterprise/auth/refresh', { refresh_token: 'refresh-r0' })
     await store.logout()
     expect(enterpriseAPI.logout).toHaveBeenCalledWith('refresh-r1')
+  })
+
+  it('clears only enterprise key mutation retries when the session is cleared', () => {
+    sessionStorage.setItem('sub2api:enterprise:key-mutation:12:33:create:0', 'operation-key')
+    sessionStorage.setItem('other-feature', 'keep')
+    const store = useEnterpriseAuthStore()
+
+    store.clear()
+
+    expect(sessionStorage.getItem('sub2api:enterprise:key-mutation:12:33:create:0')).toBeNull()
+    expect(sessionStorage.getItem('other-feature')).toBe('keep')
   })
 })

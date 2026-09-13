@@ -611,7 +611,7 @@ func seedFirstAssignmentRaceFixture(t *testing.T, ctx context.Context) (enterpri
 	return fixture, usageID
 }
 
-func TestEnterpriseRevokeKeyGenerationRecoversDisabledKeyAndIsIdempotent(t *testing.T) {
+func TestEnterpriseRevokeKeyGenerationRevokesKeyAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
 	var committedAssignmentStatuses []string
@@ -626,9 +626,7 @@ func TestEnterpriseRevokeKeyGenerationRecoversDisabledKeyAndIsIdempotent(t *test
 	var apiKey string
 	require.NoError(t, integrationDB.QueryRowContext(ctx,
 		"SELECT key FROM api_keys WHERE id = $1", fixture.apiKeyID).Scan(&apiKey))
-	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		UPDATE api_keys SET status = 'disabled' WHERE id = $1 RETURNING id
-	`, fixture.apiKeyID).Scan(&fixture.apiKeyID))
+	revokedKey := fmt.Sprintf(":revoked:%d", fixture.apiKeyID)
 
 	require.NoError(t, repo.RevokeKeyGeneration(ctx, enterprise.RevokeKeyGenerationParams{
 		EnterpriseID: fixture.enterpriseID,
@@ -661,8 +659,13 @@ func TestEnterpriseRevokeKeyGenerationRecoversDisabledKeyAndIsIdempotent(t *test
 	`, fixture.apiKeyID).Scan(&retryEndedAt, &retryRevokedAt))
 	require.Equal(t, endedAt, retryEndedAt)
 	require.Equal(t, revokedAt, retryRevokedAt)
-	require.Equal(t, []string{apiKey, apiKey}, invalidator.keys)
+	require.Equal(t, []string{apiKey, revokedKey}, invalidator.keys)
 	require.Equal(t, []string{"revoked", "revoked"}, committedAssignmentStatuses)
+	var storedKey string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT key FROM api_keys WHERE id = $1", fixture.apiKeyID).Scan(&storedKey))
+	require.Equal(t, revokedKey, storedKey)
+	require.NotEqual(t, apiKey, storedKey)
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM enterprise_audit_events
 		WHERE enterprise_id = $1 AND event_type = 'key.generation_revoked' AND entity_id = $2

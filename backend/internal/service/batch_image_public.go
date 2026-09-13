@@ -76,9 +76,10 @@ type BatchImageReferenceInput struct {
 }
 
 type BatchImageOwner struct {
-	UserID   int64
-	APIKeyID int64
-	GroupID  *int64
+	UserID                int64
+	APIKeyID              int64
+	GroupID               *int64
+	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot
 }
 
 type BatchImagePublicService struct {
@@ -283,6 +284,7 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 		IdempotencyKey:          batchImageOptionalStringPtr(idempotencyKey),
 		RequestHash:             batchImageStringPtr(requestHash),
 		SessionID:               normalized.SessionID,
+		EnterpriseAttribution:   CloneEnterpriseUsageAttributionSnapshot(owner.EnterpriseAttribution),
 	})
 	if err != nil {
 		return nil, err

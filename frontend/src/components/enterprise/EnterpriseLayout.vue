@@ -34,7 +34,10 @@ const navigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/admin/departments', label: '部门', icon: 'grid' as const },
   { path: '/enterprise/admin/brand', label: '品牌', icon: 'sparkles' as const },
   { path: '/enterprise/admin/sessions', label: '我的会话', icon: 'shield' as const },
-] : [{ path: '/enterprise/sessions', label: '我的会话', icon: 'shield' as const }])
+] : [
+  { path: '/enterprise/keys', label: 'API Key', icon: 'key' as const },
+  { path: '/enterprise/sessions', label: '我的会话', icon: 'shield' as const },
+])
 async function handleLogout() { await auth.logout(); await router.replace('/enterprise/login') }
 </script>
 

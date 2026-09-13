@@ -1830,6 +1830,24 @@ func TestGrokMediaVideoRequestBindingIsScopedToUserAndAPIKey(t *testing.T) {
 	require.Zero(t, accountID)
 }
 
+func TestGrokMediaVideoRequestOwnerHashSurvivesEmployeeKeyRotation(t *testing.T) {
+	requestID := "video-request-rotation"
+	employeeID := int64(71)
+	identity := &EnterpriseUsageAttributionIdentity{EnterpriseID: 9, EmployeeID: &employeeID}
+
+	first := GrokMediaVideoRequestSessionHashForIdentity(requestID, 41, 51, identity)
+	second := GrokMediaVideoRequestSessionHashForIdentity(requestID, 41, 52, identity)
+	require.NotEmpty(t, first)
+	require.Equal(t, first, second)
+
+	otherEmployeeID := int64(72)
+	other := GrokMediaVideoRequestSessionHashForIdentity(
+		requestID, 41, 52, &EnterpriseUsageAttributionIdentity{EnterpriseID: 9, EmployeeID: &otherEmployeeID},
+	)
+	require.NotEqual(t, first, other)
+	require.NotEqual(t, first, GrokMediaVideoRequestSessionHash(requestID, 41, 52))
+}
+
 func TestForwardGrokMedia429ReconcilesRateLimitBeforeCustomErrorBypass(t *testing.T) {
 	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
 	gin.SetMode(gin.TestMode)

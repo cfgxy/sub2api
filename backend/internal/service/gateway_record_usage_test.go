@@ -66,6 +66,27 @@ type openAIRecordUsageBestEffortLogRepoStub struct {
 	lastCtxErr      error
 }
 
+type successorBillingCacheInvalidatorStub struct {
+	invalidatedKeys  []string
+	invalidatedUsers []int64
+}
+
+func (s *successorBillingCacheInvalidatorStub) UpdateQuotaUsed(context.Context, int64, float64) error {
+	return nil
+}
+
+func (s *successorBillingCacheInvalidatorStub) UpdateRateLimitUsage(context.Context, int64, float64) error {
+	return nil
+}
+
+func (s *successorBillingCacheInvalidatorStub) InvalidateAuthCacheByKey(_ context.Context, key string) {
+	s.invalidatedKeys = append(s.invalidatedKeys, key)
+}
+
+func (s *successorBillingCacheInvalidatorStub) InvalidateAuthCacheByUserID(_ context.Context, userID int64) {
+	s.invalidatedUsers = append(s.invalidatedUsers, userID)
+}
+
 func (s *openAIRecordUsageBestEffortLogRepoStub) CreateBestEffort(ctx context.Context, log *UsageLog) error {
 	s.bestEffortCalls++
 	s.lastLog = log
@@ -143,6 +164,49 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
+func TestFinalizePostUsageBillingInvalidatesRateLimitCacheForBilledSuccessor(t *testing.T) {
+	queue := make(chan cacheWriteTask, 1)
+	cache := newBillingCacheStub(1)
+	billingCache := &BillingCacheService{
+		cache:          cache,
+		cacheWriteChan: queue,
+	}
+	finalizePostUsageBilling(context.Background(), &postUsageBillingParams{
+		Cost:    &CostBreakdown{ActualCost: 0.5},
+		APIKey:  &APIKey{ID: 101, RateLimit5h: 5},
+		Account: &Account{ID: 7},
+	}, &billingDeps{
+		billingCacheService: billingCache,
+		deferredService:     &DeferredService{},
+	}, &UsageBillingApplyResult{Applied: true, BilledAPIKeyID: 202})
+
+	select {
+	case keyID := <-cache.rateLimitInvalidations:
+		require.Equal(t, int64(202), keyID)
+	case <-time.After(time.Second):
+		t.Fatal("expected rate limit cache invalidation")
+	}
+	select {
+	case task := <-queue:
+		t.Fatalf("unexpected successor rate limit cache update: %+v", task)
+	default:
+	}
+}
+
+func TestInvalidateUsageBillingAuthCacheInvalidatesSuccessorOwner(t *testing.T) {
+	invalidator := &successorBillingCacheInvalidatorStub{}
+	invalidateUsageBillingAuthCache(context.Background(), &postUsageBillingParams{
+		APIKey:        &APIKey{ID: 101, UserID: 7, Key: "sk-old-key"},
+		APIKeyService: invalidator,
+	}, &UsageBillingApplyResult{
+		APIKeyQuotaExhausted: true,
+		BilledAPIKeyID:       202,
+	})
+
+	require.Equal(t, []int64{7}, invalidator.invalidatedUsers)
+	require.Empty(t, invalidator.invalidatedKeys)
+}
+
 func TestGatewayServiceRecordUsage_CapturesPricingAtAndSubscriptionWindowAnchors(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
@@ -176,6 +240,63 @@ func TestGatewayServiceRecordUsage_CapturesPricingAtAndSubscriptionWindowAnchors
 	require.Equal(t, monthAnchor, *usageRepo.lastLog.AttributionMonthlyWindowAnchor)
 	require.True(t, usageRepo.lastLog.EnterpriseAttributionCandidate)
 	require.Nil(t, usageRepo.lastLog.EnterpriseAttribution)
+}
+
+func TestGatewayServiceRecordUsage_PersistsFrozenEnterpriseSnapshot(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	requestAt := time.Date(2026, 9, 13, 8, 0, 0, 0, time.UTC)
+	dailyAnchor := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	weeklyAnchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	monthlyAnchor := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	employeeID := int64(902)
+	apiKey := &APIKey{
+		ID:                             502,
+		EnterpriseAttributionCandidate: true,
+		EnterpriseAttributionIdentity: &EnterpriseUsageAttributionIdentity{
+			EnterpriseID:             903,
+			EnterpriseSubscriptionID: 904,
+			UpstreamSubscriptionID:   905,
+			EmployeeID:               &employeeID,
+			AssignmentGeneration:     6,
+			Classification:           "employee",
+			WindowAnchorsResolved:    true,
+			DailyWindowAnchor:        &dailyAnchor,
+			WeeklyWindowAnchor:       &weeklyAnchor,
+			MonthlyWindowAnchor:      &monthlyAnchor,
+		},
+	}
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_enterprise_snapshot",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey: apiKey,
+		User:   &User{ID: 601}, Account: &Account{ID: 701}, PricingAt: requestAt,
+		Subscription: &UserSubscription{
+			ID:                 905,
+			DailyWindowStart:   timePtr(dailyAnchor.Add(-time.Hour)),
+			WeeklyWindowStart:  timePtr(weeklyAnchor.Add(-time.Hour)),
+			MonthlyWindowStart: timePtr(monthlyAnchor.Add(-time.Hour)),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	snapshot := usageRepo.lastLog.EnterpriseAttribution
+	require.NotNil(t, snapshot)
+	require.Equal(t, int64(903), snapshot.EnterpriseID)
+	require.Equal(t, int64(904), snapshot.SubscriptionID)
+	require.Equal(t, employeeID, *snapshot.EmployeeID)
+	require.Equal(t, int64(6), snapshot.AssignmentGeneration)
+	require.Equal(t, "employee", snapshot.Classification)
+	require.Equal(t, requestAt, snapshot.RequestAt)
+	require.Equal(t, dailyAnchor, *snapshot.DailyWindowAnchor)
+	require.Equal(t, weeklyAnchor, *snapshot.WeeklyWindowAnchor)
+	require.Equal(t, monthlyAnchor, *snapshot.MonthlyWindowAnchor)
 }
 
 func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {

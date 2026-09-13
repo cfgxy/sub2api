@@ -131,10 +131,12 @@ func (s *userRepoStubForGroupUpdate) RemoveGroupFromUserAllowedGroups(context.Co
 
 // apiKeyRepoStubForGroupUpdate implements APIKeyRepository for AdminUpdateAPIKeyGroupID tests.
 type apiKeyRepoStubForGroupUpdate struct {
-	key       *APIKey
-	getErr    error
-	updateErr error
-	updated   *APIKey // captures what was passed to Update
+	key                 *APIKey
+	getErr              error
+	updateErr           error
+	enterpriseAssigned  bool
+	enterpriseDedicated bool
+	updated             *APIKey // captures what was passed to Update
 }
 
 func (s *apiKeyRepoStubForGroupUpdate) GetByID(_ context.Context, _ int64) (*APIKey, error) {
@@ -151,6 +153,12 @@ func (s *apiKeyRepoStubForGroupUpdate) Update(_ context.Context, key *APIKey, _ 
 	clone := *key
 	s.updated = &clone
 	return nil
+}
+func (s *apiKeyRepoStubForGroupUpdate) IsEnterpriseAssigned(context.Context, int64) (bool, error) {
+	return s.enterpriseAssigned, nil
+}
+func (s *apiKeyRepoStubForGroupUpdate) IsEnterpriseDedicatedUser(context.Context, int64) (bool, error) {
+	return s.enterpriseDedicated, nil
 }
 
 // Unused methods – panic on unexpected call.
@@ -307,6 +315,38 @@ func TestAdminService_AdminUpdateAPIKeyGroupID_KeyNotFound(t *testing.T) {
 
 	_, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 999, int64Ptr(1))
 	require.ErrorIs(t, err, ErrAPIKeyNotFound)
+}
+
+func TestAdminService_AdminUpdateAPIKeyGroupID_RejectsEnterpriseAssignedKey(t *testing.T) {
+	repo := &apiKeyRepoStubForGroupUpdate{
+		key:                &APIKey{ID: 1, Key: "sk-enterprise-key"},
+		enterpriseAssigned: true,
+	}
+	svc := &adminServiceImpl{apiKeyRepo: repo}
+
+	_, err := svc.AdminUpdateAPIKeyGroupID(context.Background(), 1, int64Ptr(10))
+	require.ErrorIs(t, err, ErrInsufficientPerms)
+	require.Nil(t, repo.updated)
+}
+
+func TestAdminService_AdminResetAPIKeyRateLimitUsage_RejectsEnterpriseAssignedKey(t *testing.T) {
+	repo := &apiKeyRepoStubForGroupUpdate{
+		key:                &APIKey{ID: 1, Key: "sk-enterprise-key"},
+		enterpriseAssigned: true,
+	}
+	svc := &adminServiceImpl{apiKeyRepo: repo}
+
+	_, err := svc.AdminResetAPIKeyRateLimitUsage(context.Background(), 1)
+	require.ErrorIs(t, err, ErrInsufficientPerms)
+	require.Nil(t, repo.updated)
+}
+
+func TestAdminService_ReplaceUserGroup_RejectsEnterpriseDedicatedUser(t *testing.T) {
+	repo := &apiKeyRepoStubForGroupUpdate{enterpriseDedicated: true}
+	svc := &adminServiceImpl{apiKeyRepo: repo}
+
+	_, err := svc.ReplaceUserGroup(context.Background(), 7, 10, 11)
+	require.ErrorIs(t, err, ErrInsufficientPerms)
 }
 
 func TestAdminService_AdminUpdateAPIKeyGroupID_NilGroupID_NoOp(t *testing.T) {

@@ -50,6 +50,70 @@ func TestBatchImageRepository_CreateJobAndDuplicates(t *testing.T) {
 	require.True(t, errors.Is(err, service.ErrBatchImageJobExists))
 }
 
+func TestBatchImageRepository_SuccessorKeyKeepsSameEmployeeAccess(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+	tx := testTx(t)
+	repo := newBatchImageRepositoryWithSQL(tx)
+	batchID := batchImageTestID(t, "successor-owner")
+	oldKeyID := fixture.apiKeyID
+	employeeID := fixture.employeeID
+	job, err := repo.CreateBatchImageJob(ctx, service.CreateBatchImageJobParams{
+		BatchID:   batchID,
+		UserID:    fixture.enterpriseUserID,
+		APIKeyID:  &oldKeyID,
+		Provider:  service.BatchImageProviderGeminiAPI,
+		Model:     "gemini-2.5-flash-image",
+		Status:    service.BatchImageJobStatusCompleted,
+		ItemCount: 1,
+		EnterpriseAttribution: &service.EnterpriseUsageAttributionSnapshot{
+			EnterpriseID: fixture.enterpriseID,
+			EmployeeID:   &employeeID,
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM batch_image_jobs WHERE batch_id = $1", batchID)
+	})
+
+	_, err = integrationDB.ExecContext(ctx, `
+		UPDATE enterprise_key_assignments
+		SET status = 'ended', ended_at = NOW()
+		WHERE api_key_id = $1 AND status = 'active'
+	`, fixture.apiKeyID)
+	require.NoError(t, err)
+	successorID := insertAPIKeyForUser(t, ctx, fixture.enterpriseUserID, fixture.groupID, "batch-successor")
+	_, err = integrationDB.ExecContext(ctx, `
+		INSERT INTO enterprise_key_assignments (
+			enterprise_id, employee_id, api_key_id, upstream_user_subscription_id,
+			upstream_group_id, status, actor_ref
+		) VALUES ($1, $2, $3, $4, $5, 'active', 'test:batch-successor')
+	`, fixture.enterpriseID, fixture.employeeID, successorID, fixture.upstreamSubscriptionID, fixture.groupID)
+	require.NoError(t, err)
+
+	got, err := repo.GetBatchImageJobByBatchIDForOwner(ctx, fixture.enterpriseUserID, successorID, batchID)
+	require.NoError(t, err)
+	require.Equal(t, job.BatchID, got.BatchID)
+	jobs, err := repo.ListBatchImageJobsForOwner(ctx, fixture.enterpriseUserID, successorID, service.BatchImageJobFilter{})
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+
+	otherKeyID := insertAPIKeyForUser(t, ctx, fixture.enterpriseUserID, fixture.groupID, "batch-other")
+	_, err = integrationDB.ExecContext(ctx, `
+		INSERT INTO enterprise_key_assignments (
+			enterprise_id, employee_id, api_key_id, upstream_user_subscription_id,
+			upstream_group_id, status, actor_ref
+		) VALUES ($1, $2, $3, $4, $5, 'active', 'test:batch-other')
+	`, fixture.enterpriseID, fixture.secondEmployee, otherKeyID, fixture.upstreamSubscriptionID, fixture.groupID)
+	require.NoError(t, err)
+	_, err = repo.GetBatchImageJobByBatchIDForOwner(ctx, fixture.enterpriseUserID, otherKeyID, batchID)
+	require.ErrorIs(t, err, service.ErrBatchImageJobNotFound)
+
+	ordinaryKeyID := insertAPIKeyForUser(t, ctx, fixture.enterpriseUserID, fixture.groupID, "batch-ordinary")
+	_, err = repo.GetBatchImageJobByBatchIDForOwner(ctx, fixture.enterpriseUserID, ordinaryKeyID, batchID)
+	require.ErrorIs(t, err, service.ErrBatchImageJobNotFound)
+}
+
 func TestBatchImageRepository_InvalidProvider(t *testing.T) {
 	tx := testTx(t)
 	repo := newBatchImageRepositoryWithSQL(tx)
@@ -343,6 +407,41 @@ func TestBatchImageRepository_AppendEvent(t *testing.T) {
 	err = tx.QueryRowContext(ctx, `SELECT payload::text FROM batch_image_events WHERE job_id = $1 AND event_type = 'job_created'`, batchID).Scan(&payload)
 	require.NoError(t, err)
 	require.Contains(t, payload, batchID)
+}
+
+func TestBatchImageRepositoryPersistsEnterpriseAttributionSnapshot(t *testing.T) {
+	ctx := context.Background()
+	tx := testTx(t)
+	repo := newBatchImageRepositoryWithSQL(tx)
+	employeeID := int64(55)
+	anchor := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	weeklyAnchor := anchor.Add(7 * 24 * time.Hour)
+	monthlyAnchor := anchor.Add(18 * 24 * time.Hour)
+	snapshot := &service.EnterpriseUsageAttributionSnapshot{
+		EnterpriseID:         66,
+		SubscriptionID:       77,
+		EmployeeID:           &employeeID,
+		AssignmentGeneration: 3,
+		Classification:       "employee",
+		RequestAt:            anchor.Add(time.Hour),
+		DailyWindowAnchor:    &anchor,
+		WeeklyWindowAnchor:   &weeklyAnchor,
+		MonthlyWindowAnchor:  &monthlyAnchor,
+	}
+	batchID := batchImageTestID(t, "attribution-snapshot")
+	_, err := repo.CreateBatchImageJob(ctx, service.CreateBatchImageJobParams{
+		BatchID:               batchID,
+		UserID:                1001,
+		Provider:              service.BatchImageProviderGeminiAPI,
+		Model:                 "gemini-2.5-flash-image",
+		ItemCount:             1,
+		EnterpriseAttribution: snapshot,
+	})
+	require.NoError(t, err)
+
+	loaded, err := repo.GetBatchImageJobByBatchID(ctx, batchID)
+	require.NoError(t, err)
+	require.Equal(t, snapshot, loaded.EnterpriseAttribution)
 }
 
 func batchImageTestID(t *testing.T, prefix string) string {

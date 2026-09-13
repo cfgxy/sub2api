@@ -1298,6 +1298,9 @@ func cleanupEnterpriseFixture(t *testing.T, enterpriseID, userID int64, suffix s
 		query string
 		args  []any
 	}{
+		{"DELETE FROM enterprise_key_lifecycle_idempotency WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_refresh_tokens WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"DELETE FROM enterprise_sessions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_usage_attributions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM usage_logs WHERE user_id = $1", []any{userID}},
 		{"DELETE FROM enterprise_allocation_revisions WHERE enterprise_id = $1", []any{enterpriseID}},
@@ -1309,6 +1312,7 @@ func cleanupEnterpriseFixture(t *testing.T, enterpriseID, userID int64, suffix s
 		{"DELETE FROM enterprise_employees WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_departments WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprises WHERE id = $1", []any{enterpriseID}},
+		{"DELETE FROM api_key_revoked_credential_reservations WHERE api_key_id IN (SELECT id FROM api_keys WHERE user_id = $1)", []any{userID}},
 		{"DELETE FROM api_keys WHERE user_id = $1", []any{userID}},
 		{`WITH deleted AS (
 			DELETE FROM user_subscriptions WHERE user_id = $1 RETURNING group_id

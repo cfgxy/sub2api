@@ -488,11 +488,15 @@ type subscriptionInvalidateCall struct {
 }
 
 type billingCacheStub struct {
-	invalidations chan subscriptionInvalidateCall
+	invalidations          chan subscriptionInvalidateCall
+	rateLimitInvalidations chan int64
 }
 
 func newBillingCacheStub(buffer int) *billingCacheStub {
-	return &billingCacheStub{invalidations: make(chan subscriptionInvalidateCall, buffer)}
+	return &billingCacheStub{
+		invalidations:          make(chan subscriptionInvalidateCall, buffer),
+		rateLimitInvalidations: make(chan int64, buffer),
+	}
 }
 
 func (s *billingCacheStub) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
@@ -538,7 +542,8 @@ func (s *billingCacheStub) UpdateAPIKeyRateLimitUsage(ctx context.Context, keyID
 	panic("unexpected UpdateAPIKeyRateLimitUsage call")
 }
 func (s *billingCacheStub) InvalidateAPIKeyRateLimit(ctx context.Context, keyID int64) error {
-	panic("unexpected InvalidateAPIKeyRateLimit call")
+	s.rateLimitInvalidations <- keyID
+	return nil
 }
 
 func (s *billingCacheStub) GetUserPlatformQuotaCache(ctx context.Context, userID int64, platform string) (*UserPlatformQuotaCacheEntry, bool, error) {
@@ -591,6 +596,16 @@ func TestAdminService_DeleteUser_Success(t *testing.T) {
 	err := svc.DeleteUser(context.Background(), 7)
 	require.NoError(t, err)
 	require.Equal(t, []int64{7}, repo.deletedIDs)
+}
+
+func TestAdminService_DeleteUser_RejectsEnterpriseDedicatedUser(t *testing.T) {
+	userRepo := &userRepoStub{user: &User{ID: 7, Role: RoleUser}}
+	apiKeyRepo := &apiKeyRepoStub{enterpriseDedicated: true}
+	svc := &adminServiceImpl{userRepo: userRepo, apiKeyRepo: apiKeyRepo}
+
+	err := svc.DeleteUser(context.Background(), 7)
+	require.ErrorIs(t, err, ErrInsufficientPerms)
+	require.Empty(t, userRepo.deletedIDs)
 }
 
 func TestAdminService_DeleteUser_DeletesOwnedAPIKeys(t *testing.T) {

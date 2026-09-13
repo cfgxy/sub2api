@@ -118,7 +118,7 @@ func newMockService(t *testing.T) (*Service, sqlmock.Sqlmock) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	return NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil), mock
+	return NewService(db, &config.Config{JWT: config.JWTConfig{Secret: "0123456789abcdef0123456789abcdef"}}, nil, nil, nil), mock
 }
 
 func TestInspectBrandImageAllowsJPEGPNGAndWebP(t *testing.T) {
@@ -579,6 +579,7 @@ func TestTerminateEmployeeReleasesEmailForNewEmployeeID(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE enterprise_employees SET status = 'terminated'").WithArgs(int64(1), int64(10)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT assignment.api_key_id, api_key.key").WithArgs(int64(1), int64(10)).WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key"}))
 	mock.ExpectExec("UPDATE enterprise_sessions SET revoked_at").WithArgs(int64(1), int64(10)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, svc.TerminateEmployee(context.Background(), 1, 10))

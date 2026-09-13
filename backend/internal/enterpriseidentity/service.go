@@ -23,6 +23,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/enterprise"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	platformservice "github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/golang-jwt/jwt/v5"
@@ -65,6 +66,10 @@ type PasswordResetMailer interface {
 	SendEmail(ctx context.Context, to, subject, body string) error
 }
 
+type APIKeyAuthCacheInvalidator interface {
+	InvalidateAuthCacheByKey(ctx context.Context, key string)
+}
+
 type BrandObjectStorage interface {
 	Save(ctx context.Context, key, contentType string, data []byte) (string, error)
 	Load(ctx context.Context, key string) ([]byte, string, error)
@@ -81,6 +86,7 @@ type Service struct {
 	db                   *sql.DB
 	secret               []byte
 	mailer               PasswordResetMailer
+	authCacheInvalidator APIKeyAuthCacheInvalidator
 	brandStorage         BrandObjectStorage
 	brandStorageResolver func() (BrandObjectStorage, bool)
 	now                  func() time.Time
@@ -164,12 +170,12 @@ type BrandInput struct {
 	BackgroundSize        int64  `json:"background_size_bytes"`
 }
 
-func NewService(db *sql.DB, cfg *config.Config, mailer *platformservice.EmailService, imageStorageSettings *platformservice.ImageStorageSettingService) *Service {
+func NewService(db *sql.DB, cfg *config.Config, mailer *platformservice.EmailService, imageStorageSettings *platformservice.ImageStorageSettingService, authCacheInvalidator APIKeyAuthCacheInvalidator) *Service {
 	secret := ""
 	if cfg != nil {
 		secret = cfg.JWT.Secret
 	}
-	service := &Service{db: db, secret: []byte(secret), now: time.Now}
+	service := &Service{db: db, secret: []byte(secret), authCacheInvalidator: authCacheInvalidator, now: time.Now}
 	if mailer != nil {
 		service.mailer = mailer
 	}
@@ -816,7 +822,13 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 	if status != "active" && status != "disabled" {
 		return infraerrors.BadRequest("INVALID_EMPLOYEE_STATUS", "employee status is invalid")
 	}
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees SET status = $1, department_id = $2,
 		    disabled_at = CASE WHEN $1::varchar = 'disabled' THEN NOW() ELSE NULL END,
 		    auth_version = CASE WHEN status IS DISTINCT FROM $1 THEN auth_version + 1 ELSE auth_version END,
@@ -830,10 +842,22 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 	if n, _ := result.RowsAffected(); n == 0 {
 		return errNotFound
 	}
+	var revokedKeys []string
 	if status == "disabled" {
-		_, err = s.db.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2`, enterpriseID, employeeID)
+		revokedKeys, err = revokeEmployeeActiveKeys(ctx, tx, enterpriseID, employeeID, "enterprise_employee_disabled")
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2`, enterpriseID, employeeID)
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateAuthCacheByKeys(ctx, revokedKeys)
+	return nil
 }
 
 func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeID int64) error {
@@ -853,10 +877,120 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 	if n, _ := result.RowsAffected(); n == 0 {
 		return errNotFound
 	}
+	revokedKeys, err := revokeEmployeeActiveKeys(ctx, tx, enterpriseID, employeeID, "enterprise_employee_terminated")
+	if err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2`, enterpriseID, employeeID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateAuthCacheByKeys(ctx, revokedKeys)
+	return nil
+}
+
+func revokeEmployeeActiveKeys(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64, actorRef string) ([]string, error) {
+	type activeKey struct {
+		id  int64
+		key string
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT assignment.api_key_id, api_key.key
+		FROM enterprise_key_assignments AS assignment
+		JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2 AND assignment.status = 'active'
+		ORDER BY assignment.api_key_id`, enterpriseID, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]activeKey, 0, 1)
+	for rows.Next() {
+		var key activeKey
+		if err := rows.Scan(&key.id, &key.key); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	revokedKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if err := lockEnterpriseKeyCredential(ctx, tx, key.key); err != nil {
+			return nil, err
+		}
+		var lockedKey string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT api_key.key
+			FROM enterprise_key_assignments AS assignment
+			JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+			WHERE assignment.enterprise_id = $1
+			  AND assignment.employee_id = $2
+			  AND assignment.api_key_id = $3
+			  AND assignment.status = 'active'
+			  AND api_key.key = $4
+			FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID, key.id, key.key).Scan(&lockedKey); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, errConflict
+			}
+			return nil, err
+		}
+		result, err := tx.ExecContext(ctx, `
+			UPDATE enterprise_key_assignments
+			SET status = 'revoked', ended_at = NOW(), revoked_at = NOW(), actor_ref = $3, updated_at = NOW()
+			WHERE enterprise_id = $1 AND employee_id = $2 AND api_key_id = $4 AND status = 'active'`,
+			enterpriseID, employeeID, actorRef, key.id)
+		if err != nil {
+			return nil, err
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errConflict
+		}
+		result, err = tx.ExecContext(ctx, `
+			UPDATE api_keys
+			SET key = ':revoked:' || id::text, status = 'disabled', updated_at = NOW()
+			WHERE id = $1`, key.id)
+		if err != nil {
+			return nil, err
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			if err != nil {
+				return nil, err
+			}
+			return nil, errNotFound
+		}
+		revokedKeys = append(revokedKeys, key.key)
+	}
+	return revokedKeys, nil
+}
+
+func lockEnterpriseKeyCredential(ctx context.Context, tx *sql.Tx, credential string) error {
+	if strings.TrimSpace(credential) == "" {
+		return errConflict
+	}
+	fingerprint := enterprise.EmployeeKeyCredentialFingerprint(credential)
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, fingerprint)
+	return err
+}
+
+func (s *Service) invalidateAuthCacheByKeys(ctx context.Context, keys []string) {
+	if s.authCacheInvalidator == nil {
+		return
+	}
+	for _, key := range keys {
+		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, key)
+	}
 }
 
 func (s *Service) GetBrand(ctx context.Context, enterpriseID int64) (*BrandInput, error) {

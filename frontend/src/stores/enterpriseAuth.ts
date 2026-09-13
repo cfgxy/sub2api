@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { enterpriseAPI, onEnterpriseAuthSession, syncEnterpriseAuthSession } from '@/api/enterprise'
+import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, onEnterpriseAuthSession, syncEnterpriseAuthSession } from '@/api/enterprise'
 import type { EnterprisePrincipal, EnterpriseTokenPair } from '@/types/enterprise'
 
 const ACCESS_KEY = 'enterprise_access_token'
@@ -39,6 +39,7 @@ export const useEnterpriseAuthStore = defineStore('enterprise-auth', () => {
   }
 
   function clear() {
+    clearEnterpriseKeyMutationRetryState()
     accessToken.value = null
     refreshToken.value = null
     principal.value = null

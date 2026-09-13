@@ -15,8 +15,9 @@ import (
 
 type updateFieldsAPIKeyRepoStub struct {
 	quotaBaseAPIKeyRepoStub
-	key          *APIKey
-	updateFields []APIKeyUpdateFields
+	key                *APIKey
+	enterpriseAssigned bool
+	updateFields       []APIKeyUpdateFields
 }
 
 // IncrementQuotaUsed 模拟计费热路径上的原子递增：只动 quota_used。
@@ -28,6 +29,10 @@ func (s *updateFieldsAPIKeyRepoStub) IncrementQuotaUsed(_ context.Context, _ int
 func (s *updateFieldsAPIKeyRepoStub) GetByID(context.Context, int64) (*APIKey, error) {
 	clone := *s.key
 	return &clone, nil
+}
+
+func (s *updateFieldsAPIKeyRepoStub) IsEnterpriseAssigned(context.Context, int64) (bool, error) {
+	return s.enterpriseAssigned, nil
 }
 
 func (s *updateFieldsAPIKeyRepoStub) Update(_ context.Context, _ *APIKey, fields APIKeyUpdateFields) error {
@@ -91,6 +96,18 @@ func TestAPIKeyUpdate_OnlyDeclaresRequestedColumns(t *testing.T) {
 			require.Equal(t, []APIKeyUpdateFields{tt.want}, repo.updateFields)
 		})
 	}
+}
+
+func TestAPIKeyUpdate_RejectsEnterpriseAssignedKey(t *testing.T) {
+	name := "renamed"
+	svc, repo := newUpdateFieldsAPIKeyService(&APIKey{
+		ID: 1, UserID: 7, Key: "sk-enterprise-key", Status: StatusActive,
+	})
+	repo.enterpriseAssigned = true
+
+	_, err := svc.Update(context.Background(), 1, 7, UpdateAPIKeyRequest{Name: &name})
+	require.ErrorIs(t, err, ErrInsufficientPerms)
+	require.Empty(t, repo.updateFields)
 }
 
 // 显式重置仍需声明对应的列，避免收窄写入列时把功能改坏。

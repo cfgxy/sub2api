@@ -212,8 +212,8 @@ func newEnterpriseJWTAllocationRouteTestRouter(t *testing.T, store handler.Enter
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	identityService := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: enterpriseAllocationJWTSecret}}, nil, nil)
-	identityHandler := enterpriseidentity.NewHandler(identityService, nil)
+	identityService := enterpriseidentity.NewService(db, &config.Config{JWT: config.JWTConfig{Secret: enterpriseAllocationJWTSecret}}, nil, nil, nil)
+	identityHandler := enterpriseidentity.NewHandler(identityService, nil, nil, nil)
 
 	jwtAuth := middleware.JWTAuthMiddleware(func(c *gin.Context) {
 		if c.GetHeader("Authorization") != "Bearer route-test" {
