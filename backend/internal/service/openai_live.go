@@ -478,15 +478,23 @@ func (s *OpenAIGatewayService) GetLiveCallForIdentity(
 		return nil, err
 	}
 	if record.CallID != callID ||
-		record.APIKeyID != identity.APIKeyID ||
 		record.UserID != identity.UserID ||
-		record.GroupID != liveGroupID(identity.GroupID) {
+		record.GroupID != liveGroupID(identity.GroupID) ||
+		(record.APIKeyID != identity.APIKeyID && !sameLiveEnterpriseEmployee(record.EnterpriseAttribution, identity.EnterpriseAttribution)) {
 		return nil, ErrLiveIdentityMismatch
 	}
 	if record.Controller == LiveControllerClosed {
 		return nil, ErrLiveCallNotFound
 	}
 	return record, nil
+}
+
+func sameLiveEnterpriseEmployee(record, current *EnterpriseUsageAttributionSnapshot) bool {
+	if record == nil || current == nil || record.EnterpriseID <= 0 || current.EnterpriseID <= 0 ||
+		record.EnterpriseID != current.EnterpriseID || record.EmployeeID == nil || current.EmployeeID == nil {
+		return false
+	}
+	return *record.EmployeeID > 0 && *record.EmployeeID == *current.EmployeeID
 }
 
 // ProxyLiveSideband 让认证后的客户端接管控制连接；媒体始终不经过这里。

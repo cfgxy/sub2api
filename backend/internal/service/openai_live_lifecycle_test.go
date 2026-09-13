@@ -365,6 +365,50 @@ func TestGetLiveCallForIdentityRejectsMismatchedCaller(t *testing.T) {
 	require.Equal(t, record.AccountID, loaded.AccountID)
 }
 
+func TestGetLiveCallForIdentityAllowsSameEmployeeSuccessorKey(t *testing.T) {
+	groupID := int64(44)
+	employeeID := int64(504)
+	record := &LiveCallRecord{
+		CallID:     "call_successor",
+		CallHash:   hashLiveCallID("call_successor"),
+		APIKeyID:   22,
+		UserID:     33,
+		GroupID:    groupID,
+		Controller: LiveControllerPending,
+		EnterpriseAttribution: &EnterpriseUsageAttributionSnapshot{
+			EnterpriseID: 505,
+			EmployeeID:   &employeeID,
+		},
+	}
+	store := &liveTestStore{}
+	require.NoError(t, store.SaveLiveCall(context.Background(), record, time.Hour))
+	service := &OpenAIGatewayService{cache: store}
+
+	loaded, err := service.GetLiveCallForIdentity(context.Background(), record.CallID, LiveCallIdentity{
+		APIKeyID: 99,
+		UserID:   record.UserID,
+		GroupID:  &groupID,
+		EnterpriseAttribution: &EnterpriseUsageAttributionSnapshot{
+			EnterpriseID: 505,
+			EmployeeID:   &employeeID,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, record.CallID, loaded.CallID)
+
+	otherEmployeeID := int64(506)
+	_, err = service.GetLiveCallForIdentity(context.Background(), record.CallID, LiveCallIdentity{
+		APIKeyID: 99,
+		UserID:   record.UserID,
+		GroupID:  &groupID,
+		EnterpriseAttribution: &EnterpriseUsageAttributionSnapshot{
+			EnterpriseID: 505,
+			EmployeeID:   &otherEmployeeID,
+		},
+	})
+	require.ErrorIs(t, err, ErrLiveIdentityMismatch)
+}
+
 func TestProxyLiveSidebandForwardsTextAndBinary(t *testing.T) {
 	account := &Account{
 		ID:          11,

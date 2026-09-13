@@ -230,6 +230,15 @@ func (h *OpenAIGatewayHandler) LiveSideband(c *gin.Context) {
 		UserID:   subject.UserID,
 		GroupID:  apiKey.GroupID,
 	}
+	if subscription, ok := middleware2.GetSubscriptionFromContext(c); ok && subscription != nil {
+		identity.EnterpriseAttribution = service.SnapshotEnterpriseUsageAttribution(
+			apiKey.EnterpriseAttributionIdentity,
+			time.Now(),
+			subscription.DailyWindowStart,
+			subscription.WeeklyWindowStart,
+			subscription.MonthlyWindowStart,
+		)
+	}
 	record, err := h.gatewayService.GetLiveCallForIdentity(c.Request.Context(), c.Param("call_id"), identity)
 	if err != nil {
 		if errors.Is(err, service.ErrLiveIdentityMismatch) {

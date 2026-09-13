@@ -70,7 +70,8 @@ func (r *batchImageRepository) GetBatchImageJobByIdempotencyKey(ctx context.Cont
 
 func (r *batchImageRepository) GetBatchImageJobByBatchIDForOwner(ctx context.Context, userID, apiKeyID int64, batchID string) (*service.BatchImageJob, error) {
 	job, err := scanBatchImageJob(r.sql.QueryRowContext(ctx, batchImageJobSelectSQL+`
- WHERE batch_id = $1 AND user_id = $2 AND api_key_id = $3 AND user_deleted_at IS NULL`, batchID, userID, apiKeyID))
+	 WHERE batch_id = $1 AND user_id = $2 AND user_deleted_at IS NULL AND `+
+		batchImageOwnerPredicate("$3"), batchID, userID, apiKeyID))
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrBatchImageJobNotFound, nil)
 	}
@@ -86,7 +87,7 @@ func (r *batchImageRepository) ListBatchImageJobsForOwner(ctx context.Context, u
 		filter.Offset = 0
 	}
 
-	query := batchImageJobSelectSQL + " WHERE user_id = $1 AND api_key_id = $2"
+	query := batchImageJobSelectSQL + " WHERE user_id = $1 AND " + batchImageOwnerPredicate("$2")
 	args := []any{userID, apiKeyID}
 	if filter.ExcludeDeleted {
 		query += " AND user_deleted_at IS NULL"
@@ -689,7 +690,7 @@ SET user_deleted_at = CASE WHEN user_deleted_at IS NULL THEN $4 ELSE user_delete
     updated_at = $4
 WHERE batch_id = $1
   AND user_id = $2
-  AND api_key_id = $3
+  AND `+batchImageOwnerPredicate("$3")+`
   AND user_deleted_at IS NULL
   AND status IN ('completed', 'failed', 'cancelled', 'output_deleted')`, batchID, userID, apiKeyID, deletedAt)
 	if err != nil {
@@ -817,6 +818,23 @@ func appendBatchImageEventWithSQL(ctx context.Context, sqlq batchImageSQLExecuto
 INSERT INTO batch_image_events (job_id, event_type, payload)
 VALUES ($1, $2, $3)`, batchID, eventType, payloadArg)
 	return err
+}
+
+// batchImageOwnerPredicate 保留普通 Key 的精确匹配，同时允许当前员工的 successor
+// Key 访问创建时冻结了同一 EmployeeID 的异步资源。普通 Key 没有活动 assignment，
+// 其他员工的 EmployeeID 与资源快照不一致，均无法通过该分支。
+func batchImageOwnerPredicate(apiKeyPlaceholder string) string {
+	return `(api_key_id = ` + apiKeyPlaceholder + ` OR (
+		enterprise_attribution_snapshot IS NOT NULL
+		AND enterprise_attribution_snapshot ->> 'EmployeeID' IS NOT NULL
+		AND EXISTS (
+			SELECT 1
+			FROM enterprise_key_assignments AS current_assignment
+			WHERE current_assignment.api_key_id = ` + apiKeyPlaceholder + `
+			  AND current_assignment.status = 'active'
+			  AND current_assignment.employee_id::text = enterprise_attribution_snapshot ->> 'EmployeeID'
+		)
+	))`
 }
 
 type rowScanner interface {
