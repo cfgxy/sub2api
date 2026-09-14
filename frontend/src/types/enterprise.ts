@@ -99,7 +99,18 @@ export interface EnterpriseWorkbenchSummary {
   total_requests: number
   employee_count: number
   active_employee_count: number
+  subscription_status: string
+  subscription_plan: string
+  enterprise_pool_limit: string
+  enterprise_pool_used: string
+  enterprise_pool_remaining: string
+  enterprise_pool_exhausted: boolean
+  pool_source_status: 'available' | 'unavailable'
+  pool_source: string
+  pool_window_type: string
+  pool_window_anchor?: string
   employee_summaries: EnterpriseWorkbenchEmployeeSummary[]
+  usage_trend: EnterpriseWorkbenchUsageTrendPoint[]
 }
 
 export interface EnterpriseWorkbenchEmployeeSummary {
@@ -109,6 +120,15 @@ export interface EnterpriseWorkbenchEmployeeSummary {
   requests: number
   usage_credit: string
   configured_credit?: string
+  remaining_credit: string
+  overage_credit: string
+  recommendation: string
+}
+
+export interface EnterpriseWorkbenchUsageTrendPoint {
+  at: string
+  requests: number
+  usage_credit: string
 }
 
 export interface EnterpriseWorkbenchUsageRow {
@@ -133,6 +153,8 @@ export interface EnterpriseWorkbenchAuditEvent {
   event_type: string
   entity_type: string
   entity_id?: number | null
+  result: string
+  reason?: string
   payload: Record<string, unknown>
   actor_ref: string
   created_at: string

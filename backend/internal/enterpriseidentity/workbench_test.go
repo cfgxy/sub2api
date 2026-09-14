@@ -66,20 +66,54 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
 	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*attribution\.window_type = 'week'.*allocation\.subscription_id = usage\.subscription_id.*allocation\.window_type = usage\.window_type.*allocation\.window_anchor = usage\.window_anchor`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit"}).
-			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75"))
+		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
+			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75", "9.75", "0"))
+	mock.ExpectQuery(`SELECT CASE WHEN enterprise_subscription\.id IS NULL`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"source_status", "plan", "subscription_status", "pool_limit", "pool_used", "pool_remaining", "pool_exhausted", "pool_anchor"}).
+			AddRow("available", "Business", "active", "100", "2.75", "97.25", false, time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)))
+	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "usage_credit"}).AddRow(time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), int64(3), "2.75"))
 
 	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
 	require.NoError(t, err)
 	require.Equal(t, "2.75", result.TotalUsageCredit)
 	require.Equal(t, int64(3), result.TotalRequests)
+	require.Equal(t, "100", result.EnterprisePoolLimit)
+	require.Equal(t, "97.25", result.EnterprisePoolRemaining)
 	require.Len(t, result.EmployeeSummaries, 1)
 	require.Equal(t, int64(3), result.EmployeeSummaries[0].Requests)
 	require.Equal(t, "12.50", result.EmployeeSummaries[0].ConfiguredCredit)
+	require.Equal(t, "9.75", result.EmployeeSummaries[0].RemainingCredit)
+	require.Equal(t, "0", result.EmployeeSummaries[0].OverageCredit)
+	require.Equal(t, "available", result.PoolSourceStatus)
+	require.Len(t, result.UsageTrend, 1)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSanitizeAuditActorRefRemovesLegacySessionIdentifiers(t *testing.T) {
 	require.Equal(t, "enterprise_actor", sanitizeAuditActorRef("enterprise_session:legacy-session-id"))
 	require.Equal(t, "enterprise_employee:22", sanitizeAuditActorRef("enterprise_employee:22"))
+}
+
+func TestListAuditEventsFiltersOperatorResultReasonAndSearch(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	query := workbenchQuery{Page: 1, PageSize: 20, WindowType: "week"}
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE`).
+		WithArgs(int64(7), "week", "enterprise_admin", "failure", "disabled", "rotate").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`(?s)SELECT id, event_type, entity_type, entity_id,.*COALESCE\(payload->>'result'`).
+		WithArgs(int64(7), "week", "enterprise_admin", "failure", "disabled", "rotate", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "event_type", "entity_type", "entity_id", "result", "reason", "payload", "actor_ref", "created_at"}).
+			AddRow(int64(1), "key.rotate", "api_key", int64(9), "failure", "disabled", []byte(`{"reason":"disabled"}`), "enterprise_admin", time.Now()))
+
+	items, total, err := handler.listAuditEvents(t.Context(), 7, query, "", "", "enterprise_admin", "failure", "disabled", "rotate")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, items, 1)
+	require.Equal(t, "failure", items[0].Result)
+	require.Equal(t, "disabled", items[0].Reason)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
