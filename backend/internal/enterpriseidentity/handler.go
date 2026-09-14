@@ -35,6 +35,7 @@ type Handler struct {
 	apiKeyService              employeeKeyGenerator
 	rateLimiter                *middleware.RateLimiter
 	resolveRateLimitEnterprise func(context.Context, string) (int64, error)
+	workbench                  *WorkbenchHandler
 }
 
 type employeeKeyStore interface {
@@ -50,6 +51,7 @@ type employeeKeyGenerator interface {
 
 func NewHandler(service *Service, keyRepository employeeKeyStore, apiKeyService employeeKeyGenerator, redisClient *redis.Client) *Handler {
 	h := &Handler{service: service, keyRepository: keyRepository, apiKeyService: apiKeyService, rateLimiter: middleware.NewRateLimiter(redisClient)}
+	h.workbench = NewWorkbenchHandler(h)
 	if service != nil {
 		h.resolveRateLimitEnterprise = func(ctx context.Context, host string) (int64, error) {
 			enterprise, err := service.enterpriseByHost(ctx, host)
@@ -96,6 +98,9 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.GET("/brand", h.getBrand)
 	admin.PUT("/brand", h.putBrand)
 	admin.POST("/brand/background", h.uploadBrandBackground)
+	if h.workbench != nil {
+		h.workbench.registerRoutes(admin)
+	}
 }
 
 func (h *Handler) registerPublicAuthRoute(root *gin.RouterGroup, path, key string, limit int, handler gin.HandlerFunc) {
@@ -447,7 +452,7 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 	params := enterprise.EmployeeKeyMutationParams{
 		EnterpriseID: claims.EnterpriseID, EmployeeID: claims.PrincipalID,
 		ExpectedAPIKeyID: req.ExpectedAPIKeyID, IdempotencyKey: idempotencyKey,
-		Plaintext: plaintext, ActorRef: "enterprise_session:" + claims.SessionID,
+		Plaintext: plaintext, ActorRef: fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID),
 	}
 	var result *enterprise.EmployeeKeyMutationResult
 	var err error

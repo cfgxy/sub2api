@@ -30,6 +30,7 @@ const auth = useEnterpriseAuthStore()
 const router = useRouter()
 const route = useRoute()
 const navigation = computed(() => auth.isAdmin ? [
+  { path: '/enterprise/admin/workbench', label: '用量工作台', icon: 'chartBar' as const },
   { path: '/enterprise/admin/employees', label: '员工', icon: 'users' as const },
   { path: '/enterprise/admin/departments', label: '部门', icon: 'grid' as const },
   { path: '/enterprise/admin/brand', label: '品牌', icon: 'sparkles' as const },

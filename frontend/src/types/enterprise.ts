@@ -93,3 +93,55 @@ export interface EnterpriseEmployeeKeyMutationResult {
   plaintext?: string
   replayed: boolean
 }
+
+export interface EnterpriseWorkbenchSummary {
+  total_usage_credit: string
+  total_requests: number
+  employee_count: number
+  active_employee_count: number
+  employee_summaries: EnterpriseWorkbenchEmployeeSummary[]
+}
+
+export interface EnterpriseWorkbenchEmployeeSummary {
+  employee_id: number
+  email: string
+  department_id?: number | null
+  requests: number
+  usage_credit: string
+  configured_credit?: string
+}
+
+export interface EnterpriseWorkbenchUsageRow {
+  attribution_id: number
+  usage_log_id: number
+  employee_id?: number | null
+  employee_email?: string
+  department_id?: number | null
+  api_key_id: number
+  api_key_masked: string
+  window_type: 'day' | 'week' | 'month'
+  window_anchor: string
+  request_at: string
+  classification: 'employee' | 'controlled_external'
+  assignment_generation: number
+  usage_credit: string
+  configured_credit: string
+}
+
+export interface EnterpriseWorkbenchAuditEvent {
+  id: number
+  event_type: string
+  entity_type: string
+  entity_id?: number | null
+  payload: Record<string, unknown>
+  actor_ref: string
+  created_at: string
+}
+
+export interface EnterprisePaginated<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
