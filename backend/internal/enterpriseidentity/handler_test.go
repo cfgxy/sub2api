@@ -140,7 +140,7 @@ func TestEmployeeKeyHandlersUseAuthenticatedEmployeeClaims(t *testing.T) {
 	require.Len(t, store.createParams, 1)
 	require.Equal(t, int64(11), store.createParams[0].EnterpriseID)
 	require.Equal(t, int64(22), store.createParams[0].EmployeeID)
-	require.Equal(t, "enterprise_session:session-1", store.createParams[0].ActorRef)
+	require.Equal(t, "enterprise_employee:22", store.createParams[0].ActorRef)
 	require.Contains(t, createRecorder.Body.String(), "test-generated-key")
 
 	rotateRecorder := httptest.NewRecorder()

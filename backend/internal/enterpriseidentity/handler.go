@@ -452,7 +452,7 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 	params := enterprise.EmployeeKeyMutationParams{
 		EnterpriseID: claims.EnterpriseID, EmployeeID: claims.PrincipalID,
 		ExpectedAPIKeyID: req.ExpectedAPIKeyID, IdempotencyKey: idempotencyKey,
-		Plaintext: plaintext, ActorRef: "enterprise_session:" + claims.SessionID,
+		Plaintext: plaintext, ActorRef: fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID),
 	}
 	var result *enterprise.EmployeeKeyMutationResult
 	var err error

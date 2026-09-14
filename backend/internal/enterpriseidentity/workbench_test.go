@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -48,4 +49,37 @@ func TestSanitizeAuditPayloadRemovesSensitiveFields(t *testing.T) {
 	require.Equal(t, "sk-abc...1234", payload["masked_key"])
 	require.NotContains(t, payload, "password")
 	require.NotContains(t, payload, "session_id")
+}
+
+func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+
+	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"total_usage_credit", "total_requests"}).AddRow("2.75", int64(3)))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`(?s)SELECT attribution\.employee_id.*allocation\.subscription_id = attribution\.subscription_id.*allocation\.window_type = attribution\.window_type.*allocation\.window_anchor = attribution\.window_anchor.*attribution\.window_type = 'week'`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit"}).
+			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75"))
+
+	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
+	require.NoError(t, err)
+	require.Equal(t, "2.75", result.TotalUsageCredit)
+	require.Equal(t, int64(3), result.TotalRequests)
+	require.Len(t, result.EmployeeSummaries, 1)
+	require.Equal(t, int64(3), result.EmployeeSummaries[0].Requests)
+	require.Equal(t, "12.50", result.EmployeeSummaries[0].ConfiguredCredit)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSanitizeAuditActorRefRemovesLegacySessionIdentifiers(t *testing.T) {
+	require.Equal(t, "enterprise_actor", sanitizeAuditActorRef("enterprise_session:legacy-session-id"))
+	require.Equal(t, "enterprise_employee:22", sanitizeAuditActorRef("enterprise_employee:22"))
 }

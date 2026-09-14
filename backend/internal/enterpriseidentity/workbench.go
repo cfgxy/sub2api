@@ -245,6 +245,9 @@ func buildWorkbenchUsageScope(enterpriseID int64, q workbenchQuery) workbenchSQL
 	}
 	if q.WindowType != "" {
 		add("attribution.window_type = $%d", q.WindowType)
+	} else {
+		// 一条请求会落三条窗口快照；未指定窗口时用周快照作为唯一统计口径。
+		conditions = append(conditions, "attribution.window_type = 'week'")
 	}
 	if q.WindowAnchor != nil {
 		add("attribution.window_anchor = $%d", *q.WindowAnchor)
@@ -291,7 +294,10 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	allocationArgs := append([]any{}, scope.args...)
 	allocationConditions := []string{
 		"allocation.enterprise_id = attribution.enterprise_id",
+		"allocation.subscription_id = attribution.subscription_id",
 		"allocation.employee_id = attribution.employee_id",
+		"allocation.window_type = attribution.window_type",
+		"allocation.window_anchor = attribution.window_anchor",
 	}
 	addAllocationFilter := func(condition string, value any) {
 		allocationArgs = append(allocationArgs, value)
@@ -323,7 +329,7 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	for rows.Next() {
 		var item WorkbenchEmployeeSummary
 		var departmentID sql.NullInt64
-		if err := rows.Scan(&item.EmployeeID, &item.Email, &departmentID, &item.ConfiguredCredit, &item.Requests, &item.UsageCredit); err != nil {
+		if err := rows.Scan(&item.EmployeeID, &item.Email, &departmentID, &item.Requests, &item.ConfiguredCredit, &item.UsageCredit); err != nil {
 			return nil, err
 		}
 		item.DepartmentID = nullableInt64(departmentID)
@@ -462,10 +468,18 @@ func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int
 			return nil, 0, err
 		}
 		item.EntityID = nullableInt64(entityID)
+		item.ActorRef = sanitizeAuditActorRef(item.ActorRef)
 		item.Payload = sanitizeAuditPayload(payload)
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func sanitizeAuditActorRef(actorRef string) string {
+	if strings.Contains(strings.ToLower(actorRef), "session") {
+		return "enterprise_actor"
+	}
+	return actorRef
 }
 
 func nullableInt64(value sql.NullInt64) *int64 {
