@@ -291,37 +291,7 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		return nil, err
 	}
 
-	allocationArgs := append([]any{}, scope.args...)
-	allocationConditions := []string{
-		"allocation.enterprise_id = attribution.enterprise_id",
-		"allocation.subscription_id = attribution.subscription_id",
-		"allocation.employee_id = attribution.employee_id",
-		"allocation.window_type = attribution.window_type",
-		"allocation.window_anchor = attribution.window_anchor",
-	}
-	addAllocationFilter := func(condition string, value any) {
-		allocationArgs = append(allocationArgs, value)
-		allocationConditions = append(allocationConditions, fmt.Sprintf(condition, len(allocationArgs)))
-	}
-	if q.WindowType != "" {
-		addAllocationFilter("allocation.window_type = $%d", q.WindowType)
-	}
-	if q.WindowAnchor != nil {
-		addAllocationFilter("allocation.window_anchor = $%d", *q.WindowAnchor)
-	}
-	configuredCredit := "COALESCE((SELECT SUM(allocation.amount)"
-	configuredCredit += " FROM enterprise_weekly_allocations AS allocation WHERE " + strings.Join(allocationConditions, " AND ") + "), 0)::text"
-	rows, err := h.owner.service.db.QueryContext(ctx, `
-		SELECT attribution.employee_id, COALESCE(employee.current_email, employee.email, ''), employee.department_id,
-		       COUNT(*), `+configuredCredit+`, COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0)::text
-		FROM enterprise_usage_attributions AS attribution
-		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
-		LEFT JOIN enterprise_employees AS employee
-		  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
-		WHERE `+scope.where+` AND attribution.employee_id IS NOT NULL
-		GROUP BY attribution.employee_id, employee.current_email, employee.email, employee.department_id
-		ORDER BY SUM(COALESCE(usage_log.actual_cost, 0)) DESC, attribution.employee_id
-		LIMIT 100`, allocationArgs...)
+	rows, err := h.owner.service.db.QueryContext(ctx, buildEmployeeSummaryQuery(scope), scope.args...)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +306,39 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		result.EmployeeSummaries = append(result.EmployeeSummaries, item)
 	}
 	return result, rows.Err()
+}
+
+func buildEmployeeSummaryQuery(scope workbenchSQLScope) string {
+	return `
+		WITH employee_window_usage AS (
+			SELECT attribution.enterprise_id, attribution.employee_id,
+			       COALESCE(employee.current_email, employee.email, '') AS email,
+			       employee.department_id, attribution.subscription_id,
+			       attribution.window_type, attribution.window_anchor,
+			       COUNT(*) AS requests,
+			       COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0) AS usage_credit
+			FROM enterprise_usage_attributions AS attribution
+			LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+			LEFT JOIN enterprise_employees AS employee
+			  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
+			WHERE ` + scope.where + ` AND attribution.employee_id IS NOT NULL
+			GROUP BY attribution.enterprise_id, attribution.employee_id,
+			         COALESCE(employee.current_email, employee.email, ''), employee.department_id,
+			         attribution.subscription_id, attribution.window_type, attribution.window_anchor
+		)
+		SELECT usage.employee_id, usage.email, usage.department_id,
+		       SUM(usage.requests), COALESCE(SUM(allocation.amount), 0)::text,
+		       COALESCE(SUM(usage.usage_credit), 0)::text
+		FROM employee_window_usage AS usage
+		LEFT JOIN enterprise_weekly_allocations AS allocation
+		  ON allocation.enterprise_id = usage.enterprise_id
+		 AND allocation.subscription_id = usage.subscription_id
+		 AND allocation.employee_id = usage.employee_id
+		 AND allocation.window_type = usage.window_type
+		 AND allocation.window_anchor = usage.window_anchor
+		GROUP BY usage.employee_id, usage.email, usage.department_id
+		ORDER BY SUM(usage.usage_credit) DESC, usage.employee_id
+		LIMIT 100`
 }
 
 func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q workbenchQuery) ([]WorkbenchUsageRow, int64, error) {

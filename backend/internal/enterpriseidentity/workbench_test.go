@@ -64,7 +64,7 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
-	mock.ExpectQuery(`(?s)SELECT attribution\.employee_id.*allocation\.subscription_id = attribution\.subscription_id.*allocation\.window_type = attribution\.window_type.*allocation\.window_anchor = attribution\.window_anchor.*attribution\.window_type = 'week'`).
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*attribution\.window_type = 'week'.*allocation\.subscription_id = usage\.subscription_id.*allocation\.window_type = usage\.window_type.*allocation\.window_anchor = usage\.window_anchor`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit"}).
 			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75"))
