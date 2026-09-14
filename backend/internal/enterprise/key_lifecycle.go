@@ -581,7 +581,7 @@ func nullableJSONParameter(value []byte) any {
 
 func writeEmployeeKeyAudit(ctx context.Context, tx *sql.Tx, params EmployeeKeyMutationParams, operation string, previous, result employeeKeyRow) error {
 	payload := map[string]any{
-		"api_key_id": result.ID, "masked_key": result.MaskedKey,
+		"employee_id": params.EmployeeID, "api_key_id": result.ID, "masked_key": result.MaskedKey,
 		"quota": result.Quota, "quota_used": result.QuotaUsed,
 		"rate_limit_5h": result.RateLimit5h, "rate_limit_1d": result.RateLimit1d, "rate_limit_7d": result.RateLimit7d,
 		"usage_5h": result.Usage5h, "usage_1d": result.Usage1d, "usage_7d": result.Usage7d,

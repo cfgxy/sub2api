@@ -10,8 +10,12 @@ import type {
   EnterpriseEmployeeKey,
   EnterpriseEmployeeKeyMutationResult,
   EnterprisePrincipal,
+  EnterprisePaginated,
   EnterpriseSession,
   EnterpriseTokenPair,
+  EnterpriseWorkbenchAuditEvent,
+  EnterpriseWorkbenchSummary,
+  EnterpriseWorkbenchUsageRow,
 } from '@/types/enterprise'
 
 const ACCESS_KEY = 'enterprise_access_token'
@@ -232,4 +236,7 @@ export const enterpriseAPI = {
       enterpriseClient.post('/enterprise/admin/brand/background', form, { headers: { 'Content-Type': 'multipart/form-data' } }),
     )
   },
+  getWorkbenchSummary: (params?: Record<string, string | number>) => data<EnterpriseWorkbenchSummary>(enterpriseClient.get('/enterprise/admin/workbench/summary', { params })),
+  listWorkbenchUsage: (params?: Record<string, string | number>) => data<EnterprisePaginated<EnterpriseWorkbenchUsageRow>>(enterpriseClient.get('/enterprise/admin/workbench/usage', { params })),
+  listWorkbenchAuditEvents: (params?: Record<string, string | number>) => data<EnterprisePaginated<EnterpriseWorkbenchAuditEvent>>(enterpriseClient.get('/enterprise/admin/workbench/audit-events', { params })),
 }
