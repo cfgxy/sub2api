@@ -7,6 +7,22 @@ export interface PlatformEnterprise {
   dedicated_upstream_user_id: number
   status: 'active' | 'disabled'
   created_at: string
+  admin_email: string
+  employee_count: number
+  active_employee_count: number
+  active_session_count: number
+  active_key_count: number
+  subscription?: PlatformSubscription
+}
+
+export interface PlatformSubscription {
+  id: number
+  status: string
+  plan: string
+  weekly_limit: string
+  weekly_window_start?: string
+  starts_at: string
+  expires_at: string
 }
 
 export const enterprisePlatformAPI = {

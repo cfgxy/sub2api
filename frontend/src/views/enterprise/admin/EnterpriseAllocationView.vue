@@ -3,7 +3,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { enterpriseAPI } from '@/api/enterprise'
-import type { EnterpriseEmployee } from '@/types/enterprise'
+import type { EnterpriseAllocationSummary, EnterpriseEmployee } from '@/types/enterprise'
 import { useRoute } from 'vue-router'
 import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
 
@@ -11,7 +11,7 @@ const auth = useEnterpriseAuthStore()
 const route = useRoute()
 const employees = ref<EnterpriseEmployee[]>([])
 const saving = ref(false)
-const summary = ref<Record<string, string>>()
+const summary = ref<EnterpriseAllocationSummary>()
 const form = reactive({ employee_id: Number(route.query.employee_id) || 0, subscription_id: 0, window_anchor: '', credit: '0', reason: '' })
 
 async function load() {
@@ -29,12 +29,17 @@ async function save() {
   }
   saving.value = true
   try {
+    const current = await enterpriseAPI.getAllocationSummary(form.subscription_id, form.employee_id, {
+      enterprise_id: auth.principal?.enterprise_id || 0,
+      window_type: 'week',
+      window_anchor: form.window_anchor,
+    })
     await enterpriseAPI.setAllocation(form.subscription_id, form.employee_id, {
       enterprise_id: auth.principal?.enterprise_id || 0,
       window_type: 'week',
       window_anchor: form.window_anchor,
       credit: form.credit,
-      expected_version: 0,
+      expected_version: current.allocation_version,
       reason: form.reason,
     })
     summary.value = await enterpriseAPI.getAllocationSummary(form.subscription_id, form.employee_id, {

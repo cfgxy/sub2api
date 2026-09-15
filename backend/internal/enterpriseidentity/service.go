@@ -157,12 +157,28 @@ type Enterprise struct {
 }
 
 type PlatformEnterprise struct {
-	ID                    int64     `json:"id"`
-	Name                  string    `json:"name"`
-	Host                  string    `json:"portal_host"`
-	DedicatedUpstreamUser int64     `json:"dedicated_upstream_user_id"`
-	Status                string    `json:"status"`
-	CreatedAt             time.Time `json:"created_at"`
+	ID                    int64                 `json:"id"`
+	Name                  string                `json:"name"`
+	Host                  string                `json:"portal_host"`
+	DedicatedUpstreamUser int64                 `json:"dedicated_upstream_user_id"`
+	Status                string                `json:"status"`
+	CreatedAt             time.Time             `json:"created_at"`
+	AdminEmail            string                `json:"admin_email"`
+	EmployeeCount         int64                 `json:"employee_count"`
+	ActiveEmployeeCount   int64                 `json:"active_employee_count"`
+	ActiveSessionCount    int64                 `json:"active_session_count"`
+	ActiveKeyCount        int64                 `json:"active_key_count"`
+	Subscription          *PlatformSubscription `json:"subscription,omitempty"`
+}
+
+type PlatformSubscription struct {
+	ID                int64      `json:"id"`
+	Status            string     `json:"status"`
+	Plan              string     `json:"plan"`
+	WeeklyLimit       string     `json:"weekly_limit"`
+	WeeklyWindowStart *time.Time `json:"weekly_window_start,omitempty"`
+	StartsAt          time.Time  `json:"starts_at"`
+	ExpiresAt         time.Time  `json:"expires_at"`
 }
 
 type CreateEnterpriseInput struct {
@@ -371,6 +387,42 @@ func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*Platfor
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errNotFound
 	}
+	if err != nil {
+		return nil, err
+	}
+	var subscriptionJSON []byte
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COALESCE((SELECT email FROM users WHERE id = e.admin_user_id), ''),
+		       (SELECT jsonb_build_object(
+					'id', es.id, 'status', es.status, 'plan', g.name,
+					'weekly_limit', COALESCE(g.weekly_limit_usd::text, ''),
+					'weekly_window_start', us.weekly_window_start,
+					'starts_at', us.starts_at, 'expires_at', us.expires_at
+				) FROM enterprise_subscriptions AS es
+				JOIN user_subscriptions AS us ON us.id = es.upstream_user_subscription_id
+				JOIN groups AS g ON g.id = us.group_id
+				WHERE es.enterprise_id = e.id AND es.status IN ('active', 'scheduled')
+				ORDER BY CASE WHEN es.status = 'active' THEN 0 ELSE 1 END, es.effective_window_anchor DESC
+				LIMIT 1)
+		FROM enterprises AS e WHERE e.id = $1`, id).Scan(&item.AdminEmail, &subscriptionJSON)
+	if err != nil {
+		return nil, err
+	}
+	if len(subscriptionJSON) > 0 {
+		item.Subscription = new(PlatformSubscription)
+		if err = json.Unmarshal(subscriptionJSON, item.Subscription); err != nil {
+			return nil, err
+		}
+	}
+	err = s.db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM enterprise_employees WHERE enterprise_id = $1),
+			(SELECT COUNT(*) FROM enterprise_employees WHERE enterprise_id = $1 AND status = 'active'),
+			(SELECT COUNT(*) FROM enterprise_sessions WHERE enterprise_id = $1 AND revoked_at IS NULL AND expires_at > NOW()),
+			(SELECT COUNT(*) FROM enterprise_key_assignments AS assignment
+			 JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+			 WHERE assignment.enterprise_id = $1 AND assignment.status = 'active' AND api_key.status = 'active')`, id).
+		Scan(&item.EmployeeCount, &item.ActiveEmployeeCount, &item.ActiveSessionCount, &item.ActiveKeyCount)
 	if err != nil {
 		return nil, err
 	}

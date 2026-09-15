@@ -58,6 +58,19 @@ export interface EnterpriseEmployeeUsageRecord {
   actual_cost: string
 }
 
+export interface EnterpriseAllocationSummary {
+  allocation_id: number
+  allocation_version: number
+  configured_credit: string
+  usage_credit: string
+  remaining_credit: string
+  overage_credit: string
+  allocated_total: string
+  authoritative_limit?: string | null
+  overallocated_by: string
+  warning?: string
+}
+
 export interface EnterpriseEmployeeHome {
   usage: EnterpriseEmployeeUsageSummary
   key: EnterpriseEmployeeKey | null

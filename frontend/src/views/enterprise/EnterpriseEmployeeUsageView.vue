@@ -4,7 +4,7 @@
     <el-alert v-if="usage?.source_status === 'unavailable'" type="warning" :closable="false" title="用量来源暂不可用" description="当前没有可核验的订阅窗口，未显示伪造的实时余额。" />
     <el-empty v-else-if="!loading && usage?.requests === 0" description="当前 weekly 窗口暂无调用记录" />
     <div v-if="usage" class="panel"><el-descriptions :column="2" border><el-descriptions-item label="窗口">weekly</el-descriptions-item><el-descriptions-item label="窗口锚点">{{ usage.window_anchor || '未获取' }}</el-descriptions-item><el-descriptions-item label="allocation">{{ usage.allocation }}</el-descriptions-item><el-descriptions-item label="actual cost">{{ usage.actual_cost }}</el-descriptions-item><el-descriptions-item label="remaining">{{ usage.remaining }}</el-descriptions-item><el-descriptions-item label="overage">{{ usage.overage }}</el-descriptions-item><el-descriptions-item label="请求数">{{ usage.requests }}</el-descriptions-item></el-descriptions></div>
-+    <div class="panel"><h2>调用明细</h2><el-table v-loading="loading" :data="records" stripe><el-table-column prop="request_at" label="请求时间"/><el-table-column prop="api_key_masked" label="Key"/><el-table-column prop="actual_cost" label="actual cost"/></el-table><el-empty v-if="!loading&&!records.length" description="当前 weekly 窗口暂无调用明细" /></div>
+    <div class="panel"><h2>调用明细</h2><el-table v-loading="loading" :data="records" stripe><el-table-column prop="request_at" label="请求时间"/><el-table-column prop="api_key_masked" label="Key"/><el-table-column prop="actual_cost" label="actual cost"/></el-table><el-empty v-if="!loading&&!records.length" description="当前 weekly 窗口暂无调用明细" /></div>
   </section>
 </template>
 <script setup lang="ts">

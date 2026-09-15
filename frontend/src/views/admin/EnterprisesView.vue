@@ -51,7 +51,16 @@ async function create() {
 
 async function disable(row: PlatformEnterprise) {
   try {
-    await ElMessageBox.confirm(`确认停用 ${row.name}？停用会拒绝新登录并保留历史记录。`, '停用企业', { type: 'warning' })
+    const impact = await enterprisePlatformAPI.get(row.id)
+    const subscription = impact.subscription
+    const subscriptionLabel = subscription
+      ? `${subscription.plan}（${subscription.status}，weekly 上限 ${subscription.weekly_limit || '未配置'}）`
+      : '无活动或待生效订阅'
+    await ElMessageBox.confirm(
+      `确认停用 ${row.name}？关联订阅：${subscriptionLabel}；员工 ${impact.employee_count} 人（在职 ${impact.active_employee_count} 人）；活动会话 ${impact.active_session_count} 个；活动 Key ${impact.active_key_count} 个。停用会拒绝新登录并撤销活动会话，保留历史记录。`,
+      '停用企业',
+      { type: 'warning' },
+    )
     await enterprisePlatformAPI.disable(row.id, '平台运营确认停用')
     ElMessage.success('企业已停用')
     await load()

@@ -5,6 +5,7 @@ import type {
   EmployeeUpdateInput,
   EnterpriseBrand,
   EnterpriseBrandUpdate,
+  EnterpriseAllocationSummary,
   EnterpriseDepartment,
   EnterpriseEmployee,
   EnterpriseEmployeeKey,
@@ -211,8 +212,8 @@ export const enterpriseAPI = {
   getEmployeeUsage: () => data<EnterpriseEmployeeUsageSummary>(enterpriseClient.get('/enterprise/usage/me')),
   listEmployeeUsage: () => data<EnterpriseEmployeeUsageRecord[]>(enterpriseClient.get('/enterprise/usage/me/details')),
   getEmployeeProfile: () => data<EnterpriseEmployee>(enterpriseClient.get('/enterprise/profile')),
-  setAllocation: (subscriptionId: number, employeeId: number, input: { enterprise_id: number; window_type: 'week'; window_anchor: string; credit: string; expected_version: number; reason: string }) => data<{ id: number }>(enterpriseClient.put(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, input)),
-  getAllocationSummary: (subscriptionId: number, employeeId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<Record<string, string>>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, { params })),
+  setAllocation: (subscriptionId: number, employeeId: number, input: { enterprise_id: number; window_type: 'week'; window_anchor: string; credit: string; expected_version: number; reason: string }) => data<{ id: number; version: number }>(enterpriseClient.put(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, input)),
+  getAllocationSummary: (subscriptionId: number, employeeId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationSummary>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, { params })),
   createKey: () => withEnterpriseKeyMutation('create', 0, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
     enterpriseClient.post('/enterprise/keys', undefined, idempotencyHeaders(idempotencyKey)),
   )),

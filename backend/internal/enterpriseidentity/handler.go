@@ -797,27 +797,31 @@ func (h *Handler) putBrand(c *gin.Context) {
 }
 
 func (h *Handler) uploadBrandBackground(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBrandBackgroundBytes+(1<<20))
 	fileHeader, err := c.FormFile("file")
 	if err != nil || fileHeader.Size <= 0 || fileHeader.Size > maxBrandBackgroundBytes {
 		response.ErrorFrom(c, errInvalidBrand)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "invalid_request")
 		return
 	}
 	file, err := fileHeader.Open()
 	if err != nil {
 		response.ErrorFrom(c, errInvalidBrand)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "rejected")
 		return
 	}
 	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxBrandBackgroundBytes+1))
 	if err != nil || int64(len(data)) > maxBrandBackgroundBytes {
 		response.ErrorFrom(c, errInvalidBrand)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "invalid_request")
 		return
 	}
-	claims := mustClaims(c)
-	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	asset, err := h.service.UploadBrandBackground(ctx, claims.EnterpriseID, c.PostForm("sha256"), data)
 	if response.ErrorFrom(c, err) {
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "rejected")
 		return
 	}
 	response.Success(c, asset)
@@ -837,29 +841,40 @@ func (h *Handler) listAdminKeys(c *gin.Context) {
 }
 
 func (h *Handler) revokeAdminKey(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	store, ok := h.keyRepository.(enterpriseAdminKeyStore)
 	if !ok {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, "rejected")
 		return
 	}
 	id, ok := pathID(c)
 	if !ok {
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, "invalid_request")
 		return
 	}
 	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 128 {
 		response.BadRequest(c, "Idempotency-Key header is required and must not exceed 128 characters")
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, "invalid_request")
 		return
 	}
-	claims := mustClaims(c)
-	result, err := store.RevokeEnterpriseKey(c.Request.Context(), claims.EnterpriseID, id, idempotencyKey, fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	result, err := store.RevokeEnterpriseKey(ctx, claims.EnterpriseID, id, idempotencyKey, auditActor(ctx))
 	if response.ErrorFrom(c, err) {
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, "rejected")
 		return
 	}
 	if result != nil {
 		result.Plaintext = ""
 	}
 	response.Success(c, result)
+}
+
+func (h *Handler) recordRejectedAudit(ctx context.Context, enterpriseID int64, eventType, entityType string, entityID *int64, reason string) {
+	if h.service != nil {
+		_ = h.service.RecordRejectedAuditEvent(ctx, enterpriseID, eventType, entityType, entityID, reason)
+	}
 }
 
 func bind(c *gin.Context, value any) bool {

@@ -99,6 +99,8 @@ type SetAllocationParams struct {
 }
 
 type AllocationUsageSummary struct {
+	AllocationID       int64   `json:"allocation_id"`
+	AllocationVersion  int64   `json:"allocation_version"`
 	ConfiguredCredit   string  `json:"configured_credit"`
 	UsageCredit        string  `json:"usage_credit"`
 	RemainingCredit    string  `json:"remaining_credit"`
@@ -618,13 +620,15 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 	}
 	err = r.db.QueryRowContext(ctx, `
 		WITH latest_configurations AS (
-			SELECT DISTINCT ON (employee_id) employee_id, amount
-			FROM enterprise_weekly_allocations
+				SELECT DISTINCT ON (employee_id) employee_id, id, amount, version
+				FROM enterprise_weekly_allocations
 			WHERE enterprise_id = $1 AND subscription_id = $2
 			  AND window_type = $5 AND window_anchor <= $3
 			ORDER BY employee_id, window_anchor DESC, version DESC
-			), configured AS (
-				SELECT COALESCE((SELECT amount FROM latest_configurations WHERE employee_id = $4), 0)::NUMERIC(20,8) AS amount
+				), configured AS (
+					SELECT COALESCE((SELECT id FROM latest_configurations WHERE employee_id = $4), 0) AS id,
+					       COALESCE((SELECT version FROM latest_configurations WHERE employee_id = $4), 0) AS version,
+					       COALESCE((SELECT amount FROM latest_configurations WHERE employee_id = $4), 0)::NUMERIC(20,8) AS amount
 		), allocation_total AS (
 			SELECT COALESCE(SUM(amount), 0)::NUMERIC(20,8) AS allocated_total
 			FROM latest_configurations
@@ -648,7 +652,7 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 			  AND attribution.window_type = $5
 			  AND attribution.classification = 'employee'
 		)
-		SELECT configured.amount::NUMERIC(20,8)::text,
+			SELECT configured.id, configured.version, configured.amount::NUMERIC(20,8)::text,
 		       usage_total.actual_cost::text,
 		       GREATEST(configured.amount - usage_total.actual_cost, 0)::NUMERIC(20,8)::text,
 		       GREATEST(usage_total.actual_cost - configured.amount, 0)::NUMERIC(20,8)::text,
@@ -659,8 +663,10 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 		FROM configured
 		CROSS JOIN usage_total
 		CROSS JOIN allocation_total
-	`, query.EnterpriseID, query.SubscriptionID, query.WindowAnchor.UTC(), query.EmployeeID,
+		`, query.EnterpriseID, query.SubscriptionID, query.WindowAnchor.UTC(), query.EmployeeID,
 		query.WindowType, authoritativeLimitArg).Scan(
+		&summary.AllocationID,
+		&summary.AllocationVersion,
 		&summary.ConfiguredCredit,
 		&summary.UsageCredit,
 		&summary.RemainingCredit,
