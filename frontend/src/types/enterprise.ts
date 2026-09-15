@@ -146,6 +146,7 @@ export interface EnterpriseWorkbenchSummary {
   total_requests: number
   employee_count: number
   active_employee_count: number
+  subscription_id?: number | null
   subscription_status: string
   subscription_plan: string
   enterprise_pool_limit: string
@@ -156,6 +157,9 @@ export interface EnterpriseWorkbenchSummary {
   pool_source: string
   pool_window_type: string
   pool_window_anchor?: string
+  pool_observed_at?: string
+  scheduled_subscription_plan?: string
+  scheduled_subscription_since?: string
   employee_summaries: EnterpriseWorkbenchEmployeeSummary[]
   usage_trend: EnterpriseWorkbenchUsageTrendPoint[]
 }
@@ -205,6 +209,32 @@ export interface EnterpriseWorkbenchAuditEvent {
   payload: Record<string, unknown>
   actor_ref: string
   created_at: string
+}
+
+export interface EnterpriseAllocationListItem {
+  employee_id: number
+  email: string
+  department_id?: number | null
+  allocation_id: number
+  allocation_version: number
+  configured_credit: string
+  usage_credit: string
+  remaining_credit: string
+  overage_credit: string
+  status: 'normal' | 'overage'
+}
+
+export interface EnterpriseAllocationListResult {
+  subscription_id: number
+  window_type: 'week'
+  window_anchor: string
+  authoritative_limit?: string | null
+  allocated_total: string
+  unallocated_total: string
+  overallocated_by: string
+  pool_source_status: 'available' | 'unavailable'
+  warning?: string
+  items: EnterpriseAllocationListItem[]
 }
 
 export interface EnterprisePaginated<T> {

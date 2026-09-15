@@ -23,7 +23,7 @@
       <article class="kpi-card">
         <span class="kpi-label">企业总池</span>
         <strong>{{ summary?.enterprise_pool_limit || '0' }}</strong>
-        <small>weekly 上游硬额度 · {{ poolSourceLabel }}</small>
+        <small>weekly 上游硬额度 · {{ poolSourceLabel }}{{ poolObservedAtLabel ? ` · ${poolObservedAtLabel}` : '' }}</small>
       </article>
       <article class="kpi-card">
         <span class="kpi-label">总池剩余</span>
@@ -44,6 +44,7 @@
       </div>
       <div class="status-chip is-neutral"><span class="status-dot" /><div><b>{{ summary?.employee_count || 0 }} 名员工有用量</b><small>在职员工 {{ summary?.active_employee_count || 0 }} 名</small></div></div>
       <div class="status-chip is-neutral"><span class="status-dot" /><div><b>统计窗口：weekly</b><small>窗口锚点 {{ formatOptionalDate(summary?.pool_window_anchor) }}</small></div></div>
+      <div v-if="summary?.scheduled_subscription_since" class="status-chip is-neutral"><span class="status-dot" /><div><b>已排期订阅：{{ summary.scheduled_subscription_plan || '未知计划' }}</b><small>创建于 {{ formatOptionalDate(summary.scheduled_subscription_since) }}，尚未生效</small></div></div>
     </section>
 
     <section class="overview-grid">
@@ -168,6 +169,7 @@ const selectedAudit = ref<EnterpriseWorkbenchAuditEvent>()
 const hasSourceIssue = computed(() => Object.values(sourceStates).some((state) => state === 'unavailable'))
 const sourceIssueText = computed(() => Object.entries(sourceStates).filter(([, state]) => state === 'unavailable').map(([name]) => ({ summary: '汇总', usage: '用量明细', audit: '审计', directories: '组织目录' }[name])).join('、'))
 const poolSourceLabel = computed(() => summary.value?.pool_source_status === 'available' ? '来源正常' : '来源不可用')
+const poolObservedAtLabel = computed(() => summary.value?.pool_observed_at ? `更新于 ${new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(summary.value.pool_observed_at))}` : '')
 const trendSourceLabel = computed(() => sourceStates.summary === 'ready' ? '来源：企业 usage' : '来源不可用')
 const topEmployees = computed(() => [...(summary.value?.employee_summaries || [])].sort((a, b) => Number(b.usage_credit) - Number(a.usage_credit)).slice(0, 4))
 

@@ -5,6 +5,7 @@ import type {
   EmployeeUpdateInput,
   EnterpriseBrand,
   EnterpriseBrandUpdate,
+  EnterpriseAllocationListResult,
   EnterpriseAllocationSummary,
   EnterpriseDepartment,
   EnterpriseEmployee,
@@ -252,6 +253,7 @@ export const enterpriseAPI = {
   getEmployeeProfile: () => data<EnterpriseEmployee>(enterpriseClient.get('/enterprise/profile')),
   setAllocation: (subscriptionId: number, employeeId: number, input: { enterprise_id: number; window_type: 'week'; window_anchor: string; credit: string; expected_version: number; reason: string }) => data<{ id: number; version: number }>(enterpriseClient.put(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, input)),
   getAllocationSummary: (subscriptionId: number, employeeId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationSummary>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, { params })),
+  listSubscriptionAllocations: (subscriptionId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationListResult>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations`, { params })),
   createKey: () => withEnterpriseKeyMutation('create', 0, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
     enterpriseClient.post('/enterprise/keys', undefined, idempotencyHeaders(idempotencyKey)),
   )),

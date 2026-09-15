@@ -48,6 +48,10 @@ func (s *enterpriseAllocationRouteStore) GetAllocationUsageSummary(_ context.Con
 	}, nil
 }
 
+func (s *enterpriseAllocationRouteStore) ListSubscriptionAllocations(_ context.Context, query enterprise.ListSubscriptionAllocationsQuery) (*enterprise.AllocationListResult, error) {
+	return &enterprise.AllocationListResult{SubscriptionID: query.SubscriptionID, WindowType: query.WindowType, WindowAnchor: query.WindowAnchor, Items: []enterprise.AllocationListItem{}}, nil
+}
+
 func TestEnterpriseAllocationRoutesUseAuthenticatedSubjectAndProductionPaths(t *testing.T) {
 	store := &enterpriseAllocationRouteStore{}
 	router := newEnterpriseAllocationRouteTestRouter(store)

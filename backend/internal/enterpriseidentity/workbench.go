@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -58,22 +59,26 @@ type WorkbenchUsageTrendPoint struct {
 }
 
 type WorkbenchSummary struct {
-	TotalUsageCredit        string                     `json:"total_usage_credit"`
-	TotalRequests           int64                      `json:"total_requests"`
-	EmployeeCount           int64                      `json:"employee_count"`
-	ActiveEmployeeCount     int64                      `json:"active_employee_count"`
-	SubscriptionStatus      string                     `json:"subscription_status"`
-	SubscriptionPlan        string                     `json:"subscription_plan"`
-	EnterprisePoolLimit     string                     `json:"enterprise_pool_limit"`
-	EnterprisePoolUsed      string                     `json:"enterprise_pool_used"`
-	EnterprisePoolRemaining string                     `json:"enterprise_pool_remaining"`
-	EnterprisePoolExhausted bool                       `json:"enterprise_pool_exhausted"`
-	PoolSourceStatus        string                     `json:"pool_source_status"`
-	PoolSource              string                     `json:"pool_source"`
-	PoolWindowType          string                     `json:"pool_window_type"`
-	PoolWindowAnchor        *time.Time                 `json:"pool_window_anchor,omitempty"`
-	EmployeeSummaries       []WorkbenchEmployeeSummary `json:"employee_summaries"`
-	UsageTrend              []WorkbenchUsageTrendPoint `json:"usage_trend"`
+	TotalUsageCredit           string                     `json:"total_usage_credit"`
+	TotalRequests              int64                      `json:"total_requests"`
+	EmployeeCount              int64                      `json:"employee_count"`
+	ActiveEmployeeCount        int64                      `json:"active_employee_count"`
+	SubscriptionID             *int64                     `json:"subscription_id,omitempty"`
+	SubscriptionStatus         string                     `json:"subscription_status"`
+	SubscriptionPlan           string                     `json:"subscription_plan"`
+	EnterprisePoolLimit        string                     `json:"enterprise_pool_limit"`
+	EnterprisePoolUsed         string                     `json:"enterprise_pool_used"`
+	EnterprisePoolRemaining    string                     `json:"enterprise_pool_remaining"`
+	EnterprisePoolExhausted    bool                       `json:"enterprise_pool_exhausted"`
+	PoolSourceStatus           string                     `json:"pool_source_status"`
+	PoolSource                 string                     `json:"pool_source"`
+	PoolWindowType             string                     `json:"pool_window_type"`
+	PoolWindowAnchor           *time.Time                 `json:"pool_window_anchor,omitempty"`
+	PoolObservedAt             *time.Time                 `json:"pool_observed_at,omitempty"`
+	ScheduledSubscriptionPlan  string                     `json:"scheduled_subscription_plan,omitempty"`
+	ScheduledSubscriptionSince *time.Time                 `json:"scheduled_subscription_since,omitempty"`
+	EmployeeSummaries          []WorkbenchEmployeeSummary `json:"employee_summaries"`
+	UsageTrend                 []WorkbenchUsageTrendPoint `json:"usage_trend"`
 }
 
 type WorkbenchUsageRow struct {
@@ -354,8 +359,10 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	var poolLimit, poolUsed, poolRemaining sql.NullString
 	var poolExhausted sql.NullBool
 	var poolAnchor sql.NullTime
+	var subscriptionID sql.NullInt64
 	if err := h.owner.service.db.QueryRowContext(ctx, `
-		SELECT CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL OR upstream_subscription.weekly_limit_usd IS NULL THEN 'unavailable' ELSE 'available' END,
+		SELECT enterprise_subscription.id,
+		       CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL OR upstream_subscription.weekly_limit_usd IS NULL THEN 'unavailable' ELSE 'available' END,
 		       COALESCE(subscription_group.name, ''), COALESCE(upstream_subscription.status, ''),
 		       COALESCE(upstream_subscription.weekly_limit_usd, 0)::text,
 		       COALESCE(upstream_subscription.weekly_usage_usd, 0)::text,
@@ -373,12 +380,13 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		 AND upstream_subscription.deleted_at IS NULL
 		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
 		WHERE enterprise.id = $1`, enterpriseID).Scan(
-		&poolStatus, &plan, &subscriptionStatus, &poolLimit, &poolUsed, &poolRemaining, &poolExhausted, &poolAnchor); err != nil {
+		&subscriptionID, &poolStatus, &plan, &subscriptionStatus, &poolLimit, &poolUsed, &poolRemaining, &poolExhausted, &poolAnchor); err != nil {
 		return nil, err
 	}
 	if poolStatus.Valid {
 		result.PoolSourceStatus = poolStatus.String
 	}
+	result.SubscriptionID = nullableInt64(subscriptionID)
 	result.SubscriptionPlan = plan.String
 	result.SubscriptionStatus = subscriptionStatus.String
 	if poolLimit.Valid {
@@ -394,6 +402,43 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	if poolAnchor.Valid {
 		anchor := poolAnchor.Time
 		result.PoolWindowAnchor = &anchor
+	}
+	if subscriptionID.Valid {
+		var observedAt sql.NullTime
+		if err := h.owner.service.db.QueryRowContext(ctx, `
+			SELECT observed_at
+			FROM enterprise_subscription_windows
+			WHERE enterprise_id = $1 AND subscription_id = $2
+			ORDER BY observed_weekly_window_start DESC, observed_at DESC
+			LIMIT 1`, enterpriseID, subscriptionID.Int64).Scan(&observedAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if observedAt.Valid {
+			observed := observedAt.Time
+			result.PoolObservedAt = &observed
+		}
+	}
+
+	var scheduledPlan sql.NullString
+	var scheduledSince sql.NullTime
+	if err := h.owner.service.db.QueryRowContext(ctx, `
+		SELECT COALESCE(subscription_group.name, ''), enterprise_subscription.created_at
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN enterprises AS enterprise ON enterprise.id = enterprise_subscription.enterprise_id
+		LEFT JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
+		WHERE enterprise_subscription.enterprise_id = $1 AND enterprise_subscription.status = 'scheduled'
+		ORDER BY enterprise_subscription.created_at DESC
+		LIMIT 1`, enterpriseID).Scan(&scheduledPlan, &scheduledSince); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if scheduledSince.Valid {
+		result.ScheduledSubscriptionPlan = scheduledPlan.String
+		since := scheduledSince.Time
+		result.ScheduledSubscriptionSince = &since
 	}
 	if q.WindowType != "" && q.WindowType != "week" {
 		// 当前产品契约只冻结 weekly 总池；其他窗口的 usage 可以查询，但不得借用 weekly 权威值。
