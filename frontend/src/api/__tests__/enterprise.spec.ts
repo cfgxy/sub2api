@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, syncEnterpriseAuthSession } from '@/api/enterprise'
+import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, isEnterpriseEmployeeVersionConflict, syncEnterpriseAuthSession } from '@/api/enterprise'
 
 const employeePrincipal = {
   enterprise_id: 12,
@@ -196,5 +196,31 @@ describe('enterprise API password handling', () => {
 
     expect(post).not.toHaveBeenCalled()
     expect(sessionStorage.length).toBe(0)
+  })
+
+  it('fetches the department deletion impact before an irreversible delete', async () => {
+    const get = vi.spyOn(enterpriseClient, 'get').mockResolvedValue({
+      data: { department_id: 7, department_name: 'Engineering', affected_employees: 3 },
+    })
+
+    const impact = await enterpriseAPI.getDepartmentDeletionImpact(7)
+
+    expect(get).toHaveBeenCalledWith('/enterprise/admin/departments/7/deletion-impact')
+    expect(impact).toEqual({ department_id: 7, department_name: 'Engineering', affected_employees: 3 })
+  })
+
+  it('sends the observed version when updating an employee for optimistic concurrency', async () => {
+    const patch = vi.spyOn(enterpriseClient, 'patch').mockResolvedValue({ data: { success: true } })
+
+    await enterpriseAPI.updateEmployee(10, { status: 'disabled', department_id: null, version: 3 })
+
+    expect(patch).toHaveBeenCalledWith('/enterprise/admin/employees/10', { status: 'disabled', department_id: null, version: 3 })
+  })
+
+  it('classifies a 409 or EMPLOYEE_VERSION_CONFLICT reason as an employee version conflict', () => {
+    expect(isEnterpriseEmployeeVersionConflict({ status: 409, reason: 'EMPLOYEE_VERSION_CONFLICT' })).toBe(true)
+    expect(isEnterpriseEmployeeVersionConflict({ status: 409 })).toBe(true)
+    expect(isEnterpriseEmployeeVersionConflict({ status: 404 })).toBe(false)
+    expect(isEnterpriseEmployeeVersionConflict(new Error('network timeout'))).toBe(false)
   })
 })

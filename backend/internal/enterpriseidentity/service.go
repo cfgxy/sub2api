@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -50,17 +51,48 @@ const (
 )
 
 var (
-	errInvalidCredentials = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	errInvalidToken       = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
-	errInactive           = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise or identity is not active")
-	errWrongHost          = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
-	errPasswordExpired    = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
-	errForceChange        = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
-	errResetInvalid       = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
-	errNotFound           = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
-	errConflict           = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
-	errInvalidBrand       = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
+	errInvalidCredentials      = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	errInvalidToken            = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
+	errInactive                = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise or identity is not active")
+	errWrongHost               = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
+	errPasswordExpired         = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
+	errForceChange             = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
+	errResetInvalid            = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
+	errNotFound                = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
+	errConflict                = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
+	errInvalidBrand            = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
+	errEmployeeVersionConflict = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
 )
+
+// actorRefContextKey carries a human-attributable actor reference (e.g. "admin:42")
+// through to audit event writes without widening every service method's signature.
+type actorRefContextKey struct{}
+
+// WithActorRef attaches the acting principal's reference to ctx for audit trails.
+func WithActorRef(ctx context.Context, ref string) context.Context {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, actorRefContextKey{}, ref)
+}
+
+func actorRefFromContext(ctx context.Context) string {
+	if ref, ok := ctx.Value(actorRefContextKey{}).(string); ok && ref != "" {
+		return ref
+	}
+	return "system"
+}
+
+func writeAuditEvent(ctx context.Context, exec interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, enterpriseID int64, eventType, entityType string, entityID int64, payload []byte) error {
+	_, err := exec.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+	`, enterpriseID, eventType, entityType, entityID, payload, actorRefFromContext(ctx))
+	return err
+}
 
 type PasswordResetMailer interface {
 	SendEmail(ctx context.Context, to, subject, body string) error
@@ -149,6 +181,14 @@ type Department struct {
 	Name string `json:"name"`
 }
 
+// DepartmentDeletionImpact previews the effect of deleting a department so the
+// admin can make an informed decision before the destructive action executes.
+type DepartmentDeletionImpact struct {
+	DepartmentID      int64  `json:"department_id"`
+	DepartmentName    string `json:"department_name"`
+	AffectedEmployees int64  `json:"affected_employees"`
+}
+
 type Employee struct {
 	ID           int64      `json:"id"`
 	Email        string     `json:"email"`
@@ -156,6 +196,7 @@ type Employee struct {
 	DepartmentID *int64     `json:"department_id,omitempty"`
 	MustChange   bool       `json:"must_change_password"`
 	TerminatedAt *time.Time `json:"terminated_at,omitempty"`
+	Version      int64      `json:"version"`
 }
 
 type BrandInput struct {
@@ -740,12 +781,47 @@ func (s *Service) CreateDepartment(ctx context.Context, enterpriseID int64, name
 	if name == "" || utf8.RuneCountInString(name) > 100 {
 		return nil, infraerrors.BadRequest("INVALID_DEPARTMENT", "department name is invalid")
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	item := new(Department)
-	err := s.db.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
+	err = tx.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
 	if err != nil {
 		return nil, errConflict
 	}
+	payload, err := json.Marshal(map[string]any{"name": item.Name})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.created", "enterprise_department", item.ID, payload); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return item, nil
+}
+
+// PreviewDepartmentDeletion reports how many active employees would be
+// detached before an admin confirms an irreversible department deletion.
+func (s *Service) PreviewDepartmentDeletion(ctx context.Context, enterpriseID, departmentID int64) (*DepartmentDeletionImpact, error) {
+	impact := &DepartmentDeletionImpact{DepartmentID: departmentID}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT department.name,
+		       (SELECT COUNT(*) FROM enterprise_employees
+		        WHERE enterprise_id = $1 AND department_id = $2 AND status <> 'terminated')
+		FROM enterprise_departments AS department
+		WHERE department.enterprise_id = $1 AND department.id = $2 AND department.status = 'active'
+	`, enterpriseID, departmentID).Scan(&impact.DepartmentName, &impact.AffectedEmployees)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return impact, nil
 }
 
 func (s *Service) DeleteDepartment(ctx context.Context, enterpriseID, departmentID int64) error {
@@ -754,9 +830,18 @@ func (s *Service) DeleteDepartment(ctx context.Context, enterpriseID, department
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_employees SET department_id = NULL, updated_at = NOW() WHERE enterprise_id = $1 AND department_id = $2`, enterpriseID, departmentID); err != nil {
+	var departmentName string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM enterprise_departments WHERE enterprise_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`, enterpriseID, departmentID).Scan(&departmentName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNotFound
+		}
 		return err
 	}
+	clearResult, err := tx.ExecContext(ctx, `UPDATE enterprise_employees SET department_id = NULL, updated_at = NOW() WHERE enterprise_id = $1 AND department_id = $2`, enterpriseID, departmentID)
+	if err != nil {
+		return err
+	}
+	affected, _ := clearResult.RowsAffected()
 	result, err := tx.ExecContext(ctx, `UPDATE enterprise_departments SET status = 'disabled', disabled_at = NOW(), updated_at = NOW() WHERE enterprise_id = $1 AND id = $2 AND status = 'active'`, enterpriseID, departmentID)
 	if err != nil {
 		return err
@@ -764,11 +849,18 @@ func (s *Service) DeleteDepartment(ctx context.Context, enterpriseID, department
 	if n, _ := result.RowsAffected(); n == 0 {
 		return errNotFound
 	}
+	payload, err := json.Marshal(map[string]any{"name": departmentName, "affected_employees": affected})
+	if err != nil {
+		return err
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.deleted", "enterprise_department", departmentID, payload); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Employee, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(current_email, email), status, department_id, must_change_password, terminated_at FROM enterprise_employees WHERE enterprise_id = $1 ORDER BY id`, enterpriseID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(current_email, email), status, department_id, must_change_password, terminated_at, version FROM enterprise_employees WHERE enterprise_id = $1 ORDER BY id`, enterpriseID)
 	if err != nil {
 		return nil, err
 	}
@@ -778,7 +870,7 @@ func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Empl
 		var item Employee
 		var dept sql.NullInt64
 		var terminated sql.NullTime
-		if err := rows.Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange, &terminated); err != nil {
+		if err := rows.Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange, &terminated, &item.Version); err != nil {
 			return nil, err
 		}
 		if dept.Valid {
@@ -801,24 +893,43 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 	if err != nil {
 		return nil, err
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	item := new(Employee)
 	var dept sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, department_id, status, must_change_password, initial_password_expires_at)
 		SELECT $1, $2, $2, $3, $4, 'active', TRUE, NOW() + INTERVAL '24 hours'
 		WHERE $4::bigint IS NULL OR EXISTS (SELECT 1 FROM enterprise_departments WHERE enterprise_id = $1 AND id = $4 AND status = 'active')
-		RETURNING id, current_email, status, department_id, must_change_password
-	`, enterpriseID, email, string(hash), departmentID).Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange)
+		RETURNING id, current_email, status, department_id, must_change_password, version
+	`, enterpriseID, email, string(hash), departmentID).Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange, &item.Version)
 	if err != nil {
 		return nil, errConflict
 	}
 	if dept.Valid {
 		item.DepartmentID = &dept.Int64
 	}
+	payload, err := json.Marshal(map[string]any{"employee_id": item.ID, "department_id": item.DepartmentID})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.created", "enterprise_employee", item.ID, payload); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return item, nil
 }
 
-func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID int64, status string, departmentID *int64) error {
+// UpdateEmployee applies an admin edit using optimistic concurrency: the
+// caller must supply the version it last observed. A mismatch means another
+// admin edited the same employee concurrently, so the write is rejected with
+// zero partial effect instead of silently overwriting the other admin's change.
+func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID int64, status string, departmentID *int64, expectedVersion int64) error {
 	if status != "active" && status != "disabled" {
 		return infraerrors.BadRequest("INVALID_EMPLOYEE_STATUS", "employee status is invalid")
 	}
@@ -828,14 +939,42 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var currentVersion int64
+	err = tx.QueryRowContext(ctx, `SELECT version FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2 AND status <> 'terminated' FOR UPDATE`, enterpriseID, employeeID).Scan(&currentVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if currentVersion != expectedVersion {
+		conflictErr := errEmployeeVersionConflict.WithMetadata(map[string]string{"current_version": fmt.Sprintf("%d", currentVersion)})
+		rejectPayload, err := json.Marshal(map[string]any{
+			"employee_id":      employeeID,
+			"expected_version": expectedVersion,
+			"current_version":  currentVersion,
+		})
+		if err != nil {
+			return conflictErr
+		}
+		if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.update_rejected", "enterprise_employee", employeeID, rejectPayload); err != nil {
+			return conflictErr
+		}
+		if err := tx.Commit(); err != nil {
+			return conflictErr
+		}
+		return conflictErr
+	}
+
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees SET status = $1, department_id = $2,
 		    disabled_at = CASE WHEN $1::varchar = 'disabled' THEN NOW() ELSE NULL END,
 		    auth_version = CASE WHEN status IS DISTINCT FROM $1 THEN auth_version + 1 ELSE auth_version END,
+		    version = version + 1,
 		    updated_at = NOW()
-		WHERE enterprise_id = $3 AND id = $4 AND status <> 'terminated'
+		WHERE enterprise_id = $3 AND id = $4 AND version = $5
 		  AND ($2::bigint IS NULL OR EXISTS (SELECT 1 FROM enterprise_departments WHERE enterprise_id = $3 AND id = $2 AND status = 'active'))
-	`, status, departmentID, enterpriseID, employeeID)
+	`, status, departmentID, enterpriseID, employeeID, expectedVersion)
 	if err != nil {
 		return err
 	}
@@ -853,6 +992,13 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 			return err
 		}
 	}
+	payload, err := json.Marshal(map[string]any{"employee_id": employeeID, "status": status, "department_id": departmentID, "version": expectedVersion + 1})
+	if err != nil {
+		return err
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.updated", "enterprise_employee", employeeID, payload); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -868,7 +1014,7 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees SET status = 'terminated', current_email = NULL, department_id = NULL,
-		    disabled_at = COALESCE(disabled_at, NOW()), terminated_at = NOW(), auth_version = auth_version + 1, updated_at = NOW()
+		    disabled_at = COALESCE(disabled_at, NOW()), terminated_at = NOW(), auth_version = auth_version + 1, version = version + 1, updated_at = NOW()
 		WHERE enterprise_id = $1 AND id = $2 AND status <> 'terminated'
 	`, enterpriseID, employeeID)
 	if err != nil {
@@ -882,6 +1028,13 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2`, enterpriseID, employeeID); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{"employee_id": employeeID})
+	if err != nil {
+		return err
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.terminated", "enterprise_employee", employeeID, payload); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

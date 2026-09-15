@@ -30,6 +30,12 @@ export interface EnterpriseSession {
 
 export interface EnterpriseDepartment { id: number; name: string }
 
+export interface EnterpriseDepartmentDeletionImpact {
+  department_id: number
+  department_name: string
+  affected_employees: number
+}
+
 export interface EnterpriseEmployee {
   id: number
   email: string
@@ -37,6 +43,7 @@ export interface EnterpriseEmployee {
   department_id?: number | null
   must_change_password: boolean
   terminated_at?: string
+  version: number
 }
 
 export interface EnterpriseBrand {
@@ -61,6 +68,7 @@ export interface EmployeeCreateInput {
 export interface EmployeeUpdateInput {
   status: 'active' | 'disabled'
   department_id: number | null
+  version: number
 }
 
 export interface EnterpriseEmployeeKey {

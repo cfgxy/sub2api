@@ -6,6 +6,7 @@ import type {
   EnterpriseBrand,
   EnterpriseBrandUpdate,
   EnterpriseDepartment,
+  EnterpriseDepartmentDeletionImpact,
   EnterpriseEmployee,
   EnterpriseEmployeeKey,
   EnterpriseEmployeeKeyMutationResult,
@@ -160,6 +161,12 @@ export function clearEnterpriseKeyMutationRetryState(): void {
   }
 }
 
+export function isEnterpriseEmployeeVersionConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const candidate = error as { status?: unknown; reason?: unknown }
+  return candidate.reason === 'EMPLOYEE_VERSION_CONFLICT' || candidate.status === 409
+}
+
 export function isEnterpriseKeyMutationStateConflict(error: unknown): boolean {
 	if (typeof error !== 'object' || error === null) return false
 	const candidate = error as { status?: unknown; code?: unknown; reason?: unknown }
@@ -214,6 +221,7 @@ export const enterpriseAPI = {
   listDepartments: () => data<EnterpriseDepartment[]>(enterpriseClient.get('/enterprise/admin/departments')),
   createDepartment: (name: string) => data<EnterpriseDepartment>(enterpriseClient.post('/enterprise/admin/departments', { name })),
   deleteDepartment: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/departments/${id}`)),
+  getDepartmentDeletionImpact: (id: number) => data<EnterpriseDepartmentDeletionImpact>(enterpriseClient.get(`/enterprise/admin/departments/${id}/deletion-impact`)),
   listEmployees: () => data<EnterpriseEmployee[]>(enterpriseClient.get('/enterprise/admin/employees')),
   createEmployee: (input: EmployeeCreateInput) => data<EnterpriseEmployee>(enterpriseClient.post('/enterprise/admin/employees', input)),
   updateEmployee: (id: number, input: EmployeeUpdateInput) => data<{ success: boolean }>(enterpriseClient.patch(`/enterprise/admin/employees/${id}`, input)),

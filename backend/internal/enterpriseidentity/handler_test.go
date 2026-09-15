@@ -43,6 +43,7 @@ func TestRegisterRoutesIncludesEnterpriseAuthSessionsAndAdminAPIs(t *testing.T) 
 		"POST /api/v1/enterprise/keys/disable",
 		"POST /api/v1/enterprise/keys/rotate",
 		"GET /api/v1/enterprise/admin/departments",
+		"GET /api/v1/enterprise/admin/departments/:id/deletion-impact",
 		"POST /api/v1/enterprise/admin/employees",
 		"PUT /api/v1/enterprise/admin/brand",
 		"POST /api/v1/enterprise/admin/brand/background",

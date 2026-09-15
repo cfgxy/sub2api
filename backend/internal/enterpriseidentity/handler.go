@@ -90,6 +90,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.Use(requireEnterpriseAdmin)
 	admin.GET("/departments", h.listDepartments)
 	admin.POST("/departments", h.createDepartment)
+	admin.GET("/departments/:id/deletion-impact", h.previewDepartmentDeletion)
 	admin.DELETE("/departments/:id", h.deleteDepartment)
 	admin.GET("/employees", h.listEmployees)
 	admin.POST("/employees", h.createEmployee)
@@ -285,6 +286,7 @@ type employeeCreateRequest struct {
 type employeeUpdateRequest struct {
 	Status       string `json:"status" binding:"required"`
 	DepartmentID *int64 `json:"department_id"`
+	Version      int64  `json:"version" binding:"required"`
 }
 type employeeKeyMutationRequest struct {
 	ExpectedAPIKeyID int64 `json:"expected_api_key_id"`
@@ -531,18 +533,29 @@ func (h *Handler) createDepartment(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	item, err := h.service.CreateDepartment(c.Request.Context(), mustClaims(c).EnterpriseID, req.Name)
+	item, err := h.service.CreateDepartment(h.adminActorContext(c), mustClaims(c).EnterpriseID, req.Name)
 	if response.ErrorFrom(c, err) {
 		return
 	}
 	response.Created(c, item)
+}
+func (h *Handler) previewDepartmentDeletion(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	impact, err := h.service.PreviewDepartmentDeletion(c.Request.Context(), mustClaims(c).EnterpriseID, id)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, impact)
 }
 func (h *Handler) deleteDepartment(c *gin.Context) {
 	id, ok := pathID(c)
 	if !ok {
 		return
 	}
-	if response.ErrorFrom(c, h.service.DeleteDepartment(c.Request.Context(), mustClaims(c).EnterpriseID, id)) {
+	if response.ErrorFrom(c, h.service.DeleteDepartment(h.adminActorContext(c), mustClaims(c).EnterpriseID, id)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -559,7 +572,7 @@ func (h *Handler) createEmployee(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	item, err := h.service.CreateEmployee(c.Request.Context(), mustClaims(c).EnterpriseID, req.Email, req.InitialPassword, req.DepartmentID)
+	item, err := h.service.CreateEmployee(h.adminActorContext(c), mustClaims(c).EnterpriseID, req.Email, req.InitialPassword, req.DepartmentID)
 	if response.ErrorFrom(c, err) {
 		return
 	}
@@ -574,7 +587,7 @@ func (h *Handler) updateEmployee(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	if response.ErrorFrom(c, h.service.UpdateEmployee(c.Request.Context(), mustClaims(c).EnterpriseID, id, req.Status, req.DepartmentID)) {
+	if response.ErrorFrom(c, h.service.UpdateEmployee(h.adminActorContext(c), mustClaims(c).EnterpriseID, id, req.Status, req.DepartmentID, req.Version)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -584,10 +597,21 @@ func (h *Handler) terminateEmployee(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if response.ErrorFrom(c, h.service.TerminateEmployee(c.Request.Context(), mustClaims(c).EnterpriseID, id)) {
+	if response.ErrorFrom(c, h.service.TerminateEmployee(h.adminActorContext(c), mustClaims(c).EnterpriseID, id)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
+}
+
+// adminActorContext attaches the authenticated enterprise admin's identity to
+// the request context so audit events written by the service layer are
+// attributable to the acting principal instead of a generic "system" actor.
+func (h *Handler) adminActorContext(c *gin.Context) context.Context {
+	claims := mustClaims(c)
+	if claims == nil {
+		return c.Request.Context()
+	}
+	return WithActorRef(c.Request.Context(), fmt.Sprintf("admin:%d", claims.PrincipalID))
 }
 func (h *Handler) getBrand(c *gin.Context) {
 	brand, err := h.service.GetBrand(c.Request.Context(), mustClaims(c).EnterpriseID)
