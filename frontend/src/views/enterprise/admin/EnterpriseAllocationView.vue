@@ -60,7 +60,7 @@
             <el-table-column prop="configured_credit" label="allocation" width="120" />
             <el-table-column prop="usage_credit" label="已使用" width="120" />
             <el-table-column prop="remaining_credit" label="remaining" width="120" />
-            <el-table-column label="overage" width="120"><template #default="{ row }"><span :class="row.overage_credit !== '0' ? 'overage' : 'muted'">{{ row.overage_credit }}</span></template></el-table-column>
+            <el-table-column label="overage" width="120"><template #default="{ row }"><span :class="isPositiveAmount(row.overage_credit) ? 'overage' : 'muted'">{{ row.overage_credit }}</span></template></el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'overage' ? 'danger' : 'success'">{{ row.status === 'overage' ? '有超用' : '正常' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="90" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openDialog(row)">调整</el-button></template></el-table-column>
           </el-table>
@@ -115,7 +115,9 @@ const dialogOpen = ref(false)
 const editingRow = ref<EnterpriseAllocationListItem>()
 const form = reactive({ employee_id: 0, credit: '0', reason: '' })
 
-const hasOverallocation = computed(() => !!result.value?.overallocated_by && result.value.overallocated_by !== '0')
+// 后端以 NUMERIC(20,8) 定长字符串返回（零值为 "0.00000000"），必须按数值判断而非字符串字面量比较
+const isPositiveAmount = (value?: string | null) => Number(value ?? 0) > 0
+const hasOverallocation = computed(() => isPositiveAmount(result.value?.overallocated_by))
 const departmentName = (id?: number | null) => departments.value.find((department) => department.id === id)?.name || '未分配部门'
 
 async function loadDirectories() {
