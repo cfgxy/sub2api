@@ -623,8 +623,8 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 			WHERE enterprise_id = $1 AND subscription_id = $2
 			  AND window_type = $5 AND window_anchor <= $3
 			ORDER BY employee_id, window_anchor DESC, version DESC
-		), configured AS (
-			SELECT amount FROM latest_configurations WHERE employee_id = $4
+			), configured AS (
+				SELECT COALESCE((SELECT amount FROM latest_configurations WHERE employee_id = $4), 0)::NUMERIC(20,8) AS amount
 		), allocation_total AS (
 			SELECT COALESCE(SUM(amount), 0)::NUMERIC(20,8) AS allocated_total
 			FROM latest_configurations

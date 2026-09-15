@@ -12,7 +12,7 @@ export interface EnterpriseAuthSnapshot {
 }
 
 export function enterpriseHome(role?: EnterpriseRole): string {
-  return role === 'enterprise_admin' ? '/enterprise/admin/employees' : '/enterprise/sessions'
+	return role === 'enterprise_admin' ? '/enterprise/admin/workbench' : '/enterprise/home'
 }
 
 export function resolveEnterpriseNavigation(meta: EnterpriseRouteAccess, path: string, auth: EnterpriseAuthSnapshot): string | null {

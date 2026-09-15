@@ -32,12 +32,17 @@ const router = useRouter()
 const route = useRoute()
 const navigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/admin/workbench', label: '工作台', icon: 'chartBar' as const },
+  { path: '/enterprise/admin/allocation', label: '额度分配', icon: 'grid' as const },
   { path: '/enterprise/admin/employees', label: '员工', icon: 'users' as const },
+  { path: '/enterprise/admin/keys', label: '员工 Key', icon: 'key' as const },
   { path: '/enterprise/admin/departments', label: '部门', icon: 'grid' as const },
   { path: '/enterprise/admin/brand', label: '品牌', icon: 'sparkles' as const },
   { path: '/enterprise/admin/sessions', label: '我的会话', icon: 'shield' as const },
 ] : [
+  { path: '/enterprise/home', label: '个人概览', icon: 'chartBar' as const },
   { path: '/enterprise/keys', label: 'API Key', icon: 'key' as const },
+  { path: '/enterprise/usage', label: '个人用量', icon: 'grid' as const },
+  { path: '/enterprise/settings', label: '个人设置', icon: 'shield' as const },
   { path: '/enterprise/sessions', label: '我的会话', icon: 'shield' as const },
 ])
 async function handleLogout() { await auth.logout(); await router.replace('/enterprise/login') }

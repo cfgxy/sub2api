@@ -86,7 +86,7 @@
       </el-tab-pane>
       <el-tab-pane label="企业用量明细" name="usage">
         <div class="panel table-panel">
-          <div class="table-heading"><div><h2>调用明细</h2><span>历史 Key 保留员工归属，Key 值始终掩码</span></div><div class="filters-inline"><el-select v-model="filters.window_type" aria-label="窗口" placeholder="weekly" style="width: 120px" @change="load"><el-option label="weekly" value="week" /><el-option label="daily" value="day" /><el-option label="monthly" value="month" /></el-select></div></div>
+          <div class="table-heading"><div><h2>调用明细</h2><span>历史 Key 保留员工归属，Key 值始终掩码；企业额度只按 weekly 口径</span></div><div class="filters-inline"><el-tag type="info">weekly</el-tag></div></div>
           <div class="table-wrap"><el-table v-loading="usageLoading" :data="usage.items" stripe>
             <el-table-column prop="request_at" label="请求时间" width="180"><template #default="{ row }">{{ formatDate(row.request_at) }}</template></el-table-column>
             <el-table-column prop="employee_email" label="员工" min-width="200" />

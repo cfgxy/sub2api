@@ -180,7 +180,7 @@ func parseWorkbenchQuery(c *gin.Context, requirePage bool) (workbenchQuery, bool
 	}
 
 	q.WindowType = strings.TrimSpace(c.Query("window_type"))
-	if q.WindowType != "" && q.WindowType != "day" && q.WindowType != "week" && q.WindowType != "month" {
+	if q.WindowType != "" && q.WindowType != "week" {
 		response.BadRequest(c, "invalid window_type")
 		return workbenchQuery{}, false
 	}

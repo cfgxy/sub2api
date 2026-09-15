@@ -71,6 +71,16 @@ type EmployeeKeyMutationParams struct {
 	ActorRef         string
 }
 
+type EnterpriseKeySummary struct {
+	APIKeyID   int64     `json:"api_key_id"`
+	EmployeeID int64     `json:"employee_id"`
+	Email      string    `json:"employee_email"`
+	Generation int64     `json:"generation"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 type employeeKeyRow struct {
 	EmployeeKey
 	Plaintext       string
@@ -112,6 +122,50 @@ func (r *Repository) GetEmployeeCurrentKey(ctx context.Context, enterpriseID, em
 		return nil, err
 	}
 	return &row.EmployeeKey, nil
+}
+
+func (r *Repository) ListEnterpriseKeys(ctx context.Context, enterpriseID int64) ([]EnterpriseKeySummary, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT assignment.api_key_id, assignment.employee_id,
+		       COALESCE(employee.current_email, employee.email, ''), assignment.generation,
+		       CASE WHEN assignment.status = 'active' AND api_key.status = 'active' THEN 'active' ELSE 'disabled' END,
+		       api_key.created_at, api_key.updated_at
+		FROM enterprise_key_assignments AS assignment
+		JOIN enterprise_employees AS employee
+		  ON employee.enterprise_id = assignment.enterprise_id AND employee.id = assignment.employee_id
+		JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+		WHERE assignment.enterprise_id = $1
+		ORDER BY assignment.employee_id, assignment.generation DESC, assignment.api_key_id DESC`, enterpriseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]EnterpriseKeySummary, 0)
+	for rows.Next() {
+		var item EnterpriseKeySummary
+		if err := rows.Scan(&item.APIKeyID, &item.EmployeeID, &item.Email, &item.Generation, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) RevokeEnterpriseKey(ctx context.Context, enterpriseID, apiKeyID int64, idempotencyKey, actorRef string) (*EmployeeKeyMutationResult, error) {
+	var employeeID int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT employee_id FROM enterprise_key_assignments
+		WHERE enterprise_id = $1 AND api_key_id = $2 AND status = 'active'`, enterpriseID, apiKeyID).Scan(&employeeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEmployeeKeyNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r.DisableEmployeeKey(ctx, EmployeeKeyMutationParams{
+		EnterpriseID: enterpriseID, EmployeeID: employeeID, ExpectedAPIKeyID: apiKeyID,
+		IdempotencyKey: idempotencyKey, ActorRef: actorRef,
+	})
 }
 
 func (r *Repository) CreateEmployeeKey(ctx context.Context, params EmployeeKeyMutationParams) (*EmployeeKeyMutationResult, error) {

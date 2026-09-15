@@ -74,6 +74,10 @@ func (h *EnterpriseAllocationHandler) Set(c *gin.Context) {
 		response.BadRequest(c, "Invalid allocation window")
 		return
 	}
+	if req.WindowType != enterprise.WindowTypeWeek {
+		response.BadRequest(c, "Only weekly allocation is supported")
+		return
+	}
 	if _, err = enterprise.NormalizeAmount(req.Credit); err != nil {
 		response.BadRequest(c, "Invalid allocation credit")
 		return
@@ -127,6 +131,10 @@ func (h *EnterpriseAllocationHandler) Summary(c *gin.Context) {
 	}
 	if err = enterprise.ValidateAllocationWindow(c.Query("window_type"), anchor); err != nil {
 		response.BadRequest(c, "Invalid allocation window")
+		return
+	}
+	if c.Query("window_type") != enterprise.WindowTypeWeek {
+		response.BadRequest(c, "Only weekly allocation is supported")
 		return
 	}
 	summary, err := h.store.GetAllocationUsageSummary(c.Request.Context(), enterprise.AllocationUsageSummaryQuery{

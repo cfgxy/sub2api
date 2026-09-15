@@ -62,10 +62,10 @@ func TestEnterpriseAllocationRoutesUseAuthenticatedSubjectAndProductionPaths(t *
 	require.Equal(t, int64(11), store.setParams.SubscriptionID)
 	require.Equal(t, int64(22), store.setParams.EmployeeID)
 
-	summary := performAllocationRouteRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=day&window_anchor=2026-09-08T00:00:00Z", nil, true)
+	summary := performAllocationRouteRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=week&window_anchor=2026-09-08T00:00:00Z", nil, true)
 	require.Equal(t, http.StatusOK, summary.Code)
 	require.Equal(t, int64(42), store.summaryQuery.RequesterUserID)
-	require.Equal(t, enterprise.WindowTypeDay, store.summaryQuery.WindowType)
+	require.Equal(t, enterprise.WindowTypeWeek, store.summaryQuery.WindowType)
 	var response struct {
 		Data enterprise.AllocationUsageSummary `json:"data"`
 	}
@@ -88,8 +88,8 @@ func TestEnterpriseAllocationRoutesMapScopeVersionAndUnsafeReason(t *testing.T) 
 	}{
 		"cross enterprise": {enterprise.ErrEnterpriseAccessDenied, validAllocationBody(), http.StatusNotFound},
 		"version conflict": {enterprise.ErrAllocationVersionConflict, validAllocationBody(), http.StatusConflict},
-		"secret reason":    {nil, []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"token=secret"}`), http.StatusBadRequest},
-		"long reason":      {nil, []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"` + string(bytes.Repeat([]byte("a"), enterprise.MaxAllocationReasonLength+1)) + `"}`), http.StatusBadRequest},
+		"secret reason":    {nil, []byte(`{"enterprise_id":9,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"token=secret"}`), http.StatusBadRequest},
+		"long reason":      {nil, []byte(`{"enterprise_id":9,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"5","reason":"` + string(bytes.Repeat([]byte("a"), enterprise.MaxAllocationReasonLength+1)) + `"}`), http.StatusBadRequest},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &enterpriseAllocationRouteStore{setErr: tc.storeErr}
@@ -114,7 +114,7 @@ func TestEnterpriseAllocationRoutesAcceptEnterpriseAdminOrStandardJWT(t *testing
 		require.Equal(t, int64(42), store.setParams.RequesterUserID)
 
 		expectEnterpriseAdminAuthentication(mock, "acme.example.com", 9, 42, "11111111-1111-1111-1111-111111111111")
-		get := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=day&window_anchor=2026-09-08T00:00:00Z", nil, "acme.example.com", token)
+		get := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=week&window_anchor=2026-09-08T00:00:00Z", nil, "acme.example.com", token)
 		require.Equal(t, http.StatusOK, get.Code)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -142,7 +142,7 @@ func TestEnterpriseAllocationRoutesAcceptEnterpriseAdminOrStandardJWT(t *testing
 		mock.ExpectQuery("SELECT id, name, LOWER.*FROM enterprises").WithArgs("other.example.com").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "admin_user_id", "status"}).AddRow(10, "Other", "other.example.com", 42, "active"))
 
-		response := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=day&window_anchor=2026-09-08T00:00:00Z", nil, "other.example.com", token)
+		response := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=week&window_anchor=2026-09-08T00:00:00Z", nil, "other.example.com", token)
 		require.Equal(t, http.StatusUnauthorized, response.Code)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -156,7 +156,7 @@ func TestEnterpriseAllocationRoutesAcceptEnterpriseAdminOrStandardJWT(t *testing
 		})
 		require.Greater(t, len(token), service.MaxTokenLength)
 
-		response := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=day&window_anchor=2026-09-08T00:00:00Z", nil, "acme.example.com", token)
+		response := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=week&window_anchor=2026-09-08T00:00:00Z", nil, "acme.example.com", token)
 		require.Equal(t, http.StatusUnauthorized, response.Code)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -169,11 +169,11 @@ func TestEnterpriseAllocationRoutesAcceptEnterpriseAdminOrStandardJWT(t *testing
 		"put body enterprise mismatch": {
 			method: http.MethodPut,
 			target: "/api/v1/enterprise/subscriptions/11/allocations/22",
-			body:   []byte(`{"enterprise_id":10,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","expected_version":1,"reason":"rebalance"}`),
+			body:   []byte(`{"enterprise_id":10,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"5","expected_version":1,"reason":"rebalance"}`),
 		},
 		"get query enterprise mismatch": {
 			method: http.MethodGet,
-			target: "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=10&window_type=day&window_anchor=2026-09-08T00:00:00Z",
+			target: "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=10&window_type=week&window_anchor=2026-09-08T00:00:00Z",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestEnterpriseAllocationRoutesAcceptEnterpriseAdminOrStandardJWT(t *testing
 		require.Equal(t, http.StatusOK, put.Code)
 		require.Equal(t, int64(42), store.setParams.RequesterUserID)
 
-		get := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=day&window_anchor=2026-09-08T00:00:00Z", nil, "panel.example.com", "route-test")
+		get := performAllocationJWTRequest(router, http.MethodGet, "/api/v1/enterprise/subscriptions/11/allocations/22?enterprise_id=9&window_type=week&window_anchor=2026-09-08T00:00:00Z", nil, "panel.example.com", "route-test")
 		require.Equal(t, http.StatusOK, get.Code)
 		require.Equal(t, int64(42), store.summaryQuery.RequesterUserID)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -315,5 +315,5 @@ func performAllocationRouteRequest(router http.Handler, method, target string, b
 }
 
 func validAllocationBody() []byte {
-	return []byte(`{"enterprise_id":9,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"5","expected_version":1,"reason":"rebalance"}`)
+	return []byte(`{"enterprise_id":9,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"5","expected_version":1,"reason":"rebalance"}`)
 }

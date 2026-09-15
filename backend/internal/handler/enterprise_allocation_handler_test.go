@@ -34,7 +34,7 @@ func (s *enterpriseAllocationStoreStub) GetAllocationUsageSummary(context.Contex
 
 func TestEnterpriseAllocationHandlerRejectsUnauthenticatedRequest(t *testing.T) {
 	store := &enterpriseAllocationStoreStub{}
-	status := serveEnterpriseAllocationSet(t, store, false, `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`)
+	status := serveEnterpriseAllocationSet(t, store, false, `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`)
 	require.Equal(t, http.StatusUnauthorized, status)
 	require.Zero(t, store.calls)
 }
@@ -42,9 +42,9 @@ func TestEnterpriseAllocationHandlerRejectsUnauthenticatedRequest(t *testing.T) 
 func TestEnterpriseAllocationHandlerEnforcesProtocolValidation(t *testing.T) {
 	for name, body := range map[string]string{
 		"invalid window type": `{"enterprise_id":1,"window_type":"7d","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`,
-		"negative credit":     `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"-1","reason":"test"}`,
-		"legacy amount field": `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","amount":"1","reason":"test"}`,
-		"missing reason":      `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"1"}`,
+		"negative credit":     `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"-1","reason":"test"}`,
+		"legacy amount field": `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","amount":"1","reason":"test"}`,
+		"missing reason":      `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"1"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &enterpriseAllocationStoreStub{}

@@ -7,12 +7,14 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -92,8 +94,41 @@ type Service struct {
 	now                  func() time.Time
 }
 
+type auditActorContextKey struct{}
+
+// WithAuditActor 将已认证的企业操作者绑定到本次写请求。
+func WithAuditActor(ctx context.Context, actorRef string) context.Context {
+	return context.WithValue(ctx, auditActorContextKey{}, strings.TrimSpace(actorRef))
+}
+
+func auditActor(ctx context.Context) string {
+	actor, _ := ctx.Value(auditActorContextKey{}).(string)
+	return strings.TrimSpace(actor)
+}
+
+func writeAuditEvent(ctx context.Context, tx *sql.Tx, enterpriseID int64, eventType, entityType string, entityID *int64, payload any) error {
+	actor := auditActor(ctx)
+	if actor == "" {
+		return nil
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+	`, enterpriseID, eventType, entityType, entityID, encoded, actor)
+	return err
+}
+
 type queryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type dbExecutor interface {
+	queryRower
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
 type Enterprise struct {
@@ -102,6 +137,22 @@ type Enterprise struct {
 	Host        string
 	AdminUserID int64
 	Status      string
+}
+
+type PlatformEnterprise struct {
+	ID                    int64     `json:"id"`
+	Name                  string    `json:"name"`
+	Host                  string    `json:"portal_host"`
+	DedicatedUpstreamUser int64     `json:"dedicated_upstream_user_id"`
+	Status                string    `json:"status"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
+type CreateEnterpriseInput struct {
+	Name                  string
+	Host                  string
+	DedicatedUpstreamUser int64
+	Reason                string
 }
 
 type Claims struct {
@@ -156,6 +207,25 @@ type Employee struct {
 	DepartmentID *int64     `json:"department_id,omitempty"`
 	MustChange   bool       `json:"must_change_password"`
 	TerminatedAt *time.Time `json:"terminated_at,omitempty"`
+}
+
+type EmployeeUsageSummary struct {
+	SubscriptionID *int64     `json:"subscription_id,omitempty"`
+	WindowType     string     `json:"window_type"`
+	WindowAnchor   *time.Time `json:"window_anchor,omitempty"`
+	SourceStatus   string     `json:"source_status"`
+	Allocation     string     `json:"allocation"`
+	ActualCost     string     `json:"actual_cost"`
+	Remaining      string     `json:"remaining"`
+	Overage        string     `json:"overage"`
+	Requests       int64      `json:"requests"`
+}
+
+type EmployeeUsageRecord struct {
+	RequestAt    time.Time `json:"request_at"`
+	WindowAnchor time.Time `json:"window_anchor"`
+	APIKeyMasked string    `json:"api_key_masked"`
+	ActualCost   string    `json:"actual_cost"`
 }
 
 type BrandInput struct {
@@ -214,6 +284,110 @@ func (s *Service) enterpriseByHost(ctx context.Context, host string) (*Enterpris
 		return nil, errInactive
 	}
 	return &e, nil
+}
+
+func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseInput, actorUserID int64) (*PlatformEnterprise, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(input.Host)), ".")
+	input.Reason = strings.TrimSpace(input.Reason)
+	if input.Name == "" || len(input.Name) > 255 || input.Host == "" || strings.ContainsAny(input.Host, "/: ") || input.DedicatedUpstreamUser <= 0 || input.Reason == "" {
+		return nil, infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise name, host, upstream user and reason are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	result := new(PlatformEnterprise)
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host, status)
+		VALUES ($1, $2, $2, $3, 'active')
+		RETURNING id, name, LOWER(BTRIM(portal_host)), dedicated_upstream_user_id, status, created_at`,
+		input.Name, input.DedicatedUpstreamUser, input.Host).Scan(&result.ID, &result.Name, &result.Host, &result.DedicatedUpstreamUser, &result.Status, &result.CreatedAt)
+	if err != nil {
+		return nil, errConflict
+	}
+	actor := fmt.Sprintf("platform_user:%d", actorUserID)
+	payload, marshalErr := json.Marshal(map[string]any{"result": "success", "reason": input.Reason})
+	if marshalErr != nil {
+		return nil, marshalErr
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref) VALUES ($1, 'enterprise.created', 'enterprise', $1, $2::jsonb, $3)`, result.ID, payload, actor); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status string) ([]PlatformEnterprise, error) {
+	conditions := []string{"1 = 1"}
+	args := make([]any, 0, 2)
+	if search = strings.TrimSpace(search); search != "" {
+		args = append(args, "%"+strings.ToLower(search)+"%")
+		conditions = append(conditions, "(LOWER(name) LIKE $1 OR LOWER(portal_host) LIKE $1)")
+	}
+	if status = strings.TrimSpace(status); status != "" {
+		args = append(args, status)
+		conditions = append(conditions, fmt.Sprintf("status = $%d", len(args)))
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, LOWER(BTRIM(portal_host)), dedicated_upstream_user_id, status, created_at FROM enterprises WHERE `+strings.Join(conditions, " AND ")+` ORDER BY id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]PlatformEnterprise, 0)
+	for rows.Next() {
+		var item PlatformEnterprise
+		if err := rows.Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*PlatformEnterprise, error) {
+	var item PlatformEnterprise
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, LOWER(BTRIM(portal_host)), dedicated_upstream_user_id, status, created_at FROM enterprises WHERE id = $1`, id).Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *Service) DisableEnterprise(ctx context.Context, id, actorUserID int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if id <= 0 || reason == "" {
+		return infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise id and reason are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE enterprises SET status = 'disabled', updated_at = NOW() WHERE id = $1 AND status = 'active'`, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return errNotFound
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND revoked_at IS NULL`, id); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{"result": "success", "reason": reason})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref) VALUES ($1, 'enterprise.disabled', 'enterprise', $1, $2::jsonb, $3)`, id, payload, fmt.Sprintf("platform_user:%d", actorUserID)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) Login(ctx context.Context, host, email, password, userAgent, ip string) (*TokenPair, error) {
@@ -568,6 +742,41 @@ func (s *Service) ChangeInitialPassword(ctx context.Context, claims *Claims, cur
 	if err != nil {
 		return err
 	}
+	if err := writeAuditEvent(ctx, tx, claims.EnterpriseID, "employee.password_changed", "employee", &claims.PrincipalID, map[string]any{"result": "success", "initial": true}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Service) ChangePassword(ctx context.Context, claims *Claims, current, next string) error {
+	if claims == nil || claims.PrincipalType != "employee" {
+		return infraerrors.BadRequest("EMPLOYEE_PASSWORD_ONLY", "enterprise administrator uses the platform password")
+	}
+	if len(next) < 12 {
+		return infraerrors.BadRequest("WEAK_PASSWORD", "password must be at least 12 characters")
+	}
+	var currentHash string
+	if err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2 AND status = 'active'`, claims.EnterpriseID, claims.PrincipalID).Scan(&currentHash); err != nil || bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(current)) != nil {
+		return errInvalidCredentials
+	}
+	nextHash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_employees SET password_hash = $1, must_change_password = FALSE, initial_password_expires_at = NULL, password_changed_at = NOW(), auth_version = auth_version + 1, updated_at = NOW() WHERE enterprise_id = $2 AND id = $3 AND status = 'active'`, string(nextHash), claims.EnterpriseID, claims.PrincipalID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2 AND revoked_at IS NULL`, claims.EnterpriseID, claims.PrincipalID); err != nil {
+		return err
+	}
+	if err = writeAuditEvent(ctx, tx, claims.EnterpriseID, "employee.password_changed", "employee", &claims.PrincipalID, map[string]any{"result": "success"}); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -741,9 +950,28 @@ func (s *Service) CreateDepartment(ctx context.Context, enterpriseID int64, name
 		return nil, infraerrors.BadRequest("INVALID_DEPARTMENT", "department name is invalid")
 	}
 	item := new(Department)
-	err := s.db.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
+	actor := auditActor(ctx)
+	if actor == "" {
+		err := s.db.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
+		if err != nil {
+			return nil, errConflict
+		}
+		return item, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	err = tx.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
 	if err != nil {
 		return nil, errConflict
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.created", "department", &item.ID, map[string]any{"result": "success"}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return item, nil
 }
@@ -763,6 +991,9 @@ func (s *Service) DeleteDepartment(ctx context.Context, enterpriseID, department
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
 		return errNotFound
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.disabled", "department", &departmentID, map[string]any{"result": "success"}); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -792,6 +1023,131 @@ func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Empl
 	return items, rows.Err()
 }
 
+func (s *Service) GetEmployee(ctx context.Context, enterpriseID, employeeID int64) (*Employee, error) {
+	item := new(Employee)
+	var departmentID sql.NullInt64
+	var terminated sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(current_email, email), status, department_id, must_change_password, terminated_at
+		FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2`, enterpriseID, employeeID).
+		Scan(&item.ID, &item.Email, &item.Status, &departmentID, &item.MustChange, &terminated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if departmentID.Valid {
+		item.DepartmentID = &departmentID.Int64
+	}
+	if terminated.Valid {
+		item.TerminatedAt = &terminated.Time
+	}
+	return item, nil
+}
+
+func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID int64) (*EmployeeUsageSummary, error) {
+	result := &EmployeeUsageSummary{
+		WindowType: "week", SourceStatus: "unavailable", Allocation: "0", ActualCost: "0", Remaining: "0", Overage: "0",
+	}
+	var employeeExists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2)`, enterpriseID, employeeID).Scan(&employeeExists); err != nil {
+		return nil, err
+	}
+	if !employeeExists {
+		return nil, errNotFound
+	}
+	var subscriptionID sql.NullInt64
+	var anchor sql.NullTime
+	var limit sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start,
+		       upstream_subscription.weekly_limit_usd::text
+		FROM enterprises AS enterprise
+		JOIN enterprise_employees AS employee ON employee.enterprise_id = enterprise.id AND employee.id = $2
+		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
+		  ON enterprise_subscription.enterprise_id = enterprise.id AND enterprise_subscription.status = 'active'
+		LEFT JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID, employeeID).
+		Scan(&subscriptionID, &anchor, &limit)
+	if err != nil {
+		return nil, err
+	}
+	if !subscriptionID.Valid || !anchor.Valid {
+		return result, nil
+	}
+	result.SubscriptionID = &subscriptionID.Int64
+	windowAnchor := anchor.Time.UTC()
+	result.WindowAnchor = &windowAnchor
+	result.SourceStatus = "available"
+	var configured, actual string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COALESCE((SELECT amount FROM enterprise_weekly_allocations
+		                WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
+		                  AND window_type = 'week' AND window_anchor = $4
+		                ORDER BY version DESC LIMIT 1), 0)::NUMERIC(20,8)::text,
+		       COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0)::NUMERIC(20,8)::text,
+		       COUNT(attribution.id)
+		FROM enterprise_usage_attributions AS attribution
+		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+		WHERE attribution.enterprise_id = $1 AND attribution.subscription_id = $2
+		  AND attribution.employee_id = $3 AND attribution.window_type = 'week'
+		  AND attribution.window_anchor = $4 AND attribution.classification = 'employee'`,
+		enterpriseID, subscriptionID.Int64, employeeID, windowAnchor).Scan(&configured, &actual, &result.Requests)
+	if err != nil {
+		return nil, err
+	}
+	result.Allocation, result.ActualCost = configured, actual
+	result.Remaining = decimalMaxDifference(configured, actual)
+	result.Overage = decimalMaxDifference(actual, configured)
+	return result, nil
+}
+
+func (s *Service) ListEmployeeUsage(ctx context.Context, enterpriseID, employeeID int64) ([]EmployeeUsageRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT attribution.request_at, attribution.window_anchor,
+		       CASE WHEN LENGTH(api_key.key) <= 10 THEN '********'
+		            ELSE SUBSTRING(api_key.key FROM 1 FOR 6) || '...' || RIGHT(api_key.key, 4) END,
+		       COALESCE(usage_log.actual_cost, 0)::NUMERIC(20,8)::text
+		FROM enterprise_usage_attributions AS attribution
+		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+		LEFT JOIN api_keys AS api_key ON api_key.id = attribution.api_key_id
+		WHERE attribution.enterprise_id = $1 AND attribution.employee_id = $2
+		  AND attribution.window_type = 'week' AND attribution.classification = 'employee'
+		ORDER BY attribution.request_at DESC, attribution.id DESC LIMIT 100`, enterpriseID, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]EmployeeUsageRecord, 0)
+	for rows.Next() {
+		var item EmployeeUsageRecord
+		if err := rows.Scan(&item.RequestAt, &item.WindowAnchor, &item.APIKeyMasked, &item.ActualCost); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func decimalMaxDifference(left, right string) string {
+	l, ok := new(big.Float).SetPrec(256).SetString(strings.TrimSpace(left))
+	if !ok {
+		return "0"
+	}
+	r, ok := new(big.Float).SetPrec(256).SetString(strings.TrimSpace(right))
+	if !ok {
+		return "0"
+	}
+	if l.Sub(l, r).Sign() <= 0 {
+		return "0"
+	}
+	return l.Text('f', 8)
+}
+
 func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email, password string, departmentID *int64) (*Employee, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" || len(password) < 12 {
@@ -803,12 +1159,33 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 	}
 	item := new(Employee)
 	var dept sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `
-		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, department_id, status, must_change_password, initial_password_expires_at)
+	actor := auditActor(ctx)
+	insertEmployee := func(q queryRower) error {
+		return q.QueryRowContext(ctx, `
+			INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, department_id, status, must_change_password, initial_password_expires_at)
 		SELECT $1, $2, $2, $3, $4, 'active', TRUE, NOW() + INTERVAL '24 hours'
 		WHERE $4::bigint IS NULL OR EXISTS (SELECT 1 FROM enterprise_departments WHERE enterprise_id = $1 AND id = $4 AND status = 'active')
 		RETURNING id, current_email, status, department_id, must_change_password
-	`, enterpriseID, email, string(hash), departmentID).Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange)
+		`, enterpriseID, email, string(hash), departmentID).Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange)
+	}
+	if actor == "" {
+		err = insertEmployee(s.db)
+	} else {
+		tx, txErr := s.db.BeginTx(ctx, nil)
+		if txErr != nil {
+			return nil, txErr
+		}
+		defer tx.Rollback()
+		err = insertEmployee(tx)
+		if err == nil {
+			if auditErr := writeAuditEvent(ctx, tx, enterpriseID, "employee.created", "employee", &item.ID, map[string]any{"result": "success", "department_id": departmentID}); auditErr != nil {
+				return nil, auditErr
+			}
+		}
+		if err == nil {
+			err = tx.Commit()
+		}
+	}
 	if err != nil {
 		return nil, errConflict
 	}
@@ -853,6 +1230,9 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 			return err
 		}
 	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.updated", "employee", &employeeID, map[string]any{"result": "success", "status": status, "department_id": departmentID}); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -882,6 +1262,9 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2`, enterpriseID, employeeID); err != nil {
+		return err
+	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.terminated", "employee", &employeeID, map[string]any{"result": "success"}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1040,6 +1423,9 @@ func (s *Service) PutBrand(ctx context.Context, enterpriseID int64, input BrandI
 			return nil, err
 		}
 	}
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "brand.updated", "enterprise_branding", &enterpriseID, map[string]any{"result": "success", "fields": []string{"enterprise_name", "title", "body", "slogan", "background"}}); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -1059,15 +1445,36 @@ func (s *Service) UploadBrandBackground(ctx context.Context, enterpriseID int64,
 	if _, err := storage.Save(ctx, key, contentType, data); err != nil {
 		return nil, err
 	}
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO enterprise_branding (enterprise_id, background_url, background_object_key, background_content_type, background_sha256, background_size_bytes)
+	writeBrand := func(q dbExecutor) error {
+		_, err := q.ExecContext(ctx, `
+			INSERT INTO enterprise_branding (enterprise_id, background_url, background_object_key, background_content_type, background_sha256, background_size_bytes)
 		VALUES ($1, '', $2, $3, $4, $5)
 		ON CONFLICT (enterprise_id) DO UPDATE SET background_url = '', background_object_key = EXCLUDED.background_object_key,
 			background_content_type = EXCLUDED.background_content_type,
 			background_sha256 = EXCLUDED.background_sha256,
 			background_size_bytes = EXCLUDED.background_size_bytes, updated_at = NOW()
-	`, enterpriseID, key, contentType, actualSHA256, int64(len(data))); err != nil {
-		return nil, err
+		`, enterpriseID, key, contentType, actualSHA256, int64(len(data)))
+		return err
+	}
+	if actor := auditActor(ctx); actor == "" {
+		if err := writeBrand(s.db); err != nil {
+			return nil, err
+		}
+	} else {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		if err := writeBrand(tx); err != nil {
+			return nil, err
+		}
+		if err := writeAuditEvent(ctx, tx, enterpriseID, "brand.background_updated", "enterprise_branding", &enterpriseID, map[string]any{"result": "success", "content_type": contentType, "size_bytes": len(data)}); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
 	}
 	return &BrandObject{URL: publicBrandBackgroundURL, ContentType: contentType, SHA256: actualSHA256, Size: int64(len(data))}, nil
 }

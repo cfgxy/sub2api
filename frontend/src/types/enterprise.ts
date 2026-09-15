@@ -39,6 +39,40 @@ export interface EnterpriseEmployee {
   terminated_at?: string
 }
 
+export interface EnterpriseEmployeeUsageSummary {
+  subscription_id?: number
+  window_type: 'week'
+  window_anchor?: string
+  source_status: 'available' | 'unavailable'
+  allocation: string
+  actual_cost: string
+  remaining: string
+  overage: string
+  requests: number
+}
+
+export interface EnterpriseEmployeeUsageRecord {
+  request_at: string
+  window_anchor: string
+  api_key_masked: string
+  actual_cost: string
+}
+
+export interface EnterpriseEmployeeHome {
+  usage: EnterpriseEmployeeUsageSummary
+  key: EnterpriseEmployeeKey | null
+}
+
+export interface EnterpriseKeySummary {
+  api_key_id: number
+  employee_id: number
+  employee_email: string
+  generation: number
+  status: 'active' | 'disabled'
+  created_at: string
+  updated_at: string
+}
+
 export interface EnterpriseBrand {
   enterprise_name: string
   title: string
