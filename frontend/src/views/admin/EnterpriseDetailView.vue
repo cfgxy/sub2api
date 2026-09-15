@@ -46,7 +46,7 @@ async function disable() {
 		: '无活动或待生效订阅'
 	try {
 		await ElMessageBox.confirm(
-			`确认停用 ${current.name}？关联订阅：${subscriptionLabelText}；员工 ${current.employee_count} 人（在职 ${current.active_employee_count} 人）；活动会话 ${current.active_session_count} 个；活动 Key ${current.active_key_count} 个。停用会拒绝新登录并撤销活动会话，保留历史记录。`,
+			`确认停用 ${current.name}？关联订阅：${subscriptionLabelText}；员工 ${current.employee_count} 人（在职 ${current.active_employee_count} 人）；活动会话 ${current.active_session_count} 个；活动 Key ${current.active_key_count} 个。停用会拒绝新登录、撤销活动会话并禁用活动 Key，保留历史记录。`,
 			'停用企业',
 			{ type: 'warning' },
 		)

@@ -54,6 +54,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/login',
+    name: 'AdminLogin',
+    component: () => import('@/views/auth/LoginView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Platform Login',
+      titleKey: 'admin.platformLogin.title',
+      platformOnly: true
+    }
+  },
+  {
     path: '/register',
     name: 'Register',
     component: () => import('@/views/auth/RegisterView.vue'),
@@ -857,7 +868,7 @@ router.beforeEach(async (to, _from, next) => {
   // If route doesn't require auth, allow access
   if (!requiresAuth) {
     // If already authenticated and trying to access login/register, redirect to appropriate dashboard
-    if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
+    if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/admin/login' || to.path === '/register')) {
       // In backend mode, non-admin users should NOT be redirected away from login
       // (they are blocked from all protected routes, so redirecting would cause a loop)
       if (appStore.backendModeEnabled && !authStore.isAdmin) {
@@ -913,9 +924,11 @@ router.beforeEach(async (to, _from, next) => {
 
   // Route requires authentication
   if (!authStore.isAuthenticated) {
-    // Not authenticated, redirect to login
+    // Not authenticated, redirect to login.
+    // 平台专属路由（requiresAdmin）走独立的 /admin/login 入口，避免把注册、OAuth、Passkey
+    // 等普通用户入口带入平台管理主体的登录流程。
     next({
-      path: '/login',
+      path: requiresAdmin ? '/admin/login' : '/login',
       query: { redirect: to.fullPath } // Save intended destination
     })
     return

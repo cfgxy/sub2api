@@ -3,11 +3,14 @@
     <div class="space-y-6">
       <!-- Title -->
       <div class="text-center">
+        <p v-if="isPlatformEntry" class="mb-1 text-xs font-semibold uppercase tracking-wide text-primary-600 dark:text-primary-400">
+          {{ t('admin.platformLogin.eyebrow') }}
+        </p>
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
-          {{ t('auth.welcomeBack') }}
+          {{ isPlatformEntry ? t('admin.platformLogin.title') : t('auth.welcomeBack') }}
         </h2>
         <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
-          {{ t('auth.signInToAccount') }}
+          {{ isPlatformEntry ? t('admin.platformLogin.subtitle') : t('auth.signInToAccount') }}
         </p>
       </div>
       <!-- Login Form -->
@@ -197,7 +200,7 @@
     </div>
 
     <!-- Footer -->
-    <template v-if="!backendModeEnabled" #footer>
+    <template v-if="!backendModeEnabled && !isPlatformEntry" #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
         <router-link
@@ -223,7 +226,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
 import LinuxDoOAuthSection from '@/components/auth/LinuxDoOAuthSection.vue'
@@ -258,6 +261,7 @@ const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
 // ==================== Router & Stores ====================
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
@@ -347,12 +351,17 @@ const authActionDisabled = computed(
   () => isLoading.value || passkeyLoading.value || !publicSettingsLoaded.value || agreementGateActive.value
 )
 
+// 平台管理主体登录职责单一：不继承普通用户入口的 Passkey/OAuth/注册，
+// 会话失效重登也一律回到本入口，不带入通用产品的认证扩展面。
+const isPlatformEntry = computed(() => route.name === 'AdminLogin')
+
 const showPasskeyLogin = computed(
-  () => passkeyEnabled.value && typeof window.PublicKeyCredential !== 'undefined'
+  () => !isPlatformEntry.value && passkeyEnabled.value && typeof window.PublicKeyCredential !== 'undefined'
 )
 
 const showOAuthLogin = computed(
   () =>
+    !isPlatformEntry.value &&
     !backendModeEnabled.value &&
     (linuxdoOAuthEnabled.value ||
       dingtalkOAuthEnabled.value ||
