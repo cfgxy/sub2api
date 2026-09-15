@@ -398,12 +398,12 @@ func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*Platfor
 					'weekly_limit', COALESCE(g.weekly_limit_usd::text, ''),
 					'weekly_window_start', es.observed_weekly_window_start,
 					'starts_at', us.starts_at, 'expires_at', us.expires_at
-				) FROM enterprise_subscriptions AS es
-				JOIN user_subscriptions AS us ON us.id = es.upstream_user_subscription_id
-				JOIN groups AS g ON g.id = us.group_id
-				WHERE es.enterprise_id = e.id AND es.status IN ('active', 'scheduled')
-				ORDER BY CASE WHEN es.status = 'active' THEN 0 ELSE 1 END, us.starts_at, es.id
-			), '[]'::jsonb)
+					) ORDER BY CASE WHEN es.status = 'active' THEN 0 ELSE 1 END, us.starts_at, es.id
+					) FROM enterprise_subscriptions AS es
+					JOIN user_subscriptions AS us ON us.id = es.upstream_user_subscription_id
+					JOIN groups AS g ON g.id = us.group_id
+					WHERE es.enterprise_id = e.id AND es.status IN ('active', 'scheduled')
+				), '[]'::jsonb)
 		FROM enterprises AS e WHERE e.id = $1`, id).Scan(&item.AdminEmail, &subscriptionsJSON)
 	if err != nil {
 		return nil, err
