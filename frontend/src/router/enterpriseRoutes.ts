@@ -5,6 +5,7 @@ export const enterpriseRoutes: RouteRecordRaw[] = [
   { path: '/enterprise/login', name: 'EnterpriseLogin', component: () => import('@/views/enterprise/EnterpriseLoginView.vue'), meta: { requiresEnterpriseAuth: false, title: '企业登录' } },
   { path: '/enterprise/forgot-password', name: 'EnterpriseForgotPassword', component: () => import('@/views/enterprise/EnterpriseForgotPasswordView.vue'), meta: { requiresEnterpriseAuth: false, title: '找回企业密码' } },
   { path: '/enterprise/reset-password', name: 'EnterpriseResetPassword', component: () => import('@/views/enterprise/EnterpriseResetPasswordView.vue'), meta: { requiresEnterpriseAuth: false, title: '重置企业密码' } },
+  { path: '/enterprise/session-states', name: 'EnterpriseSessionStates', component: () => import('@/views/enterprise/EnterpriseSessionStatesView.vue'), meta: { requiresEnterpriseAuth: false, title: '认证与访问状态' } },
   { path: '/enterprise/change-password', name: 'EnterpriseChangePassword', component: () => import('@/views/enterprise/EnterpriseChangePasswordView.vue'), meta: { requiresEnterpriseAuth: true, enterpriseRole: 'employee', title: '修改初始密码' } },
   {
     path: '/enterprise',
@@ -26,4 +27,5 @@ export const enterpriseRoutes: RouteRecordRaw[] = [
       { path: 'admin/sessions', name: 'EnterpriseAdminSessions', component: () => import('@/views/enterprise/EnterpriseSessionsView.vue'), meta: { requiresEnterpriseAuth: true, enterpriseRole: 'admin', title: '我的会话' } },
     ],
   },
+  { path: '/enterprise/:pathMatch(.*)*', redirect: { name: 'EnterpriseSessionStates', query: { state: 'not-found' } }, meta: { requiresEnterpriseAuth: false, title: '页面不存在' } },
 ]

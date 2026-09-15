@@ -412,7 +412,8 @@ func (h *Handler) forgotPassword(c *gin.Context) {
 		return
 	}
 	resetBaseURL := "https://" + requestHost(c.Request) + "/enterprise/reset-password"
-	if response.ErrorFrom(c, h.service.RequestReset(c.Request.Context(), requestHost(c.Request), req.Email, resetBaseURL, c.GetHeader("Accept-Language"))) {
+	ctx := WithAuditActor(c.Request.Context(), "enterprise_public")
+	if response.ErrorFrom(c, h.service.RequestReset(ctx, requestHost(c.Request), req.Email, resetBaseURL, c.GetHeader("Accept-Language"))) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -423,7 +424,8 @@ func (h *Handler) resetPassword(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	if response.ErrorFrom(c, h.service.ResetPassword(c.Request.Context(), requestHost(c.Request), req.Token, req.Password)) {
+	ctx := WithAuditActor(c.Request.Context(), "enterprise_public")
+	if response.ErrorFrom(c, h.service.ResetPassword(ctx, requestHost(c.Request), req.Token, req.Password)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -478,14 +480,18 @@ func (h *Handler) getSession(c *gin.Context) {
 }
 
 func (h *Handler) revokeSession(c *gin.Context) {
-	if response.ErrorFrom(c, h.service.RevokeSession(c.Request.Context(), mustClaims(c), c.Param("id"))) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	if response.ErrorFrom(c, h.service.RevokeSession(ctx, claims, c.Param("id"))) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
 }
 
 func (h *Handler) revokeAllSessions(c *gin.Context) {
-	if response.ErrorFrom(c, h.service.RevokeAllSessions(c.Request.Context(), mustClaims(c))) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	if response.ErrorFrom(c, h.service.RevokeAllSessions(ctx, claims)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})

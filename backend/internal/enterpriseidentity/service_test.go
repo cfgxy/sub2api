@@ -432,7 +432,7 @@ func TestAuthenticateRejectsDisabledEnterpriseImmediately(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "admin_user_id", "status"}).AddRow(1, "Acme", "acme.example.com", 5, "disabled"))
 
 	_, _, err = svc.Authenticate(context.Background(), "acme.example.com", raw)
-	require.ErrorIs(t, err, errInactive)
+	require.ErrorIs(t, err, errEnterpriseInactive)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

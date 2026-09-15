@@ -32,7 +32,7 @@ func TestGetPlatformEnterpriseIncludesSubscriptionAndImpactSummary(t *testing.T)
 	item, err := svc.GetPlatformEnterprise(context.Background(), 7)
 
 	require.NoError(t, err)
-	require.Equal(t, "admin@example.com", item.AdminEmail)
+	require.Equal(t, "a***@example.com", item.AdminEmail)
 	require.Equal(t, int64(12), item.EmployeeCount)
 	require.Equal(t, int64(10), item.ActiveEmployeeCount)
 	require.Equal(t, int64(3), item.ActiveSessionCount)

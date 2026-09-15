@@ -85,8 +85,17 @@ enterpriseClient.interceptors.response.use(
       }
     }
     const data = error.response?.data as Record<string, unknown> | undefined
+    const status = error.response?.status ?? 0
+    const reason = typeof data?.reason === 'string' ? data.reason : ''
+    if (!isAuthRequest && typeof window !== 'undefined' && !window.location.pathname.startsWith('/enterprise/session-states')) {
+      let state = status === 403 ? 'forbidden' : status === 404 ? 'not-found' : status >= 500 ? 'source-unavailable' : 'session-expired'
+      if (reason === 'ENTERPRISE_HOST_MISMATCH') state = 'cross-enterprise'
+      if (reason === 'ENTERPRISE_DISABLED') state = 'enterprise-disabled'
+      if (reason === 'ENTERPRISE_PRINCIPAL_INACTIVE') state = 'employee-disabled'
+      window.location.href = `/enterprise/session-states?state=${state}`
+    }
     return Promise.reject({
-      status: error.response?.status ?? 0,
+      status,
       code: data?.code,
       reason: data?.reason,
       message: data?.message || error.message,

@@ -52,16 +52,20 @@ const (
 )
 
 var (
-	errInvalidCredentials = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	errInvalidToken       = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
-	errInactive           = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise or identity is not active")
-	errWrongHost          = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
-	errPasswordExpired    = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
-	errForceChange        = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
-	errResetInvalid       = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
-	errNotFound           = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
-	errConflict           = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
-	errInvalidBrand       = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
+	errInvalidCredentials       = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	errInvalidToken             = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
+	errEnterpriseInactive       = infraerrors.Unauthorized("ENTERPRISE_DISABLED", "enterprise workspace is not active")
+	errPrincipalInactive        = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise identity is not active")
+	errInactive                 = errPrincipalInactive
+	errWrongHost                = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
+	errPasswordExpired          = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
+	errForceChange              = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
+	errResetInvalid             = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
+	errDedicatedUserUnavailable = infraerrors.BadRequest("DEDICATED_UPSTREAM_USER_UNAVAILABLE", "dedicated upstream user is not active")
+	errSubscriptionUnavailable  = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
+	errNotFound                 = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
+	errConflict                 = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
+	errInvalidBrand             = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
 )
 
 type PasswordResetMailer interface {
@@ -136,6 +140,21 @@ func (s *Service) RecordRejectedAuditEvent(ctx context.Context, enterpriseID int
 		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
 		VALUES ($1, $2, $3, $4, $5::jsonb, $6)
 	`, enterpriseID, eventType, entityType, entityID, payload, actor)
+	return err
+}
+
+func (s *Service) recordAuditEvent(ctx context.Context, enterpriseID int64, eventType, entityType string, entityID *int64, payload any) error {
+	if auditActor(ctx) == "" || enterpriseID <= 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+	`, enterpriseID, eventType, entityType, entityID, encoded, auditActor(ctx))
 	return err
 }
 
@@ -314,9 +333,22 @@ func (s *Service) enterpriseByHost(ctx context.Context, host string) (*Enterpris
 		return nil, err
 	}
 	if e.Status != "active" {
-		return nil, errInactive
+		return nil, errEnterpriseInactive
 	}
 	return &e, nil
+}
+
+func maskEnterpriseEmail(email string) string {
+	email = strings.TrimSpace(email)
+	at := strings.LastIndexByte(email, '@')
+	if at <= 0 || at == len(email)-1 {
+		return "已配置"
+	}
+	local := email[:at]
+	if len(local) == 1 {
+		return "*" + email[at:]
+	}
+	return local[:1] + "***" + email[at:]
 }
 
 func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseInput, actorUserID int64) (*PlatformEnterprise, error) {
@@ -331,6 +363,38 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 		return nil, err
 	}
 	defer tx.Rollback()
+
+	var upstreamEmail, upstreamStatus string
+	if err = tx.QueryRowContext(ctx, `
+		SELECT email, status FROM users WHERE id = $1 FOR SHARE
+	`, input.DedicatedUpstreamUser).Scan(&upstreamEmail, &upstreamStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errDedicatedUserUnavailable
+		}
+		return nil, err
+	}
+	if upstreamStatus != "active" {
+		return nil, errDedicatedUserUnavailable
+	}
+	var subscriptionAvailable bool
+	if err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_subscriptions AS subscription
+			JOIN groups AS group_record ON group_record.id = subscription.group_id
+			WHERE subscription.user_id = $1
+			  AND subscription.status = 'active'
+			  AND subscription.starts_at <= NOW()
+			  AND subscription.expires_at > NOW()
+			  AND group_record.status = 'active'
+			  AND COALESCE(group_record.weekly_limit_usd, 0) > 0
+		)
+	`, input.DedicatedUpstreamUser).Scan(&subscriptionAvailable); err != nil {
+		return nil, err
+	}
+	if !subscriptionAvailable {
+		return nil, errSubscriptionUnavailable
+	}
+
 	result := new(PlatformEnterprise)
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host, status)
@@ -340,6 +404,7 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 	if err != nil {
 		return nil, errConflict
 	}
+	result.AdminEmail = maskEnterpriseEmail(upstreamEmail)
 	actor := fmt.Sprintf("platform_user:%d", actorUserID)
 	payload, marshalErr := json.Marshal(map[string]any{"result": "success", "reason": input.Reason})
 	if marshalErr != nil {
@@ -365,7 +430,16 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 		args = append(args, status)
 		conditions = append(conditions, fmt.Sprintf("status = $%d", len(args)))
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, LOWER(BTRIM(portal_host)), dedicated_upstream_user_id, status, created_at FROM enterprises WHERE `+strings.Join(conditions, " AND ")+` ORDER BY id DESC`, args...)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.id, e.name, LOWER(BTRIM(e.portal_host)), e.dedicated_upstream_user_id, e.status, e.created_at,
+		       COALESCE((SELECT email FROM users WHERE id = e.admin_user_id), ''),
+		       (SELECT COUNT(*) FROM enterprise_employees WHERE enterprise_id = e.id),
+		       (SELECT COUNT(*) FROM enterprise_employees WHERE enterprise_id = e.id AND status = 'active'),
+		       (SELECT COUNT(*) FROM enterprise_sessions WHERE enterprise_id = e.id AND revoked_at IS NULL AND expires_at > NOW()),
+		       (SELECT COUNT(*) FROM enterprise_key_assignments AS assignment
+		          JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+		          WHERE assignment.enterprise_id = e.id AND assignment.status = 'active' AND api_key.status = 'active')
+		FROM enterprises AS e WHERE `+strings.Join(conditions, " AND ")+` ORDER BY e.id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -373,9 +447,12 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 	items := make([]PlatformEnterprise, 0)
 	for rows.Next() {
 		var item PlatformEnterprise
-		if err := rows.Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt); err != nil {
+		var adminEmail string
+		if err := rows.Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt,
+			&adminEmail, &item.EmployeeCount, &item.ActiveEmployeeCount, &item.ActiveSessionCount, &item.ActiveKeyCount); err != nil {
 			return nil, err
 		}
+		item.AdminEmail = maskEnterpriseEmail(adminEmail)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -408,6 +485,7 @@ func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*Platfor
 	if err != nil {
 		return nil, err
 	}
+	item.AdminEmail = maskEnterpriseEmail(item.AdminEmail)
 	if len(subscriptionsJSON) > 0 {
 		if err = json.Unmarshal(subscriptionsJSON, &item.Subscriptions); err != nil {
 			return nil, err
@@ -448,7 +526,23 @@ func (s *Service) DisableEnterprise(ctx context.Context, id, actorUserID int64, 
 	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND revoked_at IS NULL`, id); err != nil {
 		return err
 	}
-	payload, err := json.Marshal(map[string]any{"result": "success", "reason": reason})
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE enterprise_key_assignments
+		SET status = 'revoked', revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW()
+		WHERE enterprise_id = $1 AND status = 'active'
+	`, id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE api_keys
+		SET status = 'disabled', updated_at = NOW()
+		WHERE status = 'active' AND id IN (
+			SELECT api_key_id FROM enterprise_key_assignments WHERE enterprise_id = $1
+		)
+	`, id); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{"result": "success", "reason": reason, "keys_disabled": true})
 	if err != nil {
 		return err
 	}
@@ -495,7 +589,7 @@ func (s *Service) Login(ctx context.Context, host, email, password, userAgent, i
 		return nil, errInvalidCredentials
 	}
 	if status != "active" {
-		return nil, errInactive
+		return nil, errPrincipalInactive
 	}
 	if p.PrincipalType == "employee" && p.ForceChange && expires.Valid && !s.now().Before(expires.Time) {
 		return nil, errPasswordExpired
@@ -643,7 +737,7 @@ func (s *Service) currentPrincipalFrom(ctx context.Context, db queryRower, enter
 		return nil, errInvalidToken
 	}
 	if status != "active" {
-		return nil, errInactive
+		return nil, errPrincipalInactive
 	}
 	return &p, nil
 }
@@ -859,8 +953,11 @@ func (s *Service) RequestReset(ctx context.Context, host, email, resetBaseURL, l
 		SELECT id, current_email FROM enterprise_employees
 		WHERE enterprise_id = $1 AND status = 'active' AND LOWER(BTRIM(current_email)) = LOWER(BTRIM($2))
 	`, e.ID, email).Scan(&employeeID, &currentEmail)
+	if errors.Is(err, sql.ErrNoRows) {
+		return s.recordAuditEvent(ctx, e.ID, "password.reset_requested", "employee", nil, map[string]any{"result": "success", "reason": "request_accepted"})
+	}
 	if err != nil {
-		return nil
+		return err
 	}
 	raw, err := randomToken()
 	if err != nil {
@@ -886,7 +983,7 @@ func (s *Service) RequestReset(ctx context.Context, host, email, resetBaseURL, l
 			WHERE enterprise_id = $1 AND employee_id = $2 AND token_hash = $3 AND used_at IS NULL
 		`, e.ID, employeeID, tokenHash(raw))
 	}
-	return nil
+	return s.recordAuditEvent(ctx, e.ID, "password.reset_requested", "employee", &employeeID, map[string]any{"result": "success", "reason": "request_accepted"})
 }
 
 func (s *Service) ResetPassword(ctx context.Context, host, token, next string) error {
@@ -918,6 +1015,8 @@ func (s *Service) ResetPassword(ctx context.Context, host, token, next string) e
 		FOR UPDATE OF reset, employee
 	`, e.ID, tokenHash(token)).Scan(&tokenID, &employeeID)
 	if err != nil {
+		_ = tx.Rollback()
+		_ = s.RecordRejectedAuditEvent(ctx, e.ID, "password.reset", "employee", nil, "invalid_token")
 		return errResetInvalid
 	}
 	result, err := tx.ExecContext(ctx, `
@@ -928,6 +1027,8 @@ func (s *Service) ResetPassword(ctx context.Context, host, token, next string) e
 		return err
 	}
 	if n, _ := result.RowsAffected(); n != 1 {
+		_ = tx.Rollback()
+		_ = s.RecordRejectedAuditEvent(ctx, e.ID, "password.reset", "employee", &employeeID, "invalid_token")
 		return errResetInvalid
 	}
 	_, err = tx.ExecContext(ctx, `
@@ -941,6 +1042,9 @@ func (s *Service) ResetPassword(ctx context.Context, host, token, next string) e
 			WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2 AND revoked_at IS NULL`, e.ID, employeeID)
 	}
 	if err != nil {
+		return err
+	}
+	if err = writeAuditEvent(ctx, tx, e.ID, "password.reset", "employee", &employeeID, map[string]any{"result": "success"}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -974,7 +1078,12 @@ func (s *Service) ListSessions(ctx context.Context, claims *Claims) ([]Session, 
 }
 
 func (s *Service) RevokeSession(ctx context.Context, claims *Claims, id string) error {
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW()
 		WHERE enterprise_id = $1 AND principal_type = $2 AND principal_id = $3 AND id = $4
 	`, claims.EnterpriseID, claims.PrincipalType, claims.PrincipalID, id)
@@ -982,17 +1091,32 @@ func (s *Service) RevokeSession(ctx context.Context, claims *Claims, id string) 
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
+		_ = tx.Rollback()
+		_ = s.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "session.revoke", "session", nil, "not_found")
 		return errNotFound
 	}
-	return nil
+	if err = writeAuditEvent(ctx, tx, claims.EnterpriseID, "session.revoke", "session", nil, map[string]any{"result": "success"}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) RevokeAllSessions(ctx context.Context, claims *Claims) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `
 		UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW()
 		WHERE enterprise_id = $1 AND principal_type = $2 AND principal_id = $3 AND revoked_at IS NULL
-	`, claims.EnterpriseID, claims.PrincipalType, claims.PrincipalID)
-	return err
+	`, claims.EnterpriseID, claims.PrincipalType, claims.PrincipalID); err != nil {
+		return err
+	}
+	if err = writeAuditEvent(ctx, tx, claims.EnterpriseID, "session.revoke_all", "session", nil, map[string]any{"result": "success"}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) ListDepartments(ctx context.Context, enterpriseID int64) ([]Department, error) {
