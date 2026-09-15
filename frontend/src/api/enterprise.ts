@@ -5,10 +5,16 @@ import type {
   EmployeeUpdateInput,
   EnterpriseBrand,
   EnterpriseBrandUpdate,
+  EnterpriseAllocationListResult,
+  EnterpriseAllocationSummary,
   EnterpriseDepartment,
   EnterpriseEmployee,
   EnterpriseEmployeeKey,
   EnterpriseEmployeeKeyMutationResult,
+  EnterpriseEmployeeHome,
+  EnterpriseEmployeeUsageSummary,
+  EnterpriseEmployeeUsageRecord,
+  EnterpriseKeySummary,
   EnterprisePrincipal,
   EnterprisePaginated,
   EnterpriseSession,
@@ -25,6 +31,39 @@ const enterpriseKeyMutationPrefix = 'sub2api:enterprise:key-mutation:'
 let refreshPromise: Promise<EnterpriseTokenPair> | null = null
 const sessionListeners = new Set<(pair: EnterpriseTokenPair) => void>()
 const enterpriseKeyMutationKeys = new Map<string, string>()
+
+export type EnterpriseSessionState =
+  | 'session-expired'
+  | 'employee-disabled'
+  | 'enterprise-disabled'
+  | 'source-unavailable'
+  | 'forbidden'
+  | 'not-found'
+  | 'cross-enterprise'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+export function enterpriseSessionStateForError(error: unknown): EnterpriseSessionState | null {
+  if (!isRecord(error)) return null
+  const response = isRecord(error.response) ? error.response : null
+  const responseData = response && isRecord(response.data) ? response.data : null
+  const data = responseData || (isRecord(error) ? error : null)
+  const reason = typeof data?.reason === 'string' ? data.reason : ''
+  if (reason === 'ENTERPRISE_HOST_MISMATCH') return 'cross-enterprise'
+  if (reason === 'ENTERPRISE_DISABLED') return 'enterprise-disabled'
+  if (reason === 'ENTERPRISE_PRINCIPAL_INACTIVE') return 'employee-disabled'
+  if (reason === 'ENTERPRISE_KEY_NOT_FOUND') return null
+
+  const status = typeof response?.status === 'number' ? response.status : 0
+  if (status === 401) return 'session-expired'
+  if (status === 403) return 'forbidden'
+  if (status === 404) return 'not-found'
+  if (status >= 500) return 'source-unavailable'
+  if (status === 0 && axios.isAxiosError(error) && !response) return 'source-unavailable'
+  return null
+}
 
 export function onEnterpriseAuthSession(listener: (pair: EnterpriseTokenPair) => void) {
   sessionListeners.add(listener)
@@ -80,8 +119,13 @@ enterpriseClient.interceptors.response.use(
       }
     }
     const data = error.response?.data as Record<string, unknown> | undefined
+    const status = error.response?.status ?? 0
+    const state = enterpriseSessionStateForError(error)
+    if (!isAuthRequest && state && typeof window !== 'undefined' && !window.location.pathname.startsWith('/enterprise/session-states')) {
+      window.location.href = `/enterprise/session-states?state=${state}`
+    }
     return Promise.reject({
-      status: error.response?.status ?? 0,
+      status,
       code: data?.code,
       reason: data?.reason,
       message: data?.message || error.message,
@@ -198,10 +242,18 @@ export const enterpriseAPI = {
   forgotPassword: (email: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/auth/forgot-password', { email })),
   resetPassword: (token: string, password: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/auth/reset-password', { token, password })),
   changeInitialPassword: (current_password: string, new_password: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/password/first-change', { current_password, new_password })),
+  changePassword: (current_password: string, new_password: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/password/change', { current_password, new_password })),
   listSessions: () => data<EnterpriseSession[]>(enterpriseClient.get('/enterprise/sessions')),
   revokeSession: (id: string) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/sessions/${id}`)),
   revokeAllSessions: () => data<{ success: boolean }>(enterpriseClient.delete('/enterprise/sessions')),
   getCurrentKey: () => data<EnterpriseEmployeeKey | null>(enterpriseClient.get('/enterprise/keys/current')),
+  getEmployeeHome: () => data<EnterpriseEmployeeHome>(enterpriseClient.get('/enterprise/home')),
+  getEmployeeUsage: () => data<EnterpriseEmployeeUsageSummary>(enterpriseClient.get('/enterprise/usage/me')),
+  listEmployeeUsage: () => data<EnterpriseEmployeeUsageRecord[]>(enterpriseClient.get('/enterprise/usage/me/details')),
+  getEmployeeProfile: () => data<EnterpriseEmployee>(enterpriseClient.get('/enterprise/profile')),
+  setAllocation: (subscriptionId: number, employeeId: number, input: { enterprise_id: number; window_type: 'week'; window_anchor: string; credit: string; expected_version: number; reason: string }) => data<{ id: number; version: number }>(enterpriseClient.put(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, input)),
+  getAllocationSummary: (subscriptionId: number, employeeId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationSummary>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, { params })),
+  listSubscriptionAllocations: (subscriptionId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationListResult>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations`, { params })),
   createKey: () => withEnterpriseKeyMutation('create', 0, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
     enterpriseClient.post('/enterprise/keys', undefined, idempotencyHeaders(idempotencyKey)),
   )),
@@ -215,6 +267,7 @@ export const enterpriseAPI = {
   createDepartment: (name: string) => data<EnterpriseDepartment>(enterpriseClient.post('/enterprise/admin/departments', { name })),
   deleteDepartment: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/departments/${id}`)),
   listEmployees: () => data<EnterpriseEmployee[]>(enterpriseClient.get('/enterprise/admin/employees')),
+  getEmployee: (id: number) => data<EnterpriseEmployee>(enterpriseClient.get(`/enterprise/admin/employees/${id}`)),
   createEmployee: (input: EmployeeCreateInput) => data<EnterpriseEmployee>(enterpriseClient.post('/enterprise/admin/employees', input)),
   updateEmployee: (id: number, input: EmployeeUpdateInput) => data<{ success: boolean }>(enterpriseClient.patch(`/enterprise/admin/employees/${id}`, input)),
   terminateEmployee: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/employees/${id}`)),
@@ -236,6 +289,8 @@ export const enterpriseAPI = {
       enterpriseClient.post('/enterprise/admin/brand/background', form, { headers: { 'Content-Type': 'multipart/form-data' } }),
     )
   },
+  listAdminKeys: () => data<EnterpriseKeySummary[]>(enterpriseClient.get('/enterprise/admin/keys')),
+  revokeAdminKey: (id: number, idempotencyKey: string) => data<EnterpriseEmployeeKeyMutationResult>(enterpriseClient.post(`/enterprise/admin/keys/${id}/revoke`, undefined, idempotencyHeaders(idempotencyKey))),
   getWorkbenchSummary: (params?: Record<string, string | number>) => data<EnterpriseWorkbenchSummary>(enterpriseClient.get('/enterprise/admin/workbench/summary', { params })),
   listWorkbenchUsage: (params?: Record<string, string | number>) => data<EnterprisePaginated<EnterpriseWorkbenchUsageRow>>(enterpriseClient.get('/enterprise/admin/workbench/usage', { params })),
   listWorkbenchAuditEvents: (params?: Record<string, string | number>) => data<EnterprisePaginated<EnterpriseWorkbenchAuditEvent>>(enterpriseClient.get('/enterprise/admin/workbench/audit-events', { params })),

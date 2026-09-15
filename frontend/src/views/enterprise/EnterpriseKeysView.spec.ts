@@ -87,7 +87,7 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     wrapper.unmount()
   })
 
-  it('formats zero usage as zero instead of an unlimited limit', async () => {
+  it('keeps the enterprise key page on the weekly contract', async () => {
     getCurrentKey.mockResolvedValue({
       id: 10, masked_key: 'sk-zer...abcd', name: 'Enterprise employee key', status: 'active',
       quota: 25, quota_used: 0, rate_limit_5h: 5, rate_limit_1d: 10, rate_limit_7d: 20,
@@ -97,7 +97,9 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('已使用 $0.00')
-    expect(wrapper.text()).toContain('$0.00 / $5.00')
+    expect(wrapper.text()).not.toContain('5 小时')
+    expect(wrapper.text()).not.toContain('1 天')
+    expect(wrapper.text()).not.toContain('7 天')
     wrapper.unmount()
   })
 

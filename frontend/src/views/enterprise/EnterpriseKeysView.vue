@@ -27,12 +27,6 @@
             <small>已使用 {{ formatUsage(key.quota_used) }}</small>
             <el-progress :percentage="percentage(key.quota_used, key.quota)" :show-text="false" />
           </article>
-          <article v-for="window in windows" :key="window.label">
-            <span>{{ window.label }} 窗口</span>
-            <strong>{{ formatUsage(window.usage) }} / {{ formatLimit(window.limit) }}</strong>
-            <small>{{ window.reset ? `${formatDate(window.reset)} 重置` : '尚未开始计费' }}</small>
-            <el-progress :percentage="percentage(window.usage, window.limit)" :show-text="false" />
-          </article>
         </div>
       </template>
     </div>
@@ -46,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { CircleClose, Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -59,16 +53,9 @@ const mutating = ref(false)
 const secret = ref('')
 const secretVisible = ref(false)
 
-const windows = computed(() => key.value ? [
-  { label: '5 小时', usage: key.value.usage_5h, limit: key.value.rate_limit_5h, reset: key.value.reset_5h_at },
-  { label: '1 天', usage: key.value.usage_1d, limit: key.value.rate_limit_1d, reset: key.value.reset_1d_at },
-  { label: '7 天', usage: key.value.usage_7d, limit: key.value.rate_limit_7d, reset: key.value.reset_7d_at },
-] : [])
-
 const formatUsage = (value: number) => `$${value.toFixed(2)}`
 const formatLimit = (value: number) => value > 0 ? formatUsage(value) : '不限'
 const percentage = (usage: number, limit: number) => limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0
-const formatDate = (value: string) => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const statusLabel = (status: string) => ({ active: '有效', disabled: '已停用', quota_exhausted: '额度用尽', expired: '已过期' }[status] || status)
 
 async function load() {

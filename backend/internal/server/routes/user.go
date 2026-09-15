@@ -171,4 +171,5 @@ func RegisterEnterpriseAllocationRoutes(
 	enterpriseSubscriptions := authenticated.Group("/enterprise/subscriptions")
 	enterpriseSubscriptions.PUT("/:subscription_id/allocations/:employee_id", h.Set)
 	enterpriseSubscriptions.GET("/:subscription_id/allocations/:employee_id", h.Summary)
+	enterpriseSubscriptions.GET("/:subscription_id/allocations", h.List)
 }

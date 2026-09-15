@@ -1,5 +1,6 @@
+import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, syncEnterpriseAuthSession } from '@/api/enterprise'
+import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, syncEnterpriseAuthSession } from '@/api/enterprise'
 
 const employeePrincipal = {
   enterprise_id: 12,
@@ -196,5 +197,33 @@ describe('enterprise API password handling', () => {
 
     expect(post).not.toHaveBeenCalled()
     expect(sessionStorage.length).toBe(0)
+  })
+
+  it('keeps business validation and lifecycle conflicts on the calling page', () => {
+    expect(enterpriseSessionStateForError({ status: 400, reason: 'WEAK_PASSWORD' })).toBeNull()
+    expect(enterpriseSessionStateForError({ status: 409, reason: 'ENTERPRISE_KEY_VERSION_CONFLICT' })).toBeNull()
+  })
+
+  it('keeps a Key lifecycle 404 from a real Axios response on the calling page', () => {
+    const error = new AxiosError('Request failed with status code 404', 'ERR_BAD_REQUEST', undefined, undefined, {
+      data: { code: 404, reason: 'ENTERPRISE_KEY_NOT_FOUND', message: 'enterprise employee key not found' },
+      status: 404,
+      statusText: 'Not Found',
+      headers: {},
+      config: {} as never,
+    })
+
+    expect(enterpriseSessionStateForError(error)).toBeNull()
+    expect(enterpriseSessionStateForError(new AxiosError('Request failed with status code 404', 'ERR_BAD_REQUEST', undefined, undefined, {
+      data: { code: 404, reason: 'ENTERPRISE_RESOURCE_NOT_FOUND', message: 'resource not found' },
+      status: 404,
+      statusText: 'Not Found',
+      headers: {},
+      config: {} as never,
+    }))).toBe('not-found')
+  })
+
+  it('maps transport timeout to the source unavailable state', () => {
+    expect(enterpriseSessionStateForError(new AxiosError('network timeout', 'ECONNABORTED'))).toBe('source-unavailable')
   })
 })

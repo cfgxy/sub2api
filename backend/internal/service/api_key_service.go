@@ -472,6 +472,12 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
+	// 企业专用上游用户只能通过员工 Key 生命周期分配凭据，封闭通用 Key CRUD 旁路。
+	if dedicated, err := isEnterpriseDedicatedUser(ctx, s.apiKeyRepo, userID); err != nil {
+		return nil, fmt.Errorf("check enterprise dedicated user: %w", err)
+	} else if dedicated {
+		return nil, ErrInsufficientPerms
+	}
 
 	// 验证 IP 白名单格式
 	if len(req.IPWhitelist) > 0 {

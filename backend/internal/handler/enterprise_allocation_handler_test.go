@@ -17,8 +17,11 @@ type enterpriseAllocationStoreStub struct {
 	setParams    enterprise.SetAllocationParams
 	setErr       error
 	summaryErr   error
+	listQuery    enterprise.ListSubscriptionAllocationsQuery
+	listErr      error
 	calls        int
 	summaryCalls int
+	listCalls    int
 }
 
 func (s *enterpriseAllocationStoreStub) SetAllocation(_ context.Context, params enterprise.SetAllocationParams) (*enterprise.Allocation, error) {
@@ -32,9 +35,18 @@ func (s *enterpriseAllocationStoreStub) GetAllocationUsageSummary(context.Contex
 	return &enterprise.AllocationUsageSummary{}, s.summaryErr
 }
 
+func (s *enterpriseAllocationStoreStub) ListSubscriptionAllocations(_ context.Context, query enterprise.ListSubscriptionAllocationsQuery) (*enterprise.AllocationListResult, error) {
+	s.listCalls++
+	s.listQuery = query
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return &enterprise.AllocationListResult{SubscriptionID: query.SubscriptionID, WindowType: query.WindowType, WindowAnchor: query.WindowAnchor, Items: []enterprise.AllocationListItem{}}, nil
+}
+
 func TestEnterpriseAllocationHandlerRejectsUnauthenticatedRequest(t *testing.T) {
 	store := &enterpriseAllocationStoreStub{}
-	status := serveEnterpriseAllocationSet(t, store, false, `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`)
+	status := serveEnterpriseAllocationSet(t, store, false, `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`)
 	require.Equal(t, http.StatusUnauthorized, status)
 	require.Zero(t, store.calls)
 }
@@ -42,9 +54,9 @@ func TestEnterpriseAllocationHandlerRejectsUnauthenticatedRequest(t *testing.T) 
 func TestEnterpriseAllocationHandlerEnforcesProtocolValidation(t *testing.T) {
 	for name, body := range map[string]string{
 		"invalid window type": `{"enterprise_id":1,"window_type":"7d","window_anchor":"2026-09-08T00:00:00Z","credit":"1","reason":"test"}`,
-		"negative credit":     `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"-1","reason":"test"}`,
-		"legacy amount field": `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","amount":"1","reason":"test"}`,
-		"missing reason":      `{"enterprise_id":1,"window_type":"day","window_anchor":"2026-09-08T00:00:00Z","credit":"1"}`,
+		"negative credit":     `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"-1","reason":"test"}`,
+		"legacy amount field": `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","amount":"1","reason":"test"}`,
+		"missing reason":      `{"enterprise_id":1,"window_type":"week","window_anchor":"2026-09-08T00:00:00Z","credit":"1"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &enterpriseAllocationStoreStub{}
@@ -70,6 +82,37 @@ func TestEnterpriseAllocationSummaryHidesCrossScopeResource(t *testing.T) {
 	status := serveEnterpriseAllocationSummary(t, store, true)
 	require.Equal(t, http.StatusNotFound, status)
 	require.Equal(t, 1, store.summaryCalls)
+}
+
+func TestEnterpriseAllocationListRejectsUnauthenticatedRequest(t *testing.T) {
+	store := &enterpriseAllocationStoreStub{}
+	status := serveEnterpriseAllocationList(t, store, false, "enterprise_id=9&window_type=week&window_anchor=2026-09-14T00:00:00Z")
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Zero(t, store.listCalls)
+}
+
+func TestEnterpriseAllocationListRejectsNonWeeklyWindow(t *testing.T) {
+	store := &enterpriseAllocationStoreStub{}
+	status := serveEnterpriseAllocationList(t, store, true, "enterprise_id=9&window_type=month&window_anchor=2026-09-14T00:00:00Z")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Zero(t, store.listCalls)
+}
+
+func TestEnterpriseAllocationListPassesRequesterIdentityAndHidesAccessDenied(t *testing.T) {
+	store := &enterpriseAllocationStoreStub{listErr: enterprise.ErrEnterpriseAccessDenied}
+	status := serveEnterpriseAllocationList(t, store, true, "enterprise_id=9&window_type=week&window_anchor=2026-09-14T00:00:00Z")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, 1, store.listCalls)
+	require.Equal(t, int64(42), store.listQuery.RequesterUserID)
+	require.Equal(t, int64(9), store.listQuery.EnterpriseID)
+	require.Equal(t, int64(11), store.listQuery.SubscriptionID)
+}
+
+func TestEnterpriseAllocationListReturnsAggregatedResult(t *testing.T) {
+	store := &enterpriseAllocationStoreStub{}
+	status := serveEnterpriseAllocationList(t, store, true, "enterprise_id=9&window_type=week&window_anchor=2026-09-14T00:00:00Z")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, 1, store.listCalls)
 }
 
 func serveEnterpriseAllocationSet(t *testing.T, store EnterpriseAllocationStore, authenticated bool, body string) int {
@@ -103,6 +146,23 @@ func serveEnterpriseAllocationSummary(t *testing.T, store EnterpriseAllocationSt
 	})
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/subscriptions/11/allocations/22?enterprise_id=9&window_type=week&window_anchor=2026-09-08T10:00:00Z", nil)
+	router.ServeHTTP(recorder, req)
+	return recorder.Code
+}
+
+func serveEnterpriseAllocationList(t *testing.T, store EnterpriseAllocationStore, authenticated bool, query string) int {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	h := &EnterpriseAllocationHandler{store: store}
+	router.GET("/subscriptions/:subscription_id/allocations", func(c *gin.Context) {
+		if authenticated {
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})
+		}
+		h.List(c)
+	})
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions/11/allocations?"+query, nil)
 	router.ServeHTTP(recorder, req)
 	return recorder.Code
 }
