@@ -157,18 +157,18 @@ type Enterprise struct {
 }
 
 type PlatformEnterprise struct {
-	ID                    int64                 `json:"id"`
-	Name                  string                `json:"name"`
-	Host                  string                `json:"portal_host"`
-	DedicatedUpstreamUser int64                 `json:"dedicated_upstream_user_id"`
-	Status                string                `json:"status"`
-	CreatedAt             time.Time             `json:"created_at"`
-	AdminEmail            string                `json:"admin_email"`
-	EmployeeCount         int64                 `json:"employee_count"`
-	ActiveEmployeeCount   int64                 `json:"active_employee_count"`
-	ActiveSessionCount    int64                 `json:"active_session_count"`
-	ActiveKeyCount        int64                 `json:"active_key_count"`
-	Subscription          *PlatformSubscription `json:"subscription,omitempty"`
+	ID                    int64                  `json:"id"`
+	Name                  string                 `json:"name"`
+	Host                  string                 `json:"portal_host"`
+	DedicatedUpstreamUser int64                  `json:"dedicated_upstream_user_id"`
+	Status                string                 `json:"status"`
+	CreatedAt             time.Time              `json:"created_at"`
+	AdminEmail            string                 `json:"admin_email"`
+	EmployeeCount         int64                  `json:"employee_count"`
+	ActiveEmployeeCount   int64                  `json:"active_employee_count"`
+	ActiveSessionCount    int64                  `json:"active_session_count"`
+	ActiveKeyCount        int64                  `json:"active_key_count"`
+	Subscriptions         []PlatformSubscription `json:"subscriptions"`
 }
 
 type PlatformSubscription struct {
@@ -390,27 +390,26 @@ func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*Platfor
 	if err != nil {
 		return nil, err
 	}
-	var subscriptionJSON []byte
+	var subscriptionsJSON []byte
 	err = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE((SELECT email FROM users WHERE id = e.admin_user_id), ''),
-		       (SELECT jsonb_build_object(
+		       COALESCE((SELECT jsonb_agg(jsonb_build_object(
 					'id', es.id, 'status', es.status, 'plan', g.name,
 					'weekly_limit', COALESCE(g.weekly_limit_usd::text, ''),
-					'weekly_window_start', us.weekly_window_start,
+					'weekly_window_start', es.observed_weekly_window_start,
 					'starts_at', us.starts_at, 'expires_at', us.expires_at
 				) FROM enterprise_subscriptions AS es
 				JOIN user_subscriptions AS us ON us.id = es.upstream_user_subscription_id
 				JOIN groups AS g ON g.id = us.group_id
 				WHERE es.enterprise_id = e.id AND es.status IN ('active', 'scheduled')
-				ORDER BY CASE WHEN es.status = 'active' THEN 0 ELSE 1 END, es.effective_window_anchor DESC
-				LIMIT 1)
-		FROM enterprises AS e WHERE e.id = $1`, id).Scan(&item.AdminEmail, &subscriptionJSON)
+				ORDER BY CASE WHEN es.status = 'active' THEN 0 ELSE 1 END, us.starts_at, es.id
+			), '[]'::jsonb)
+		FROM enterprises AS e WHERE e.id = $1`, id).Scan(&item.AdminEmail, &subscriptionsJSON)
 	if err != nil {
 		return nil, err
 	}
-	if len(subscriptionJSON) > 0 {
-		item.Subscription = new(PlatformSubscription)
-		if err = json.Unmarshal(subscriptionJSON, item.Subscription); err != nil {
+	if len(subscriptionsJSON) > 0 {
+		if err = json.Unmarshal(subscriptionsJSON, &item.Subscriptions); err != nil {
 			return nil, err
 		}
 	}

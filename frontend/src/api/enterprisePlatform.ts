@@ -12,7 +12,7 @@ export interface PlatformEnterprise {
   active_employee_count: number
   active_session_count: number
   active_key_count: number
-  subscription?: PlatformSubscription
+  subscriptions: PlatformSubscription[]
 }
 
 export interface PlatformSubscription {
