@@ -93,6 +93,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.GET("/departments/:id/deletion-impact", h.previewDepartmentDeletion)
 	admin.DELETE("/departments/:id", h.deleteDepartment)
 	admin.GET("/employees", h.listEmployees)
+	admin.GET("/employees/:id", h.getEmployee)
 	admin.POST("/employees", h.createEmployee)
 	admin.PATCH("/employees/:id", h.updateEmployee)
 	admin.DELETE("/employees/:id", h.terminateEmployee)
@@ -566,6 +567,25 @@ func (h *Handler) listEmployees(c *gin.Context) {
 		return
 	}
 	response.Success(c, items)
+}
+func (h *Handler) getEmployee(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	claims := mustClaims(c)
+	item, err := h.service.GetEmployee(c.Request.Context(), claims.EnterpriseID, id)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	if h.keyRepository != nil {
+		key, err := h.keyRepository.GetEmployeeCurrentKey(c.Request.Context(), claims.EnterpriseID, id)
+		if response.ErrorFrom(c, err) {
+			return
+		}
+		item.CurrentKey = key
+	}
+	response.Success(c, item)
 }
 func (h *Handler) createEmployee(c *gin.Context) {
 	var req employeeCreateRequest

@@ -644,6 +644,38 @@ func TestPreviewDepartmentDeletionReturnsNotFoundForMissingOrForeignDepartment(t
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestGetEmployeeReturnsDetailWithDepartmentName(t *testing.T) {
+	svc, mock := newMockService(t)
+	created := time.Date(2026, 1, 8, 9, 24, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status")).
+		WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "status", "department_id", "department_name", "must_change_password", "terminated_at", "version", "created_at"}).
+			AddRow(int64(10), "employee-a@example.com", "active", int64(7), "研发中心", false, nil, int64(2), created))
+
+	item, err := svc.GetEmployee(context.Background(), 1, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), item.ID)
+	require.Equal(t, "employee-a@example.com", item.Email)
+	require.NotNil(t, item.DepartmentID)
+	require.Equal(t, int64(7), *item.DepartmentID)
+	require.NotNil(t, item.DepartmentName)
+	require.Equal(t, "研发中心", *item.DepartmentName)
+	require.Equal(t, created, item.CreatedAt)
+	require.Nil(t, item.TerminatedAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetEmployeeReturnsNotFoundForMissingOrForeignEmployee(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status")).
+		WithArgs(int64(1), int64(99)).
+		WillReturnError(sql.ErrNoRows)
+
+	_, err := svc.GetEmployee(context.Background(), 1, 99)
+	require.ErrorIs(t, err, errNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUpdateEmployeeSucceedsWhenVersionMatchesAndBumpsIt(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()

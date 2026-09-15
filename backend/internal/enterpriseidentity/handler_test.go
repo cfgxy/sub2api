@@ -2,13 +2,16 @@ package enterpriseidentity
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/enterprise"
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/alicebob/miniredis/v2"
@@ -44,6 +47,7 @@ func TestRegisterRoutesIncludesEnterpriseAuthSessionsAndAdminAPIs(t *testing.T) 
 		"POST /api/v1/enterprise/keys/rotate",
 		"GET /api/v1/enterprise/admin/departments",
 		"GET /api/v1/enterprise/admin/departments/:id/deletion-impact",
+		"GET /api/v1/enterprise/admin/employees/:id",
 		"POST /api/v1/enterprise/admin/employees",
 		"PUT /api/v1/enterprise/admin/brand",
 		"POST /api/v1/enterprise/admin/brand/background",
@@ -157,6 +161,54 @@ func TestEmployeeKeyHandlersUseAuthenticatedEmployeeClaims(t *testing.T) {
 	require.Equal(t, int64(22), store.rotateParams[0].EmployeeID)
 	require.Equal(t, int64(67), store.rotateParams[0].ExpectedAPIKeyID)
 	require.NotContains(t, rotateRecorder.Body.String(), "must-not-return-on-replay")
+}
+
+func TestGetEmployeeHandlerAttachesMaskedCurrentKeyWithinTenantScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, mock := newMockService(t)
+	created := time.Date(2026, 1, 8, 9, 24, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status")).
+		WithArgs(int64(11), int64(22)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "status", "department_id", "department_name", "must_change_password", "terminated_at", "version", "created_at"}).
+			AddRow(int64(22), "employee-a@example.com", "active", int64(7), "研发中心", false, nil, int64(2), created))
+	store := &employeeKeyStoreStub{current: &enterprise.EmployeeKey{ID: 67, MaskedKey: "sk-tes...0001", Status: "active"}}
+	h := NewHandler(svc, store, employeeKeyGeneratorStub{value: "unused"}, nil)
+	claims := &Claims{EnterpriseID: 11, PrincipalType: "admin", PrincipalID: 1, Role: "enterprise_admin", SessionID: "session-1"}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/enterprise/admin/employees/22", nil)
+	c.Params = gin.Params{{Key: "id", Value: "22"}}
+	c.Set(claimsContextKey, claims)
+	h.getEmployee(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, [2]int64{11, 22}, store.currentParams)
+	require.Contains(t, recorder.Body.String(), "sk-tes...0001")
+	require.Contains(t, recorder.Body.String(), "研发中心")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetEmployeeHandlerReturnsNotFoundForForeignEmployee(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status")).
+		WithArgs(int64(11), int64(99)).
+		WillReturnError(sql.ErrNoRows)
+	store := &employeeKeyStoreStub{}
+	h := NewHandler(svc, store, employeeKeyGeneratorStub{value: "unused"}, nil)
+	claims := &Claims{EnterpriseID: 11, PrincipalType: "admin", PrincipalID: 1, Role: "enterprise_admin", SessionID: "session-1"}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/enterprise/admin/employees/99", nil)
+	c.Params = gin.Params{{Key: "id", Value: "99"}}
+	c.Set(claimsContextKey, claims)
+	h.getEmployee(c)
+
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.Equal(t, [2]int64{}, store.currentParams)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestEmployeeKeyHandlersRejectUntrustedOrIncompleteRequests(t *testing.T) {

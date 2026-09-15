@@ -28,7 +28,7 @@ export interface EnterpriseSession {
   current: boolean
 }
 
-export interface EnterpriseDepartment { id: number; name: string }
+export interface EnterpriseDepartment { id: number; name: string; created_at: string }
 
 export interface EnterpriseDepartmentDeletionImpact {
   department_id: number
@@ -44,6 +44,12 @@ export interface EnterpriseEmployee {
   must_change_password: boolean
   terminated_at?: string
   version: number
+}
+
+export interface EnterpriseEmployeeDetail extends EnterpriseEmployee {
+  department_name?: string
+  created_at: string
+  current_key?: EnterpriseEmployeeKey | null
 }
 
 export interface EnterpriseBrand {

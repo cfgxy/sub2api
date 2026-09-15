@@ -177,8 +177,9 @@ type Session struct {
 }
 
 type Department struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // DepartmentDeletionImpact previews the effect of deleting a department so the
@@ -197,6 +198,17 @@ type Employee struct {
 	MustChange   bool       `json:"must_change_password"`
 	TerminatedAt *time.Time `json:"terminated_at,omitempty"`
 	Version      int64      `json:"version"`
+}
+
+// EmployeeDetail extends Employee with the read-only context an admin needs
+// on the employee detail page: join date, resolved department name, and the
+// employee's current API key (already masked by the key repository — the
+// plaintext credential never leaves the self-service key endpoints).
+type EmployeeDetail struct {
+	Employee
+	DepartmentName *string                 `json:"department_name,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+	CurrentKey     *enterprise.EmployeeKey `json:"current_key,omitempty"`
 }
 
 type BrandInput struct {
@@ -760,7 +772,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context, claims *Claims) error {
 }
 
 func (s *Service) ListDepartments(ctx context.Context, enterpriseID int64) ([]Department, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM enterprise_departments WHERE enterprise_id = $1 AND status = 'active' ORDER BY name`, enterpriseID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_at FROM enterprise_departments WHERE enterprise_id = $1 AND status = 'active' ORDER BY name`, enterpriseID)
 	if err != nil {
 		return nil, err
 	}
@@ -768,7 +780,7 @@ func (s *Service) ListDepartments(ctx context.Context, enterpriseID int64) ([]De
 	items := make([]Department, 0)
 	for rows.Next() {
 		var item Department
-		if err := rows.Scan(&item.ID, &item.Name); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -787,7 +799,7 @@ func (s *Service) CreateDepartment(ctx context.Context, enterpriseID int64, name
 	}
 	defer func() { _ = tx.Rollback() }()
 	item := new(Department)
-	err = tx.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
+	err = tx.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name, created_at`, enterpriseID, name).Scan(&item.ID, &item.Name, &item.CreatedAt)
 	if err != nil {
 		return nil, errConflict
 	}
@@ -882,6 +894,43 @@ func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Empl
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// GetEmployee loads a single employee scoped to the caller's enterprise. A
+// cross-enterprise or unknown id returns the same errNotFound so the
+// response never reveals whether the id exists in another tenant.
+func (s *Service) GetEmployee(ctx context.Context, enterpriseID, employeeID int64) (*EmployeeDetail, error) {
+	item := new(EmployeeDetail)
+	var dept sql.NullInt64
+	var deptName sql.NullString
+	var terminated sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status,
+		       employee.department_id, department.name, employee.must_change_password,
+		       employee.terminated_at, employee.version, employee.created_at
+		FROM enterprise_employees AS employee
+		LEFT JOIN enterprise_departments AS department
+		  ON department.enterprise_id = employee.enterprise_id AND department.id = employee.department_id
+		WHERE employee.enterprise_id = $1 AND employee.id = $2
+	`, enterpriseID, employeeID).Scan(
+		&item.ID, &item.Email, &item.Status, &dept, &deptName, &item.MustChange, &terminated, &item.Version, &item.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if dept.Valid {
+		item.DepartmentID = &dept.Int64
+	}
+	if deptName.Valid {
+		item.DepartmentName = &deptName.String
+	}
+	if terminated.Valid {
+		item.TerminatedAt = &terminated.Time
+	}
+	return item, nil
 }
 
 func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email, password string, departmentID *int64) (*Employee, error) {
