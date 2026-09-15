@@ -53,6 +53,7 @@ export function enterpriseSessionStateForError(error: unknown): EnterpriseSessio
   if (reason === 'ENTERPRISE_HOST_MISMATCH') return 'cross-enterprise'
   if (reason === 'ENTERPRISE_DISABLED') return 'enterprise-disabled'
   if (reason === 'ENTERPRISE_PRINCIPAL_INACTIVE') return 'employee-disabled'
+  if (reason === 'ENTERPRISE_KEY_NOT_FOUND') return null
 
   const status = typeof response?.status === 'number' ? response.status : 0
   if (status === 401) return 'session-expired'
