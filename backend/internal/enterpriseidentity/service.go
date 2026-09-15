@@ -528,7 +528,10 @@ func (s *Service) DisableEnterprise(ctx context.Context, id, actorUserID int64, 
 	}
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE enterprise_key_assignments
-		SET status = 'revoked', revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW()
+		SET status = 'revoked',
+		    ended_at = COALESCE(ended_at, NOW()),
+		    revoked_at = COALESCE(revoked_at, NOW()),
+		    updated_at = NOW()
 		WHERE enterprise_id = $1 AND status = 'active'
 	`, id); err != nil {
 		return err
