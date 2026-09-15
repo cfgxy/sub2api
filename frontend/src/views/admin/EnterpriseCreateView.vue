@@ -12,8 +12,17 @@
       <main>
         <RouterLink class="back" to="/admin/enterprises">‹ 返回企业列表</RouterLink>
         <div class="titlebar"><div><h1>创建企业</h1><p>建立企业基础身份与独立访问入口，创建后关联唯一 Sub2API 主账号。</p></div></div>
-        <el-alert v-if="success" type="success" title="企业已开通" :closable="false" show-icon class="result">
-          <template #default>入口已创建，专用主账号为 {{ successEmail }}。该信息已脱敏展示，后续请在企业详情中查看状态。</template>
+        <el-alert v-if="success && created" type="success" title="企业已开通" :closable="false" show-icon class="result" data-testid="enterprise-create-success">
+          <template #default>
+            <div class="result-grid">
+              <div><span>企业名称</span><strong>{{ created.name }}</strong></div>
+              <div><span>入口域名</span><strong>{{ created.portal_host }}</strong></div>
+              <div><span>专用主账号</span><strong>{{ created.admin_email || '已配置' }}</strong></div>
+              <div><span>专用上游用户 ID</span><strong>{{ created.dedicated_upstream_user_id }}</strong></div>
+            </div>
+            <p class="result-note">账号密码、Token 等敏感凭据不在此展示；如需查看订阅与状态，请前往企业详情。</p>
+            <el-button text type="primary" @click="router.push(`/admin/enterprises/${created.id}`)">查看企业详情 ›</el-button>
+          </template>
         </el-alert>
         <div class="layout">
           <el-form ref="formRef" class="form-panel" :model="form" :rules="rules" label-position="top" @submit.prevent="submit">
@@ -42,13 +51,13 @@ import { reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { enterprisePlatformAPI } from '@/api/enterprisePlatform'
+import { enterprisePlatformAPI, type PlatformEnterprise } from '@/api/enterprisePlatform'
 
 const router = useRouter()
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const success = ref(false)
-const successEmail = ref('')
+const created = ref<PlatformEnterprise>()
 const form = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: 0, reason: '' })
 const rules: FormRules = {
   name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
@@ -62,8 +71,7 @@ async function submit() {
   saving.value = true
   success.value = false
   try {
-    const result = await enterprisePlatformAPI.create(form)
-    successEmail.value = result.admin_email || '已配置'
+    created.value = await enterprisePlatformAPI.create(form)
     success.value = true
     ElMessage.success('企业已开通')
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -77,5 +85,5 @@ async function submit() {
 </script>
 
 <style scoped>
-.platform-page{min-height:100vh;background:#f0f2f5;color:#111827}.side{position:fixed;inset:0 auto 0 0;width:232px;padding:20px 12px;background:#fff;border-right:1px solid #e5e7eb}.logo{display:flex;align-items:center;gap:10px;padding:0 10px;margin-bottom:26px}.logo-mark{display:grid;width:30px;height:30px;place-items:center;border-radius:7px;background:#2563eb;color:#fff;font-weight:800}.logo strong,.logo small{display:block}.logo small{margin-top:2px;color:#6b7280;font-size:10px}.nav-label{margin:16px 10px 7px;color:#9ca3af;font-size:11px;font-weight:700}.nav{display:block;padding:11px;border-radius:6px;color:#4b5563;text-decoration:none}.nav.active{background:#eff6ff;color:#2563eb;font-weight:700}.side-help{position:absolute;right:22px;bottom:20px;left:22px;padding-top:14px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px}.content{margin-left:232px}.topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;height:64px;padding:0 28px;background:#fff;border-bottom:1px solid #e5e7eb}.crumb{font-weight:650}.crumb span{margin-left:8px;color:#9ca3af;font-weight:400}.health{display:flex;align-items:center;gap:7px;margin-left:auto;color:#4b5563;font-size:12px}.health i{width:7px;height:7px;border-radius:50%;background:#15803d}main{max-width:1120px;margin:0 auto;padding:28px}.back{display:inline-block;margin-bottom:12px;color:#64748b;font-size:13px;text-decoration:none}.titlebar{margin-bottom:18px}.titlebar h1{margin:0 0 6px;font-size:24px}.titlebar p{margin:0;color:#526078}.result{margin-bottom:16px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}.form-panel,.check-panel{background:#fff;border:1px solid #e5e7eb;border-radius:8px}.section{padding:20px 22px;border-bottom:1px solid #e5e7eb}.section-head{display:flex;gap:11px;margin-bottom:16px}.section-head>span{display:grid;width:24px;height:24px;place-items:center;border-radius:50%;background:#eff6ff;color:#2563eb;font-weight:700}.section-head h2{margin:2px 0 4px;font-size:15px}.section-head p{margin:0;color:#6b7280;font-size:12px}.actions{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px}.check-panel{padding:20px}.check-panel h3{margin:0 0 14px;font-size:14px}.check-panel ul{display:grid;gap:12px;margin:0;padding:0 0 0 18px;color:#526078;font-size:12px;line-height:18px}.note{margin-top:18px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:12px;line-height:18px}@media(max-width:760px){.side{display:none}.content{margin-left:0}.topbar{padding:0 16px}.crumb span,.health{display:none}main{padding:18px 14px}.layout{grid-template-columns:1fr}.check-panel{order:-1}.actions{padding:16px}.actions .el-button{flex:1}}
+.platform-page{min-height:100vh;background:#f0f2f5;color:#111827}.side{position:fixed;inset:0 auto 0 0;width:232px;padding:20px 12px;background:#fff;border-right:1px solid #e5e7eb}.logo{display:flex;align-items:center;gap:10px;padding:0 10px;margin-bottom:26px}.logo-mark{display:grid;width:30px;height:30px;place-items:center;border-radius:7px;background:#2563eb;color:#fff;font-weight:800}.logo strong,.logo small{display:block}.logo small{margin-top:2px;color:#6b7280;font-size:10px}.nav-label{margin:16px 10px 7px;color:#9ca3af;font-size:11px;font-weight:700}.nav{display:block;padding:11px;border-radius:6px;color:#4b5563;text-decoration:none}.nav.active{background:#eff6ff;color:#2563eb;font-weight:700}.side-help{position:absolute;right:22px;bottom:20px;left:22px;padding-top:14px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px}.content{margin-left:232px}.topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;height:64px;padding:0 28px;background:#fff;border-bottom:1px solid #e5e7eb}.crumb{font-weight:650}.crumb span{margin-left:8px;color:#9ca3af;font-weight:400}.health{display:flex;align-items:center;gap:7px;margin-left:auto;color:#4b5563;font-size:12px}.health i{width:7px;height:7px;border-radius:50%;background:#15803d}main{max-width:1120px;margin:0 auto;padding:28px}.back{display:inline-block;margin-bottom:12px;color:#64748b;font-size:13px;text-decoration:none}.titlebar{margin-bottom:18px}.titlebar h1{margin:0 0 6px;font-size:24px}.titlebar p{margin:0;color:#526078}.result{margin-bottom:16px}.result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 20px;margin-bottom:8px}.result-grid span{display:block;color:#6b7280;font-size:12px}.result-grid strong{font-weight:600;overflow-wrap:anywhere}.result-note{margin:4px 0 8px;color:#6b7280;font-size:12px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}.form-panel,.check-panel{background:#fff;border:1px solid #e5e7eb;border-radius:8px}.section{padding:20px 22px;border-bottom:1px solid #e5e7eb}.section-head{display:flex;gap:11px;margin-bottom:16px}.section-head>span{display:grid;width:24px;height:24px;place-items:center;border-radius:50%;background:#eff6ff;color:#2563eb;font-weight:700}.section-head h2{margin:2px 0 4px;font-size:15px}.section-head p{margin:0;color:#6b7280;font-size:12px}.actions{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px}.check-panel{padding:20px}.check-panel h3{margin:0 0 14px;font-size:14px}.check-panel ul{display:grid;gap:12px;margin:0;padding:0 0 0 18px;color:#526078;font-size:12px;line-height:18px}.note{margin-top:18px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:12px;line-height:18px}@media(max-width:760px){.side{display:none}.content{margin-left:0}.topbar{padding:0 16px}.crumb span,.health{display:none}main{padding:18px 14px}.layout{grid-template-columns:1fr}.check-panel{order:-1}.actions{padding:16px}.actions .el-button{flex:1}}
 </style>
