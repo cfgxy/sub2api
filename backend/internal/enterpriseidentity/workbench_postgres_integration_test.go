@@ -108,15 +108,19 @@ func TestBuildEmployeeSummaryQueryPostgreSQLAggregatesSubscriptionWindows(t *tes
 
 	require.True(t, rows.Next())
 	var employeeID, requests int64
-	var email, configuredCredit, usageCredit string
+	var email, configuredCredit, usageCredit, remainingCredit, overageCredit string
 	var departmentID *int64
-	require.NoError(t, rows.Scan(&employeeID, &email, &departmentID, &requests, &configuredCredit, &usageCredit))
+	// 查询自 86449867b 后输出 remaining_credit / overage_credit 两列，Scan 必须同步接收。
+	require.NoError(t, rows.Scan(&employeeID, &email, &departmentID, &requests, &configuredCredit, &usageCredit, &remainingCredit, &overageCredit))
 	require.Equal(t, int64(22), employeeID)
 	require.Equal(t, "employee@example.com", email)
 	require.Equal(t, int64(3), *departmentID)
 	require.Equal(t, int64(3), requests)
 	require.Equal(t, "30.7500000000", configuredCredit)
 	require.Equal(t, "7.0000000000", usageCredit)
+	require.Equal(t, "23.7500000000", remainingCredit)
+	// GREATEST(负差值, 0) 取整数字面量分支，text 输出为 "0"（dscale=0）。
+	require.Equal(t, "0", overageCredit)
 	require.False(t, rows.Next())
 	require.NoError(t, rows.Err())
 }
