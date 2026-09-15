@@ -34,3 +34,16 @@ func TestResetPasswordAuditsInvalidTokenWithoutPersistingToken(t *testing.T) {
 	require.ErrorIs(t, svc.ResetPassword(ctx, "acme.example.com", "bad-token", "new-strong-password"), errResetInvalid)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestResetPasswordAuditsWeakPasswordForResolvedEnterprise(t *testing.T) {
+	svc, mock := newMockService(t)
+	ctx := WithAuditActor(context.Background(), "enterprise_public")
+	mock.ExpectQuery("SELECT id, name, LOWER.*FROM enterprises").WithArgs("acme.example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "admin_user_id", "status"}).AddRow(1, "Acme", "acme.example.com", 5, "active"))
+	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(1), "password.reset", "employee", nil, sqlmock.AnyArg(), "enterprise_public").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := svc.ResetPassword(ctx, "acme.example.com", "one-time-token", "short")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "WEAK_PASSWORD")
+	require.NoError(t, mock.ExpectationsWereMet())
+}

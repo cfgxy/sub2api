@@ -31,6 +31,38 @@ let refreshPromise: Promise<EnterpriseTokenPair> | null = null
 const sessionListeners = new Set<(pair: EnterpriseTokenPair) => void>()
 const enterpriseKeyMutationKeys = new Map<string, string>()
 
+export type EnterpriseSessionState =
+  | 'session-expired'
+  | 'employee-disabled'
+  | 'enterprise-disabled'
+  | 'source-unavailable'
+  | 'forbidden'
+  | 'not-found'
+  | 'cross-enterprise'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+export function enterpriseSessionStateForError(error: unknown): EnterpriseSessionState | null {
+  if (!isRecord(error)) return null
+  const response = isRecord(error.response) ? error.response : null
+  const responseData = response && isRecord(response.data) ? response.data : null
+  const data = responseData || (isRecord(error) ? error : null)
+  const reason = typeof data?.reason === 'string' ? data.reason : ''
+  if (reason === 'ENTERPRISE_HOST_MISMATCH') return 'cross-enterprise'
+  if (reason === 'ENTERPRISE_DISABLED') return 'enterprise-disabled'
+  if (reason === 'ENTERPRISE_PRINCIPAL_INACTIVE') return 'employee-disabled'
+
+  const status = typeof response?.status === 'number' ? response.status : 0
+  if (status === 401) return 'session-expired'
+  if (status === 403) return 'forbidden'
+  if (status === 404) return 'not-found'
+  if (status >= 500) return 'source-unavailable'
+  if (status === 0 && axios.isAxiosError(error) && !response) return 'source-unavailable'
+  return null
+}
+
 export function onEnterpriseAuthSession(listener: (pair: EnterpriseTokenPair) => void) {
   sessionListeners.add(listener)
   return () => sessionListeners.delete(listener)
@@ -86,12 +118,8 @@ enterpriseClient.interceptors.response.use(
     }
     const data = error.response?.data as Record<string, unknown> | undefined
     const status = error.response?.status ?? 0
-    const reason = typeof data?.reason === 'string' ? data.reason : ''
-    if (!isAuthRequest && typeof window !== 'undefined' && !window.location.pathname.startsWith('/enterprise/session-states')) {
-      let state = status === 403 ? 'forbidden' : status === 404 ? 'not-found' : status >= 500 ? 'source-unavailable' : 'session-expired'
-      if (reason === 'ENTERPRISE_HOST_MISMATCH') state = 'cross-enterprise'
-      if (reason === 'ENTERPRISE_DISABLED') state = 'enterprise-disabled'
-      if (reason === 'ENTERPRISE_PRINCIPAL_INACTIVE') state = 'employee-disabled'
+    const state = enterpriseSessionStateForError(error)
+    if (!isAuthRequest && state && typeof window !== 'undefined' && !window.location.pathname.startsWith('/enterprise/session-states')) {
       window.location.href = `/enterprise/session-states?state=${state}`
     }
     return Promise.reject({

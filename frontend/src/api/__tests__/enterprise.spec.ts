@@ -1,5 +1,6 @@
+import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, syncEnterpriseAuthSession } from '@/api/enterprise'
+import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, syncEnterpriseAuthSession } from '@/api/enterprise'
 
 const employeePrincipal = {
   enterprise_id: 12,
@@ -196,5 +197,14 @@ describe('enterprise API password handling', () => {
 
     expect(post).not.toHaveBeenCalled()
     expect(sessionStorage.length).toBe(0)
+  })
+
+  it('keeps business validation and lifecycle conflicts on the calling page', () => {
+    expect(enterpriseSessionStateForError({ status: 400, reason: 'WEAK_PASSWORD' })).toBeNull()
+    expect(enterpriseSessionStateForError({ status: 409, reason: 'ENTERPRISE_KEY_VERSION_CONFLICT' })).toBeNull()
+  })
+
+  it('maps transport timeout to the source unavailable state', () => {
+    expect(enterpriseSessionStateForError(new AxiosError('network timeout', 'ECONNABORTED'))).toBe('source-unavailable')
   })
 })

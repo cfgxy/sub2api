@@ -987,12 +987,13 @@ func (s *Service) RequestReset(ctx context.Context, host, email, resetBaseURL, l
 }
 
 func (s *Service) ResetPassword(ctx context.Context, host, token, next string) error {
-	if len(next) < 12 {
-		return infraerrors.BadRequest("WEAK_PASSWORD", "password must be at least 12 characters")
-	}
 	e, err := s.enterpriseByHost(ctx, host)
 	if err != nil {
 		return errResetInvalid
+	}
+	if len(next) < 12 {
+		_ = s.RecordRejectedAuditEvent(ctx, e.ID, "password.reset", "employee", nil, "weak_password")
+		return infraerrors.BadRequest("WEAK_PASSWORD", "password must be at least 12 characters")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
 	if err != nil {
