@@ -61,3 +61,16 @@ func TestCreateDepartmentWritesActorAuditWithoutSensitivePayload(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(payload), "password")
 }
+
+func TestRecordRejectedAuditEventStoresOnlyGenericReason(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), "employee.update", "employee", int64(22), sqlmock.AnyArg(), "enterprise_admin:9").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := svc.RecordRejectedAuditEvent(WithAuditActor(context.Background(), "enterprise_admin:9"), 7, "employee.update", "employee", ptrInt64(22), "rejected")
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func ptrInt64(value int64) *int64 { return &value }

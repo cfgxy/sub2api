@@ -122,6 +122,23 @@ func writeAuditEvent(ctx context.Context, tx *sql.Tx, enterpriseID int64, eventT
 	return err
 }
 
+// RecordRejectedAuditEvent 记录管理写入被拒绝的通用原因，不持久化原始请求正文。
+func (s *Service) RecordRejectedAuditEvent(ctx context.Context, enterpriseID int64, eventType, entityType string, entityID *int64, reason string) error {
+	actor := auditActor(ctx)
+	if actor == "" || enterpriseID <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{"result": "rejected", "reason": strings.TrimSpace(reason)})
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+	`, enterpriseID, eventType, entityType, entityID, payload, actor)
+	return err
+}
+
 type queryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
