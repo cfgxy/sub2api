@@ -15,7 +15,8 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({
     currentRoute: { value: { query: {} } },
     push: vi.fn()
-  })
+  }),
+  useRoute: () => ({ name: 'Login', query: {} })
 }))
 
 vi.mock('vue-i18n', async () => {

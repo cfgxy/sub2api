@@ -1,4 +1,11 @@
 export default {
+    // Platform admin login (dedicated entry, no consumer register/OAuth/passkey)
+    platformLogin: {
+      title: '登录平台管理中心',
+      eyebrow: '平台管理主体',
+      subtitle: '验证平台身份后，管理企业、主账号关联与平台审计。'
+    },
+
     // Dashboard
     dashboard: {
       title: '管理控制台',

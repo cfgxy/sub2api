@@ -11,7 +11,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { enterpriseAPI } from '@/api/enterprise'
 import type { EnterpriseBrand } from '@/types/enterprise'
 
@@ -27,6 +27,8 @@ const defaultBrand: EnterpriseBrand = {
 }
 const brand = reactive<EnterpriseBrand>({ ...defaultBrand })
 
+const customBackgroundVerified = ref(false)
+
 function applyBrand(response: EnterpriseBrand) {
   brand.enterprise_name = response.enterprise_name?.trim() || defaultBrand.enterprise_name
   brand.title = response.title?.trim() || defaultBrand.title
@@ -38,16 +40,35 @@ function applyBrand(response: EnterpriseBrand) {
   brand.background_size_bytes = response.background_size_bytes > 0 ? response.background_size_bytes : defaultBrand.background_size_bytes
 }
 
+// 数据库仍保留 background_object_key 不代表对象存储中的素材可读；先用 Image 探测真实加载结果，
+// 加载失败（对象已删除/读取报错）时回退默认背景，避免入口消费失效 URL。
+function verifyCustomBackground(url: string) {
+  customBackgroundVerified.value = false
+  if (typeof window === 'undefined' || typeof window.Image === 'undefined') return
+  const probe = new window.Image()
+  probe.onload = () => { customBackgroundVerified.value = true }
+  probe.onerror = () => { customBackgroundVerified.value = false }
+  probe.src = url
+}
+
 const backgroundStyle = computed(() => {
-  const url = brand.background_url === '/api/v1/enterprise/brand/background' ? brand.background_url : defaultBrand.background_url
-  const version = url === '/api/v1/enterprise/brand/background' && /^[a-f\d]{64}$/i.test(brand.background_sha256)
+  const isCustom = brand.background_url === '/api/v1/enterprise/brand/background'
+  const url = isCustom && customBackgroundVerified.value ? brand.background_url : defaultBrand.background_url
+  const version = isCustom && customBackgroundVerified.value && /^[a-f\d]{64}$/i.test(brand.background_sha256)
     ? `?v=${brand.background_sha256}`
     : ''
   return { backgroundImage: `url("${url}${version}")` }
 })
 
 onMounted(async () => {
-  try { applyBrand(await enterpriseAPI.getBrand()) } catch { /* 品牌来源不可用时保留受控默认值 */ }
+  try {
+    const response = await enterpriseAPI.getBrand()
+    applyBrand(response)
+    if (brand.background_url === '/api/v1/enterprise/brand/background') {
+      const version = /^[a-f\d]{64}$/i.test(brand.background_sha256) ? `?v=${brand.background_sha256}` : ''
+      verifyCustomBackground(`${brand.background_url}${version}`)
+    }
+  } catch { /* 品牌来源不可用时保留受控默认值 */ }
 })
 </script>
 

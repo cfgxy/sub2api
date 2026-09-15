@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	enterprise "github.com/Wei-Shaw/sub2api/internal/enterprise"
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseidentity"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	dbmigrations "github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/lib/pq"
@@ -1198,6 +1199,54 @@ func TestEnterprise236RefusesNonEmptyEnterpriseMappings(t *testing.T) {
 	require.NoError(t, tx.Rollback())
 }
 
+func TestDisableEnterpriseWithActiveKeyAppliesWholeState(t *testing.T) {
+	ctx := context.Background()
+	fixture := seedEnterpriseFixture(t, ctx)
+
+	var sessionID string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		INSERT INTO enterprise_sessions (
+			id, enterprise_id, principal_type, principal_id, refresh_family_id,
+			auth_version, user_agent, ip_address, expires_at
+		) VALUES (gen_random_uuid(), $1, 'employee', $2, gen_random_uuid(), 0, 'shan238-agent', '127.0.0.1', NOW() + INTERVAL '1 day')
+		RETURNING id
+	`, fixture.enterpriseID, fixture.employeeID).Scan(&sessionID))
+
+	svc := enterpriseidentity.NewService(integrationDB, &config.Config{}, nil, nil, nil)
+	require.NoError(t, svc.DisableEnterprise(ctx, fixture.enterpriseID, fixture.enterpriseUserID, "shan238: disable with active key"))
+
+	var enterpriseStatus, keyStatus string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT status FROM enterprises WHERE id = $1`, fixture.enterpriseID).Scan(&enterpriseStatus))
+	require.Equal(t, "disabled", enterpriseStatus)
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT status FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&keyStatus))
+	require.Equal(t, "disabled", keyStatus)
+
+	var sessionRevokedAt *time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT revoked_at FROM enterprise_sessions WHERE id = $1`, sessionID).Scan(&sessionRevokedAt))
+	require.NotNil(t, sessionRevokedAt)
+
+	var assignmentStatus string
+	var endedAt, revokedAt *time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status, ended_at, revoked_at FROM enterprise_key_assignments
+		WHERE enterprise_id = $1 AND api_key_id = $2
+	`, fixture.enterpriseID, fixture.apiKeyID).Scan(&assignmentStatus, &endedAt, &revokedAt))
+	require.Equal(t, "revoked", assignmentStatus)
+	require.NotNil(t, endedAt)
+	require.NotNil(t, revokedAt)
+	require.Equal(t, *endedAt, *revokedAt)
+
+	var auditCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM enterprise_audit_events
+		WHERE enterprise_id = $1 AND event_type = 'enterprise.disabled'
+	`, fixture.enterpriseID).Scan(&auditCount))
+	require.Equal(t, 1, auditCount)
+}
+
 func seedEnterpriseFixture(t *testing.T, ctx context.Context) enterpriseFixture {
 	t.Helper()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -1305,7 +1354,11 @@ func cleanupEnterpriseFixture(t *testing.T, enterpriseID, userID int64, suffix s
 		{"DELETE FROM usage_logs WHERE user_id = $1", []any{userID}},
 		{"DELETE FROM enterprise_allocation_revisions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_weekly_allocations WHERE enterprise_id = $1", []any{enterpriseID}},
+		// enterprise_audit_events 由 243 迁移设为 append-only（触发器拦截 UPDATE/DELETE）；
+		// 此处是测试数据回收而非业务路径，在同事务内临时停用触发器并在提交前恢复。
+		{"ALTER TABLE enterprise_audit_events DISABLE TRIGGER protect_enterprise_audit_append_only", nil},
 		{"DELETE FROM enterprise_audit_events WHERE enterprise_id = $1", []any{enterpriseID}},
+		{"ALTER TABLE enterprise_audit_events ENABLE TRIGGER protect_enterprise_audit_append_only", nil},
 		{"DELETE FROM enterprise_key_assignments WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_subscription_windows WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_subscriptions WHERE enterprise_id = $1", []any{enterpriseID}},
