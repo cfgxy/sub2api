@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -344,10 +345,11 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 			return nil, err
 		}
 		item.DepartmentID = nullableInt64(departmentID)
-		if item.OverageCredit != "0" {
+		// overage 由数据库 NUMERIC 定长 ::text 输出，零值形态不固定（"0" 或 "0.00000000"），
+		// 必须按数值语义判断；解析失败视为无法确认，保留人工核对提示。
+		item.Recommendation = "当前 allocation 范围内"
+		if overage, err := decimal.NewFromString(item.OverageCredit); err != nil || overage.IsPositive() {
 			item.Recommendation = "核对个人超用，并按业务需要调整 allocation"
-		} else {
-			item.Recommendation = "当前 allocation 范围内"
 		}
 		result.EmployeeSummaries = append(result.EmployeeSummaries, item)
 	}
@@ -362,14 +364,16 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	var subscriptionID sql.NullInt64
 	if err := h.owner.service.db.QueryRowContext(ctx, `
 		SELECT enterprise_subscription.id,
-		       CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL OR upstream_subscription.weekly_limit_usd IS NULL THEN 'unavailable' ELSE 'available' END,
+		       CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL
+		                 OR subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0
+		            THEN 'unavailable' ELSE 'available' END,
 		       COALESCE(subscription_group.name, ''), COALESCE(upstream_subscription.status, ''),
-		       COALESCE(upstream_subscription.weekly_limit_usd, 0)::text,
-		       COALESCE(upstream_subscription.weekly_usage_usd, 0)::text,
-		       CASE WHEN upstream_subscription.weekly_limit_usd IS NULL THEN '0'
-		            ELSE GREATEST(upstream_subscription.weekly_limit_usd - COALESCE(upstream_subscription.weekly_usage_usd, 0), 0)::text END,
-		       (upstream_subscription.weekly_limit_usd IS NOT NULL
-		        AND COALESCE(upstream_subscription.weekly_usage_usd, 0) >= upstream_subscription.weekly_limit_usd),
+		       COALESCE(CASE WHEN subscription_group.weekly_limit_usd > 0 THEN subscription_group.weekly_limit_usd END, 0)::NUMERIC(20, 8)::text,
+		       COALESCE(upstream_subscription.weekly_usage_usd, 0)::NUMERIC(20, 8)::text,
+		       CASE WHEN subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0 THEN '0'
+		            ELSE GREATEST(subscription_group.weekly_limit_usd - COALESCE(upstream_subscription.weekly_usage_usd, 0), 0)::NUMERIC(20, 8)::text END,
+		       (subscription_group.weekly_limit_usd IS NOT NULL AND subscription_group.weekly_limit_usd > 0
+		        AND COALESCE(upstream_subscription.weekly_usage_usd, 0) >= subscription_group.weekly_limit_usd),
 		       upstream_subscription.weekly_window_start
 		FROM enterprises AS enterprise
 		LEFT JOIN enterprise_subscriptions AS enterprise_subscription

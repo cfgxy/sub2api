@@ -51,6 +51,50 @@ func TestSanitizeAuditPayloadRemovesSensitiveFields(t *testing.T) {
 	require.NotContains(t, payload, "session_id")
 }
 
+// TestGetSummaryMarksOverageRecommendationByNumericSemantics 锁定员工 Recommendation 的数值语义判定：
+// overage 字符串形态来自数据库 NUMERIC 定长输出（QA 实测同源列为 "0.00000000"），
+// 禁止按字符串字面量与 "0" 比较——定长形态的零值会被误标「核对个人超用」。
+func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+
+	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"total_usage_credit", "total_requests"}).AddRow("2.75", int64(3)))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
+	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
+			AddRow(int64(22), "employee-zero@example.com", int64(3), int64(3), "200.00000000", "50.00000000", "150.00000000", "0.00000000").
+			AddRow(int64(23), "employee-over@example.com", int64(3), int64(2), "100.00000000", "150.00000000", "0", "50.0000000000"))
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"subscription_id", "source_status", "plan", "subscription_status", "pool_limit", "pool_used", "pool_remaining", "pool_exhausted", "pool_anchor"}).
+			AddRow(int64(55), "available", "Business", "active", "550.00000000", "220.00000000", "330.00000000", false, time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)))
+	mock.ExpectQuery(`(?s)SELECT observed_at\s+FROM enterprise_subscription_windows`).
+		WithArgs(int64(7), int64(55)).
+		WillReturnRows(sqlmock.NewRows([]string{"observed_at"}))
+	mock.ExpectQuery(`(?s)FROM enterprise_subscriptions AS enterprise_subscription.*status = 'scheduled'`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"plan", "created_at"}))
+	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "usage_credit"}))
+
+	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
+	require.NoError(t, err)
+	require.Len(t, result.EmployeeSummaries, 2)
+	require.Equal(t, "当前 allocation 范围内", result.EmployeeSummaries[0].Recommendation,
+		"overage 定长零值 0.00000000 必须判为零，不得误标核对个人超用")
+	require.Equal(t, "核对个人超用，并按业务需要调整 allocation", result.EmployeeSummaries[1].Recommendation)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
