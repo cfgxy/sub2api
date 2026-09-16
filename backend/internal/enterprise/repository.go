@@ -372,6 +372,7 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 		}
 		if (errors.Is(previousErr, sql.ErrNoRows) && params.ExpectedVersion != 0) ||
 			(previousErr == nil && params.ExpectedVersion != previousVersion) {
+			r.recordAllocationVersionConflictAudit(ctx, params, previousVersion)
 			return nil, ErrAllocationVersionConflict
 		}
 		newVersion := previousVersion + 1
@@ -387,6 +388,7 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 	case err != nil:
 		return nil, err
 	case allocation.Version != params.ExpectedVersion:
+		r.recordAllocationVersionConflictAudit(ctx, params, allocation.Version)
 		return nil, ErrAllocationVersionConflict
 	default:
 		err = tx.QueryRowContext(ctx, `
@@ -437,6 +439,31 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 		return nil, err
 	}
 	return allocation, nil
+}
+
+// recordAllocationVersionConflictAudit best-effort logs a rejected allocation
+// write to the append-only audit trail. It intentionally runs against r.db
+// (not the caller's tx) because the caller's transaction is about to be
+// rolled back on this conflict path.
+func (r *Repository) recordAllocationVersionConflictAudit(ctx context.Context, params SetAllocationParams, actualVersion int64) {
+	actorRef := fmt.Sprintf("user:%d", params.RequesterUserID)
+	payload, err := json.Marshal(map[string]any{
+		"result":           "rejected",
+		"reason":           "version_conflict",
+		"subscription_id":  params.SubscriptionID,
+		"employee_id":      params.EmployeeID,
+		"window_type":      params.WindowType,
+		"expected_version": params.ExpectedVersion,
+		"actual_version":   actualVersion,
+	})
+	if err != nil {
+		return
+	}
+	_, _ = r.db.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (
+			enterprise_id, event_type, entity_type, entity_id, payload, actor_ref
+		) VALUES ($1, 'allocation.version_conflict', 'enterprise_allocation', NULL, $2::jsonb, $3)
+	`, params.EnterpriseID, payload, actorRef)
 }
 
 func (r *Repository) CreateAllocation(ctx context.Context, params CreateAllocationParams) (*Allocation, error) {

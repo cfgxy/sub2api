@@ -32,6 +32,8 @@ const router = useRouter()
 const route = useRoute()
 const navigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/admin/workbench', label: '工作台', icon: 'chartBar' as const },
+  { path: '/enterprise/admin/usage', label: '企业用量', icon: 'search' as const },
+  { path: '/enterprise/admin/audit', label: '管理审计', icon: 'clipboard' as const },
   { path: '/enterprise/admin/allocation', label: '额度分配', icon: 'grid' as const },
   { path: '/enterprise/admin/employees', label: '员工', icon: 'users' as const },
   { path: '/enterprise/admin/keys', label: '员工 Key', icon: 'key' as const },

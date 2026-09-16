@@ -69,132 +69,56 @@
       </article>
     </section>
 
-    <el-tabs v-model="activeTab" class="workbench-tabs" @tab-change="loadTab">
-      <el-tab-pane label="员工汇总" name="summary">
-        <div class="panel table-panel">
-          <div class="table-heading"><div><h2>员工分配概况</h2><span>企业总池耗尽与个人 overage 分开处理</span></div></div>
-          <div class="table-wrap"><el-table :data="summary?.employee_summaries || []" stripe>
-            <el-table-column prop="email" label="员工" min-width="220" />
-            <el-table-column prop="requests" label="请求数" width="100" />
-            <el-table-column prop="configured_credit" label="allocation" width="130" />
-            <el-table-column prop="usage_credit" label="actual cost" width="130" />
-            <el-table-column prop="remaining_credit" label="remaining" width="130" />
-            <el-table-column label="overage" width="130"><template #default="{ row }"><span :class="row.overage_credit !== '0' ? 'overage' : 'muted'">{{ row.overage_credit }}</span></template></el-table-column>
-            <el-table-column prop="recommendation" label="处理建议" min-width="250" />
-          </el-table></div>
-          <el-empty v-if="!loading && !(summary?.employee_summaries?.length)" description="当前筛选条件暂无用量" />
-        </div>
-      </el-tab-pane>
-      <el-tab-pane label="企业用量明细" name="usage">
-        <div class="panel table-panel">
-          <div class="table-heading"><div><h2>调用明细</h2><span>历史 Key 保留员工归属，Key 值始终掩码；企业额度只按 weekly 口径</span></div><div class="filters-inline"><el-tag type="info">weekly</el-tag></div></div>
-          <div class="table-wrap"><el-table v-loading="usageLoading" :data="usage.items" stripe>
-            <el-table-column prop="request_at" label="请求时间" width="180"><template #default="{ row }">{{ formatDate(row.request_at) }}</template></el-table-column>
-            <el-table-column prop="employee_email" label="员工" min-width="200" />
-            <el-table-column prop="api_key_masked" label="Key" width="160" />
-            <el-table-column prop="window_type" label="窗口" width="90" />
-            <el-table-column prop="usage_credit" label="actual cost" width="130" />
-            <el-table-column prop="configured_credit" label="allocation" width="130" />
-            <el-table-column prop="classification" label="归属" width="120"><template #default="{ row }">{{ row.classification === 'employee' ? '员工' : '受控外部' }}</template></el-table-column>
-          </el-table></div>
-          <el-empty v-if="!usageLoading && !usage.items.length" description="当前筛选条件暂无明细" />
-          <el-pagination v-if="usage.total" v-model:current-page="usagePage" v-model:page-size="pageSize" :total="usage.total" layout="total, sizes, prev, pager, next" @current-change="loadUsage" @size-change="loadUsage" />
-        </div>
-      </el-tab-pane>
-      <el-tab-pane label="操作审计" name="audit">
-        <div class="panel table-panel">
-          <div class="audit-toolbar">
-            <el-input v-model="auditFilters.search" clearable placeholder="操作、对象或 reason" @keyup.enter="searchAudit" />
-            <el-input v-model="auditFilters.actor_ref" clearable placeholder="操作者" />
-            <el-input v-model="auditFilters.event_type" clearable placeholder="动作类型" />
-            <el-input v-model="auditFilters.entity_type" clearable placeholder="对象类型" />
-            <el-input v-model="auditFilters.reason" clearable placeholder="reason" />
-            <el-select v-model="auditFilters.result" clearable placeholder="全部结果"><el-option label="成功" value="success" /><el-option label="失败" value="failure" /><el-option label="拒绝" value="rejected" /></el-select>
-            <el-date-picker v-model="auditRange" type="datetimerange" value-format="YYYY-MM-DDTHH:mm:ssZ" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" />
-            <el-button type="primary" :icon="Search" @click="searchAudit">查询</el-button>
-          </div>
-          <div class="table-wrap"><el-table v-loading="auditLoading" :data="audit.items" stripe>
-            <el-table-column prop="created_at" label="时间" width="180"><template #default="{ row }">{{ formatDate(row.created_at) }}</template></el-table-column>
-            <el-table-column label="操作者" width="180"><template #default="{ row }">{{ displayActorRef(row.actor_ref) }}</template></el-table-column>
-            <el-table-column prop="event_type" label="动作" min-width="190" />
-            <el-table-column prop="entity_type" label="对象" width="130" />
-            <el-table-column label="结果" width="110"><template #default="{ row }"><el-tag :type="auditResultType(row)">{{ auditResult(row) }}</el-tag></template></el-table-column>
-            <el-table-column label="reason" min-width="220"><template #default="{ row }">{{ auditReason(row) }}</template></el-table-column>
-            <el-table-column label="详情" width="90" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openAudit(row)">查看</el-button></template></el-table-column>
-          </el-table></div>
-          <el-empty v-if="!auditLoading && !audit.items.length" description="暂无符合条件的审计记录" />
-          <el-pagination v-if="audit.total" v-model:current-page="auditPage" v-model:page-size="pageSize" :total="audit.total" layout="total, sizes, prev, pager, next" @current-change="loadAudit" @size-change="loadAudit" />
-        </div>
-      </el-tab-pane>
-    </el-tabs>
-
-    <el-drawer v-model="auditDrawerOpen" title="审计详情" size="440px">
-      <template v-if="selectedAudit">
-        <div class="audit-detail-status" :class="auditResultType(selectedAudit)">{{ auditResult(selectedAudit) }}</div>
-        <dl class="audit-details">
-          <div><dt>时间</dt><dd>{{ formatDate(selectedAudit.created_at) }}</dd></div>
-          <div><dt>操作者</dt><dd>{{ displayActorRef(selectedAudit.actor_ref) }}</dd></div>
-          <div><dt>动作</dt><dd>{{ selectedAudit.event_type }}</dd></div>
-          <div><dt>对象</dt><dd>{{ selectedAudit.entity_type }}{{ selectedAudit.entity_id ? ` · ${selectedAudit.entity_id}` : '' }}</dd></div>
-          <div><dt>reason</dt><dd>{{ auditReason(selectedAudit) }}</dd></div>
-        </dl>
-        <h3>脱敏事件字段</h3>
-        <pre class="audit-payload">{{ payloadText(selectedAudit) }}</pre>
-      </template>
-    </el-drawer>
+    <div class="panel table-panel">
+      <div class="table-heading"><div><h2>员工分配概况</h2><span>企业总池耗尽与个人 overage 分开处理；完整用量明细见「企业用量」页，操作审计见「管理审计」页</span></div></div>
+      <div class="table-wrap"><el-table :data="summary?.employee_summaries || []" stripe>
+        <el-table-column prop="email" label="员工" min-width="220" />
+        <el-table-column prop="requests" label="请求数" width="100" />
+        <el-table-column prop="configured_credit" label="allocation" width="130" />
+        <el-table-column prop="usage_credit" label="actual cost" width="130" />
+        <el-table-column prop="remaining_credit" label="remaining" width="130" />
+        <el-table-column label="overage" width="130"><template #default="{ row }"><span :class="row.overage_credit !== '0' ? 'overage' : 'muted'">{{ row.overage_credit }}</span></template></el-table-column>
+        <el-table-column prop="recommendation" label="处理建议" min-width="250" />
+      </el-table></div>
+      <el-empty v-if="!loading && !(summary?.employee_summaries?.length)" description="当前筛选条件暂无用量" />
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { enterpriseAPI } from '@/api/enterprise'
-import type { EnterpriseDepartment, EnterpriseEmployee, EnterprisePaginated, EnterpriseWorkbenchAuditEvent, EnterpriseWorkbenchEmployeeSummary, EnterpriseWorkbenchSummary, EnterpriseWorkbenchUsageRow } from '@/types/enterprise'
+import type { EnterpriseDepartment, EnterpriseEmployee, EnterpriseWorkbenchEmployeeSummary, EnterpriseWorkbenchSummary } from '@/types/enterprise'
 
 type SourceState = 'loading' | 'ready' | 'unavailable'
-const emptyPage = <T,>(): EnterprisePaginated<T> => ({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
 const departments = ref<EnterpriseDepartment[]>([])
 const employees = ref<EnterpriseEmployee[]>([])
 const summary = ref<EnterpriseWorkbenchSummary>()
-const usage = reactive(emptyPage<EnterpriseWorkbenchUsageRow>())
-const audit = reactive(emptyPage<EnterpriseWorkbenchAuditEvent>())
-const filters = reactive<{ department_id?: number; employee_id?: number; api_key_id?: number; window_type?: string; window_anchor?: string; start_at?: string; end_at?: string }>({ window_type: 'week' })
-const auditFilters = reactive({ search: '', actor_ref: '', event_type: '', entity_type: '', reason: '', result: '' })
-const auditRange = ref<string[]>([])
-const sourceStates = reactive({ summary: 'loading' as SourceState, usage: 'loading' as SourceState, audit: 'loading' as SourceState, directories: 'loading' as SourceState })
-const activeTab = ref('summary'), loading = ref(false), usageLoading = ref(false), auditLoading = ref(false), usagePage = ref(1), auditPage = ref(1), pageSize = ref(20)
-const auditDrawerOpen = ref(false)
-const selectedAudit = ref<EnterpriseWorkbenchAuditEvent>()
+const sourceStates = reactive({ summary: 'loading' as SourceState, directories: 'loading' as SourceState })
+const loading = ref(false)
 const hasSourceIssue = computed(() => Object.values(sourceStates).some((state) => state === 'unavailable'))
-const sourceIssueText = computed(() => Object.entries(sourceStates).filter(([, state]) => state === 'unavailable').map(([name]) => ({ summary: '汇总', usage: '用量明细', audit: '审计', directories: '组织目录' }[name])).join('、'))
+const sourceIssueText = computed(() => Object.entries(sourceStates).filter(([, state]) => state === 'unavailable').map(([name]) => ({ summary: '汇总', directories: '组织目录' }[name])).join('、'))
 const poolSourceLabel = computed(() => summary.value?.pool_source_status === 'available' ? '来源正常' : '来源不可用')
 const poolObservedAtLabel = computed(() => summary.value?.pool_observed_at ? `更新于 ${new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(summary.value.pool_observed_at))}` : '')
 const trendSourceLabel = computed(() => sourceStates.summary === 'ready' ? '来源：企业 usage' : '来源不可用')
 const topEmployees = computed(() => [...(summary.value?.employee_summaries || [])].sort((a, b) => Number(b.usage_credit) - Number(a.usage_credit)).slice(0, 4))
 
-const params = (page?: number, includeWindow = true): Record<string, string | number> => Object.fromEntries(Object.entries({ ...filters, ...(includeWindow ? {} : { window_type: undefined }), page, page_size: pageSize.value }).filter(([, value]) => value !== undefined && value !== '')) as Record<string, string | number>
-const auditParams = (page?: number): Record<string, string | number> => Object.fromEntries(Object.entries({ ...params(page), event_type: auditFilters.event_type, entity_type: auditFilters.entity_type, search: auditFilters.search, actor_ref: auditFilters.actor_ref, reason: auditFilters.reason, result: auditFilters.result, start_at: auditRange.value[0], end_at: auditRange.value[1] }).filter(([, value]) => value !== undefined && value !== '')) as Record<string, string | number>
+// The overview summary intentionally omits window_type: it reports the
+// overall trend/allocation snapshot regardless of window, unlike the
+// window-scoped filters on the standalone usage page.
+const params = (): Record<string, string | number> => ({})
 const formatDate = (value: string | Date) => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const formatOptionalDate = (value?: string) => value ? formatDate(value) : '未获取'
 const trendLabel = (value: string) => new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(value))
 const trendHeight = (value: number) => Math.max(8, Math.round((value / Math.max(...(summary.value?.usage_trend || []).map((item) => item.requests), 1)) * 100))
 const usagePercentage = (item: EnterpriseWorkbenchEmployeeSummary) => Math.min(100, Math.round((Number(item.usage_credit) / Math.max(Number(item.configured_credit), 1)) * 100))
-const auditResult = (row: EnterpriseWorkbenchAuditEvent) => row.result || String(row.payload.result || row.payload.status || 'success')
-const auditResultType = (row: EnterpriseWorkbenchAuditEvent) => auditResult(row) === 'success' || auditResult(row) === '成功' ? 'success' : auditResult(row) === 'failure' || auditResult(row) === '失败' ? 'danger' : 'info'
-const auditReason = (row: EnterpriseWorkbenchAuditEvent) => row.reason || String(row.payload.reason || '未提供')
-const displayActorRef = (value: string) => value.toLowerCase().includes('session') ? 'enterprise_actor' : value
-const payloadText = (row: EnterpriseWorkbenchAuditEvent) => JSON.stringify(row.payload, null, 2)
-const resetData = () => { summary.value = undefined; Object.assign(usage, emptyPage<EnterpriseWorkbenchUsageRow>()); Object.assign(audit, emptyPage<EnterpriseWorkbenchAuditEvent>()); sourceStates.summary = 'loading'; sourceStates.usage = 'loading'; sourceStates.audit = 'loading' }
+const resetData = () => { summary.value = undefined; sourceStates.summary = 'loading' }
 
-async function loadSummary() { try { summary.value = await enterpriseAPI.getWorkbenchSummary(params(undefined, false)); sourceStates.summary = 'ready' } catch { sourceStates.summary = 'unavailable'; throw new Error('summary') } }
-async function loadUsage() { usageLoading.value = true; sourceStates.usage = 'loading'; try { Object.assign(usage, await enterpriseAPI.listWorkbenchUsage(params(usagePage.value))); sourceStates.usage = 'ready' } catch { sourceStates.usage = 'unavailable'; throw new Error('usage') } finally { usageLoading.value = false } }
-async function loadAudit() { auditLoading.value = true; sourceStates.audit = 'loading'; try { Object.assign(audit, await enterpriseAPI.listWorkbenchAuditEvents(auditParams(auditPage.value))); sourceStates.audit = 'ready' } catch { sourceStates.audit = 'unavailable'; throw new Error('audit') } finally { auditLoading.value = false } }
+async function loadSummary() { try { summary.value = await enterpriseAPI.getWorkbenchSummary(params()); sourceStates.summary = 'ready' } catch { sourceStates.summary = 'unavailable'; throw new Error('summary') } }
 async function loadDirectories() { try { [departments.value, employees.value] = await Promise.all([enterpriseAPI.listDepartments(), enterpriseAPI.listEmployees()]); sourceStates.directories = 'ready' } catch { sourceStates.directories = 'unavailable'; throw new Error('directories') } }
-async function loadTab() { if (activeTab.value === 'usage') await loadUsage(); if (activeTab.value === 'audit') await loadAudit() }
-async function load() { loading.value = true; resetData(); const results = await Promise.allSettled([loadSummary(), loadUsage(), loadAudit(), loadDirectories()]); if (results.some((result) => result.status === 'rejected')) ElMessage.error('部分工作台数据暂时不可用'); loading.value = false }
-async function searchAudit() { auditPage.value = 1; try { await loadAudit() } catch { ElMessage.error('审计数据暂时不可用') } }
-function openAudit(row: EnterpriseWorkbenchAuditEvent) { selectedAudit.value = row; auditDrawerOpen.value = true }
+async function load() { loading.value = true; resetData(); const results = await Promise.allSettled([loadSummary(), loadDirectories()]); if (results.some((result) => result.status === 'rejected')) ElMessage.error('部分工作台数据暂时不可用'); loading.value = false }
 onMounted(load)
 </script>
 

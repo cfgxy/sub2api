@@ -28,10 +28,27 @@ func TestParseWorkbenchQueryValidatesScopeAndPagination(t *testing.T) {
 	router.ServeHTTP(httptest.NewRecorder(), req)
 }
 
+func TestParseWorkbenchQueryParsesModelFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/", func(c *gin.Context) {
+		query, ok := parseWorkbenchQuery(c, true)
+		require.True(t, ok)
+		require.Equal(t, "gpt-4o", query.Model)
+	})
+	req := httptest.NewRequest("GET", "/?model=gpt-4o", nil)
+	router.ServeHTTP(httptest.NewRecorder(), req)
+}
+
 func TestParseWorkbenchQueryRejectsInvalidWindowAndRange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, target := range []string{
 		"/?window_type=quarter",
+		// day/month are exactly the values the standalone usage page's
+		// window selector used to offer before B1 was fixed — the frontend
+		// now only offers "week", but this guards the API contract itself.
+		"/?window_type=day",
+		"/?window_type=month",
 		"/?window_anchor=2026-09-08T00:00:00Z",
 		"/?start_at=2026-09-09T00:00:00Z&end_at=2026-09-08T00:00:00Z",
 		"/?page=0",
@@ -56,6 +73,21 @@ func TestSanitizeAuditPayloadRemovesSensitiveFields(t *testing.T) {
 // TestGetSummaryMarksOverageRecommendationByNumericSemantics 锁定员工 Recommendation 的数值语义判定：
 // overage 字符串形态来自数据库 NUMERIC 定长输出（QA 实测同源列为 "0.00000000"），
 // 禁止按字符串字面量与 "0" 比较——定长形态的零值会被误标「核对个人超用」。
+// TestSanitizeAuditPayloadIsFailClosedWhitelist locks the detail-drawer payload
+// rendering to an explicit field whitelist rather than a denylist: any field
+// that is not on the known-safe list is dropped by default, even if it isn't
+// named after a known-sensitive keyword. This protects against a future audit
+// writer accidentally introducing a new secret-bearing field that a denylist
+// wouldn't have anticipated.
+func TestSanitizeAuditPayloadIsFailClosedWhitelist(t *testing.T) {
+	payload := sanitizeAuditPayload([]byte(`{"result":"success","reason":"ok","employee_id":10,"unexpected_new_field":"leaked-value","internal_debug_dump":{"anything":"here"}}`))
+	require.Equal(t, "success", payload["result"])
+	require.Equal(t, "ok", payload["reason"])
+	require.Equal(t, float64(10), payload["employee_id"])
+	require.NotContains(t, payload, "unexpected_new_field")
+	require.NotContains(t, payload, "internal_debug_dump")
+}
+
 func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
@@ -233,6 +265,31 @@ func TestListAuditEventsSurvivesEmployeeTerminationAndScopesByEnterprise(t *test
 	require.NoError(t, err)
 	require.Equal(t, int64(0), total)
 	require.Empty(t, items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListUsageFiltersByModel(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	query := workbenchQuery{Page: 1, PageSize: 20, Model: "gpt-4o"}
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_usage_attributions AS attribution.*usage_log\.model = \$2`).
+		WithArgs(int64(7), "gpt-4o").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`(?s)SELECT attribution\.id.*usage_log\.model = \$2.*ORDER BY attribution\.request_at DESC`).
+		WithArgs(int64(7), "gpt-4o", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"attribution_id", "usage_log_id", "employee_id", "employee_email", "department_id",
+			"api_key_id", "api_key_masked", "model", "window_type", "window_anchor", "request_at",
+			"classification", "assignment_generation", "usage_credit", "configured_credit",
+		}).AddRow(int64(1), int64(2), int64(22), "employee@example.com", int64(3), int64(9),
+			"sk-abc...1234", "gpt-4o", "week", time.Now(), time.Now(), "employee", int64(1), "0.50", "10"))
+
+	items, total, err := handler.listUsage(t.Context(), 7, query)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, items, 1)
+	require.Equal(t, "gpt-4o", items[0].Model)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

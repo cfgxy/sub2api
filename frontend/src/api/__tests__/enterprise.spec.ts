@@ -294,4 +294,22 @@ describe('enterprise API password handling', () => {
     enterpriseAPI.listEmployees({ suppressUnavailableRedirect: true })
     expect(get).toHaveBeenLastCalledWith('/enterprise/admin/employees', { enterpriseSuppressUnavailableRedirect: true })
   })
+
+  it('passes the opt-in redirect flag through the workbench summary/usage/audit wrappers (SHAN-241 rework)', () => {
+    // 修复前这三个封装完全不接收 options 参数，调用方无法声明「自行处理加载失败」，
+    // 真实 5xx 下必定整页跳转——本测试锁定封装层的透传契约，回归即失败。
+    const get = vi.spyOn(enterpriseClient, 'get').mockResolvedValue({ data: [] })
+
+    enterpriseAPI.getWorkbenchSummary({ page: 1 })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/workbench/summary', { params: { page: 1 } })
+
+    enterpriseAPI.getWorkbenchSummary({ page: 1 }, { suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/workbench/summary', { params: { page: 1 }, enterpriseSuppressUnavailableRedirect: true })
+
+    enterpriseAPI.listWorkbenchUsage({ page: 1 }, { suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/workbench/usage', { params: { page: 1 }, enterpriseSuppressUnavailableRedirect: true })
+
+    enterpriseAPI.listWorkbenchAuditEvents({ page: 1 }, { suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/workbench/audit-events', { params: { page: 1 }, enterpriseSuppressUnavailableRedirect: true })
+  })
 })

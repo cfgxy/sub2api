@@ -204,6 +204,7 @@ export interface EnterpriseWorkbenchUsageRow {
   department_id?: number | null
   api_key_id: number
   api_key_masked: string
+  model?: string
   window_type: 'day' | 'week' | 'month'
   window_anchor: string
   request_at: string
