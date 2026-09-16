@@ -226,8 +226,8 @@ export function clearEnterpriseKeyMutationRetryState(): void {
 
 export function isEnterpriseEmployeeVersionConflict(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false
-  const candidate = error as { status?: unknown; reason?: unknown }
-  return candidate.reason === 'EMPLOYEE_VERSION_CONFLICT' || candidate.status === 409
+  const candidate = error as { reason?: unknown }
+  return candidate.reason === 'EMPLOYEE_VERSION_CONFLICT'
 }
 
 export function isEnterpriseKeyMutationStateConflict(error: unknown): boolean {
