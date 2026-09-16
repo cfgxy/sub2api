@@ -1,6 +1,6 @@
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, isEnterpriseEmployeeVersionConflict, syncEnterpriseAuthSession } from '@/api/enterprise'
+import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, isEnterpriseEmployeeVersionConflict, shouldRedirectForEnterpriseSessionState, syncEnterpriseAuthSession } from '@/api/enterprise'
 
 const employeePrincipal = {
   enterprise_id: 12,
@@ -251,5 +251,39 @@ describe('enterprise API password handling', () => {
 
   it('maps transport timeout to the source unavailable state', () => {
     expect(enterpriseSessionStateForError(new AxiosError('network timeout', 'ECONNABORTED'))).toBe('source-unavailable')
+  })
+
+  it('suppresses the global session-state redirect for source-unavailable only when the call site opts in', () => {
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable')).toBe(true)
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable', {})).toBe(true)
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable', { enterpriseSuppressUnavailableRedirect: false })).toBe(true)
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable', { enterpriseSuppressUnavailableRedirect: true })).toBe(false)
+  })
+
+  it('never suppresses identity/session redirects even when the opt-in flag is set', () => {
+    const states = ['session-expired', 'forbidden', 'not-found', 'cross-enterprise', 'enterprise-disabled', 'employee-disabled'] as const
+    for (const state of states) {
+      expect(shouldRedirectForEnterpriseSessionState(state, { enterpriseSuppressUnavailableRedirect: true })).toBe(true)
+    }
+  })
+
+  it('does not redirect when there is no session state to react to', () => {
+    expect(shouldRedirectForEnterpriseSessionState(null, { enterpriseSuppressUnavailableRedirect: true })).toBe(false)
+  })
+
+  it('passes the opt-in redirect flag only when the admin list views request it', () => {
+    const get = vi.spyOn(enterpriseClient, 'get').mockResolvedValue({ data: [] })
+
+    enterpriseAPI.listDepartments()
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/departments', undefined)
+
+    enterpriseAPI.listDepartments({ suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/departments', { enterpriseSuppressUnavailableRedirect: true })
+
+    enterpriseAPI.listEmployees()
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/employees', undefined)
+
+    enterpriseAPI.listEmployees({ suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/employees', { enterpriseSuppressUnavailableRedirect: true })
   })
 })
