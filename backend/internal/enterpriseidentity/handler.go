@@ -525,6 +525,15 @@ func (h *Handler) employeeHome(c *gin.Context) {
 	if response.ErrorFrom(c, err) {
 		return
 	}
+	pool, err := h.service.GetEnterprisePoolStatus(c.Request.Context(), claims.EnterpriseID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	recentSince := time.Now().AddDate(0, 0, -7)
+	trend, err := h.service.ListEmployeeUsageTrend(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID, EmployeeUsageQuery{StartAt: &recentSince})
+	if response.ErrorFrom(c, err) {
+		return
+	}
 	var key *enterprise.EmployeeKey
 	if h.keyRepository != nil {
 		key, err = h.keyRepository.GetEmployeeCurrentKey(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
@@ -532,7 +541,7 @@ func (h *Handler) employeeHome(c *gin.Context) {
 			return
 		}
 	}
-	response.Success(c, gin.H{"usage": usage, "key": key})
+	response.Success(c, gin.H{"usage": usage, "enterprise_pool": pool, "recent_trend": trend, "key": key})
 }
 
 func (h *Handler) employeeUsage(c *gin.Context) {

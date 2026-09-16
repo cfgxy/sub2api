@@ -41,6 +41,7 @@ func TestRegisterRoutesIncludesEnterpriseAuthSessionsAndAdminAPIs(t *testing.T) 
 		"GET /api/v1/enterprise/home",
 		"GET /api/v1/enterprise/usage/me",
 		"GET /api/v1/enterprise/usage/me/details",
+		"GET /api/v1/enterprise/usage/me/trend",
 		"GET /api/v1/enterprise/profile",
 		"GET /api/v1/enterprise/sessions",
 		"GET /api/v1/enterprise/sessions/:id",
@@ -168,6 +169,36 @@ func TestEmployeeKeyHandlersUseAuthenticatedEmployeeClaims(t *testing.T) {
 	require.Equal(t, int64(22), store.rotateParams[0].EmployeeID)
 	require.Equal(t, int64(67), store.rotateParams[0].ExpectedAPIKeyID)
 	require.NotContains(t, rotateRecorder.Body.String(), "must-not-return-on-replay")
+}
+
+// TestEmployeeHomeComposesPersonalPoolAndRecentTrendWithoutFabricatingData 验证 e-01 员工首页
+// 在个人 allocation 之外同时返回企业总池状态与近 7 天真实趋势，且来源不可用时不伪装为可用数据。
+func TestEmployeeHomeComposesPersonalPoolAndRecentTrendWithoutFabricatingData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM enterprise_employees`).WithArgs(int64(11), int64(22)).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(11), int64(22)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start", "weekly_limit_usd"}).AddRow(nil, nil, nil))
+	mock.ExpectQuery(`SELECT CASE WHEN enterprise_subscription\.id IS NULL`).WithArgs(int64(11)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"day", "requests", "actual_cost"}))
+	store := &employeeKeyStoreStub{}
+	h := NewHandler(svc, store, employeeKeyGeneratorStub{value: "unused"}, nil)
+	claims := &Claims{EnterpriseID: 11, PrincipalType: "employee", PrincipalID: 22, Role: "enterprise_employee", SessionID: "session-1"}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/enterprise/home", nil)
+	c.Set(claimsContextKey, claims)
+	h.employeeHome(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"enterprise_pool"`)
+	require.Contains(t, recorder.Body.String(), `"recent_trend"`)
+	require.Contains(t, recorder.Body.String(), `"source_status":"unavailable"`)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestGetEmployeeHandlerAttachesMaskedCurrentKeyWithinTenantScope(t *testing.T) {

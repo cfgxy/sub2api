@@ -107,6 +107,8 @@ export interface EnterpriseAllocationSummary {
 
 export interface EnterpriseEmployeeHome {
   usage: EnterpriseEmployeeUsageSummary
+  enterprise_pool: EnterpriseEnterprisePoolStatus
+  recent_trend: EnterpriseEmployeeUsageTrendPoint[]
   key: EnterpriseEmployeeKey | null
 }
 
