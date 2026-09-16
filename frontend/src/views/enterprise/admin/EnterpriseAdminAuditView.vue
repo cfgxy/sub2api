@@ -114,7 +114,7 @@ function whitelistedFields(row: EnterpriseWorkbenchAuditEvent) {
 }
 const resetData = () => { Object.assign(audit, emptyPage<EnterpriseWorkbenchAuditEvent>()); sourceStates.audit = 'loading' }
 
-async function loadAudit() { auditLoading.value = true; sourceStates.audit = 'loading'; try { Object.assign(audit, await enterpriseAPI.listWorkbenchAuditEvents(auditParams(auditPage.value))); sourceStates.audit = 'ready' } catch { sourceStates.audit = 'unavailable'; throw new Error('audit') } finally { auditLoading.value = false } }
+async function loadAudit() { auditLoading.value = true; sourceStates.audit = 'loading'; try { Object.assign(audit, await enterpriseAPI.listWorkbenchAuditEvents(auditParams(auditPage.value), { suppressUnavailableRedirect: true })); sourceStates.audit = 'ready' } catch { sourceStates.audit = 'unavailable'; throw new Error('audit') } finally { auditLoading.value = false } }
 async function load() { loading.value = true; resetData(); try { await loadAudit() } catch { ElMessage.error('审计数据暂时不可用') } finally { loading.value = false } }
 async function searchAudit() { auditPage.value = 1; try { await loadAudit() } catch { ElMessage.error('审计数据暂时不可用') } }
 function openAudit(row: EnterpriseWorkbenchAuditEvent) { selectedAudit.value = row; auditDrawerOpen.value = true }

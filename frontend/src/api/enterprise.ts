@@ -318,7 +318,7 @@ export const enterpriseAPI = {
   },
   listAdminKeys: () => data<EnterpriseKeySummary[]>(enterpriseClient.get('/enterprise/admin/keys')),
   revokeAdminKey: (id: number, idempotencyKey: string) => data<EnterpriseEmployeeKeyMutationResult>(enterpriseClient.post(`/enterprise/admin/keys/${id}/revoke`, undefined, idempotencyHeaders(idempotencyKey))),
-  getWorkbenchSummary: (params?: Record<string, string | number>) => data<EnterpriseWorkbenchSummary>(enterpriseClient.get('/enterprise/admin/workbench/summary', { params })),
-  listWorkbenchUsage: (params?: Record<string, string | number>) => data<EnterprisePaginated<EnterpriseWorkbenchUsageRow>>(enterpriseClient.get('/enterprise/admin/workbench/usage', { params })),
-  listWorkbenchAuditEvents: (params?: Record<string, string | number>) => data<EnterprisePaginated<EnterpriseWorkbenchAuditEvent>>(enterpriseClient.get('/enterprise/admin/workbench/audit-events', { params })),
+  getWorkbenchSummary: (params?: Record<string, string | number>, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseWorkbenchSummary>(enterpriseClient.get('/enterprise/admin/workbench/summary', { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
+  listWorkbenchUsage: (params?: Record<string, string | number>, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterprisePaginated<EnterpriseWorkbenchUsageRow>>(enterpriseClient.get('/enterprise/admin/workbench/usage', { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
+  listWorkbenchAuditEvents: (params?: Record<string, string | number>, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterprisePaginated<EnterpriseWorkbenchAuditEvent>>(enterpriseClient.get('/enterprise/admin/workbench/audit-events', { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
 }
