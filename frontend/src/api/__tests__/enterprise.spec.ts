@@ -1,6 +1,6 @@
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, syncEnterpriseAuthSession } from '@/api/enterprise'
+import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, isEnterpriseEmployeeVersionConflict, shouldRedirectForEnterpriseSessionState, syncEnterpriseAuthSession } from '@/api/enterprise'
 
 const employeePrincipal = {
   enterprise_id: 12,
@@ -199,6 +199,32 @@ describe('enterprise API password handling', () => {
     expect(sessionStorage.length).toBe(0)
   })
 
+  it('fetches the department deletion impact before an irreversible delete', async () => {
+    const get = vi.spyOn(enterpriseClient, 'get').mockResolvedValue({
+      data: { department_id: 7, department_name: 'Engineering', affected_employees: 3 },
+    })
+
+    const impact = await enterpriseAPI.getDepartmentDeletionImpact(7)
+
+    expect(get).toHaveBeenCalledWith('/enterprise/admin/departments/7/deletion-impact')
+    expect(impact).toEqual({ department_id: 7, department_name: 'Engineering', affected_employees: 3 })
+  })
+
+  it('sends the observed version when updating an employee for optimistic concurrency', async () => {
+    const patch = vi.spyOn(enterpriseClient, 'patch').mockResolvedValue({ data: { success: true } })
+
+    await enterpriseAPI.updateEmployee(10, { status: 'disabled', department_id: null, version: 3 })
+
+    expect(patch).toHaveBeenCalledWith('/enterprise/admin/employees/10', { status: 'disabled', department_id: null, version: 3 })
+  })
+
+  it('classifies a 409 or EMPLOYEE_VERSION_CONFLICT reason as an employee version conflict', () => {
+    expect(isEnterpriseEmployeeVersionConflict({ status: 409, reason: 'EMPLOYEE_VERSION_CONFLICT' })).toBe(true)
+    expect(isEnterpriseEmployeeVersionConflict({ status: 409 })).toBe(true)
+    expect(isEnterpriseEmployeeVersionConflict({ status: 404 })).toBe(false)
+    expect(isEnterpriseEmployeeVersionConflict(new Error('network timeout'))).toBe(false)
+  })
+
   it('keeps business validation and lifecycle conflicts on the calling page', () => {
     expect(enterpriseSessionStateForError({ status: 400, reason: 'WEAK_PASSWORD' })).toBeNull()
     expect(enterpriseSessionStateForError({ status: 409, reason: 'ENTERPRISE_KEY_VERSION_CONFLICT' })).toBeNull()
@@ -225,5 +251,39 @@ describe('enterprise API password handling', () => {
 
   it('maps transport timeout to the source unavailable state', () => {
     expect(enterpriseSessionStateForError(new AxiosError('network timeout', 'ECONNABORTED'))).toBe('source-unavailable')
+  })
+
+  it('suppresses the global session-state redirect for source-unavailable only when the call site opts in', () => {
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable')).toBe(true)
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable', {})).toBe(true)
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable', { enterpriseSuppressUnavailableRedirect: false })).toBe(true)
+    expect(shouldRedirectForEnterpriseSessionState('source-unavailable', { enterpriseSuppressUnavailableRedirect: true })).toBe(false)
+  })
+
+  it('never suppresses identity/session redirects even when the opt-in flag is set', () => {
+    const states = ['session-expired', 'forbidden', 'not-found', 'cross-enterprise', 'enterprise-disabled', 'employee-disabled'] as const
+    for (const state of states) {
+      expect(shouldRedirectForEnterpriseSessionState(state, { enterpriseSuppressUnavailableRedirect: true })).toBe(true)
+    }
+  })
+
+  it('does not redirect when there is no session state to react to', () => {
+    expect(shouldRedirectForEnterpriseSessionState(null, { enterpriseSuppressUnavailableRedirect: true })).toBe(false)
+  })
+
+  it('passes the opt-in redirect flag only when the admin list views request it', () => {
+    const get = vi.spyOn(enterpriseClient, 'get').mockResolvedValue({ data: [] })
+
+    enterpriseAPI.listDepartments()
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/departments', undefined)
+
+    enterpriseAPI.listDepartments({ suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/departments', { enterpriseSuppressUnavailableRedirect: true })
+
+    enterpriseAPI.listEmployees()
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/employees', undefined)
+
+    enterpriseAPI.listEmployees({ suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/employees', { enterpriseSuppressUnavailableRedirect: true })
   })
 })

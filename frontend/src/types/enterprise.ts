@@ -28,7 +28,13 @@ export interface EnterpriseSession {
   current: boolean
 }
 
-export interface EnterpriseDepartment { id: number; name: string }
+export interface EnterpriseDepartment { id: number; name: string; created_at: string }
+
+export interface EnterpriseDepartmentDeletionImpact {
+  department_id: number
+  department_name: string
+  affected_employees: number
+}
 
 export interface EnterpriseEmployee {
   id: number
@@ -37,6 +43,13 @@ export interface EnterpriseEmployee {
   department_id?: number | null
   must_change_password: boolean
   terminated_at?: string
+  version: number
+}
+
+export interface EnterpriseEmployeeDetail extends EnterpriseEmployee {
+  department_name?: string
+  created_at: string
+  current_key?: EnterpriseEmployeeKey | null
 }
 
 export interface EnterpriseEmployeeUsageSummary {
@@ -108,6 +121,7 @@ export interface EmployeeCreateInput {
 export interface EmployeeUpdateInput {
   status: 'active' | 'disabled'
   department_id: number | null
+  version: number
 }
 
 export interface EnterpriseEmployeeKey {

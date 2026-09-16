@@ -47,7 +47,7 @@ func TestCreateDepartmentWritesActorAuditWithoutSensitivePayload(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO enterprise_departments`).WithArgs(int64(7), "研发").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(int64(31), "研发"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "created_at"}).AddRow(int64(31), "研发", time.Now()))
 	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), "department.created", "department", int64(31), sqlmock.AnyArg(), "enterprise_admin:9").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()

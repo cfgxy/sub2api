@@ -21,6 +21,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -349,16 +350,25 @@ func TestValidateBrandAllowsEmptyFieldsForDefaultFallback(t *testing.T) {
 func TestCreateEmployeeScopesSameEmailByEnterprise(t *testing.T) {
 	svc, mock := newMockService(t)
 	query := regexp.QuoteMeta("INSERT INTO enterprise_employees") + ".*"
+	mock.ExpectBegin()
 	mock.ExpectQuery(query).WithArgs(int64(1), "same@example.com", sqlmock.AnyArg(), nil).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password"}).
-			AddRow(10, "same@example.com", "active", nil, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password", "version"}).
+			AddRow(10, "same@example.com", "active", nil, true, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.created", "employee", int64(10), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
 	mock.ExpectQuery(query).WithArgs(int64(2), "same@example.com", sqlmock.AnyArg(), nil).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password"}).
-			AddRow(20, "same@example.com", "active", nil, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password", "version"}).
+			AddRow(20, "same@example.com", "active", nil, true, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(2), "employee.created", "employee", int64(20), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
-	one, err := svc.CreateEmployee(context.Background(), 1, "same@example.com", "strong-password-1", nil)
+	ctx := WithAuditActor(context.Background(), "admin:42")
+	one, err := svc.CreateEmployee(ctx, 1, "same@example.com", "strong-password-1", nil)
 	require.NoError(t, err)
-	two, err := svc.CreateEmployee(context.Background(), 2, "same@example.com", "strong-password-2", nil)
+	two, err := svc.CreateEmployee(ctx, 2, "same@example.com", "strong-password-2", nil)
 	require.NoError(t, err)
 	require.NotEqual(t, one.ID, two.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -577,16 +587,23 @@ func TestRequestResetDeletesTokenWhenMailerIsUnavailable(t *testing.T) {
 
 func TestTerminateEmployeeReleasesEmailForNewEmployeeID(t *testing.T) {
 	svc, mock := newMockService(t)
+	ctx := WithAuditActor(context.Background(), "admin:42")
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE enterprise_employees SET status = 'terminated'").WithArgs(int64(1), int64(10)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT assignment.api_key_id, api_key.key").WithArgs(int64(1), int64(10)).WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key"}))
 	mock.ExpectExec("UPDATE enterprise_sessions SET revoked_at").WithArgs(int64(1), int64(10)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.terminated", "employee", int64(10), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	require.NoError(t, svc.TerminateEmployee(context.Background(), 1, 10))
+	require.NoError(t, svc.TerminateEmployee(ctx, 1, 10))
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO enterprise_employees")+".*").WithArgs(int64(1), "rehire@example.com", sqlmock.AnyArg(), nil).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password"}).AddRow(11, "rehire@example.com", "active", nil, true))
-	employee, err := svc.CreateEmployee(context.Background(), 1, "rehire@example.com", "strong-password", nil)
+		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password", "version"}).AddRow(11, "rehire@example.com", "active", nil, true, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.created", "employee", int64(11), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	employee, err := svc.CreateEmployee(ctx, 1, "rehire@example.com", "strong-password", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(11), employee.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -595,9 +612,120 @@ func TestTerminateEmployeeReleasesEmailForNewEmployeeID(t *testing.T) {
 func TestDeleteDepartmentClearsEmployeesBeforeDisabling(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT name FROM enterprise_departments")).WithArgs(int64(1), int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"name"}).AddRow("Engineering"))
 	mock.ExpectExec("UPDATE enterprise_employees SET department_id = NULL").WithArgs(int64(1), int64(7)).WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec("UPDATE enterprise_departments SET status = 'disabled'").WithArgs(int64(1), int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "department.deleted", "department", int64(7), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	require.NoError(t, svc.DeleteDepartment(context.Background(), 1, 7))
+	require.NoError(t, svc.DeleteDepartment(WithAuditActor(context.Background(), "admin:42"), 1, 7))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPreviewDepartmentDeletionReturnsAffectedEmployeeCount(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT department.name")).WithArgs(int64(1), int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"name", "count"}).AddRow("Engineering", 3))
+
+	impact, err := svc.PreviewDepartmentDeletion(context.Background(), 1, 7)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), impact.DepartmentID)
+	require.Equal(t, "Engineering", impact.DepartmentName)
+	require.Equal(t, int64(3), impact.AffectedEmployees)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPreviewDepartmentDeletionReturnsNotFoundForMissingOrForeignDepartment(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT department.name")).WithArgs(int64(1), int64(99)).
+		WillReturnError(sql.ErrNoRows)
+
+	_, err := svc.PreviewDepartmentDeletion(context.Background(), 1, 99)
+	require.ErrorIs(t, err, errNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetEmployeeReturnsDetailWithDepartmentName(t *testing.T) {
+	svc, mock := newMockService(t)
+	created := time.Date(2026, 1, 8, 9, 24, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status")).
+		WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "status", "department_id", "department_name", "must_change_password", "terminated_at", "version", "created_at"}).
+			AddRow(int64(10), "employee-a@example.com", "active", int64(7), "研发中心", false, nil, int64(2), created))
+
+	item, err := svc.GetEmployee(context.Background(), 1, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), item.ID)
+	require.Equal(t, "employee-a@example.com", item.Email)
+	require.NotNil(t, item.DepartmentID)
+	require.Equal(t, int64(7), *item.DepartmentID)
+	require.NotNil(t, item.DepartmentName)
+	require.Equal(t, "研发中心", *item.DepartmentName)
+	require.Equal(t, created, item.CreatedAt)
+	require.Nil(t, item.TerminatedAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetEmployeeReturnsNotFoundForMissingOrForeignEmployee(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status")).
+		WithArgs(int64(1), int64(99)).
+		WillReturnError(sql.ErrNoRows)
+
+	_, err := svc.GetEmployee(context.Background(), 1, 99)
+	require.ErrorIs(t, err, errNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateEmployeeSucceedsWhenVersionMatchesAndBumpsIt(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(3))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE enterprise_employees SET status = $1, department_id = $2")).
+		WithArgs("active", (*int64)(nil), int64(1), int64(10), int64(3)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.updated", "employee", int64(10), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := svc.UpdateEmployee(WithAuditActor(context.Background(), "admin:42"), 1, 10, "active", nil, 3)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateEmployeeRejectsStaleVersionWithoutMutatingOrRevoking(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(5))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.update_rejected", "employee", int64(10), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := svc.UpdateEmployee(WithAuditActor(context.Background(), "admin:42"), 1, 10, "disabled", nil, 3)
+	require.ErrorIs(t, err, errEmployeeVersionConflict)
+	var appErr *infraerrors.ApplicationError
+	require.True(t, errors.As(err, &appErr))
+	require.Equal(t, "5", appErr.Metadata["current_version"])
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateEmployeeAttributesAuditEventToActorFromContext(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE enterprise_employees SET status = $1, department_id = $2")).
+		WithArgs("active", (*int64)(nil), int64(1), int64(10), int64(1)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.updated", "employee", int64(10), sqlmock.AnyArg(), "admin:42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	ctx := WithAuditActor(context.Background(), "admin:42")
+	err := svc.UpdateEmployee(ctx, 1, 10, "active", nil, 1)
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

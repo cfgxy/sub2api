@@ -66,6 +66,7 @@ var (
 	errNotFound                 = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
 	errConflict                 = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
 	errInvalidBrand             = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
+	errEmployeeVersionConflict  = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
 )
 
 type PasswordResetMailer interface {
@@ -248,8 +249,17 @@ type Session struct {
 }
 
 type Department struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// DepartmentDeletionImpact previews the effect of deleting a department so the
+// admin can make an informed decision before the destructive action executes.
+type DepartmentDeletionImpact struct {
+	DepartmentID      int64  `json:"department_id"`
+	DepartmentName    string `json:"department_name"`
+	AffectedEmployees int64  `json:"affected_employees"`
 }
 
 type Employee struct {
@@ -259,6 +269,18 @@ type Employee struct {
 	DepartmentID *int64     `json:"department_id,omitempty"`
 	MustChange   bool       `json:"must_change_password"`
 	TerminatedAt *time.Time `json:"terminated_at,omitempty"`
+	Version      int64      `json:"version"`
+}
+
+// EmployeeDetail extends Employee with the read-only context an admin needs
+// on the employee detail page: join date, resolved department name, and the
+// employee's current API key (already masked by the key repository — the
+// plaintext credential never leaves the self-service key endpoints).
+type EmployeeDetail struct {
+	Employee
+	DepartmentName *string                 `json:"department_name,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+	CurrentKey     *enterprise.EmployeeKey `json:"current_key,omitempty"`
 }
 
 type EmployeeUsageSummary struct {
@@ -1124,7 +1146,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context, claims *Claims) error {
 }
 
 func (s *Service) ListDepartments(ctx context.Context, enterpriseID int64) ([]Department, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM enterprise_departments WHERE enterprise_id = $1 AND status = 'active' ORDER BY name`, enterpriseID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_at FROM enterprise_departments WHERE enterprise_id = $1 AND status = 'active' ORDER BY name`, enterpriseID)
 	if err != nil {
 		return nil, err
 	}
@@ -1132,7 +1154,7 @@ func (s *Service) ListDepartments(ctx context.Context, enterpriseID int64) ([]De
 	items := make([]Department, 0)
 	for rows.Next() {
 		var item Department
-		if err := rows.Scan(&item.ID, &item.Name); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -1148,7 +1170,7 @@ func (s *Service) CreateDepartment(ctx context.Context, enterpriseID int64, name
 	item := new(Department)
 	actor := auditActor(ctx)
 	if actor == "" {
-		err := s.db.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
+		err := s.db.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name, created_at`, enterpriseID, name).Scan(&item.ID, &item.Name, &item.CreatedAt)
 		if err != nil {
 			return nil, errConflict
 		}
@@ -1159,11 +1181,11 @@ func (s *Service) CreateDepartment(ctx context.Context, enterpriseID int64, name
 		return nil, err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name`, enterpriseID, name).Scan(&item.ID, &item.Name)
+	err = tx.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name, created_at`, enterpriseID, name).Scan(&item.ID, &item.Name, &item.CreatedAt)
 	if err != nil {
 		return nil, errConflict
 	}
-	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.created", "department", &item.ID, map[string]any{"result": "success"}); err != nil {
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.created", "department", &item.ID, map[string]any{"result": "success", "name": item.Name}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1172,15 +1194,44 @@ func (s *Service) CreateDepartment(ctx context.Context, enterpriseID int64, name
 	return item, nil
 }
 
+// PreviewDepartmentDeletion reports how many active employees would be
+// detached before an admin confirms an irreversible department deletion.
+func (s *Service) PreviewDepartmentDeletion(ctx context.Context, enterpriseID, departmentID int64) (*DepartmentDeletionImpact, error) {
+	impact := &DepartmentDeletionImpact{DepartmentID: departmentID}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT department.name,
+		       (SELECT COUNT(*) FROM enterprise_employees
+		        WHERE enterprise_id = $1 AND department_id = $2 AND status <> 'terminated')
+		FROM enterprise_departments AS department
+		WHERE department.enterprise_id = $1 AND department.id = $2 AND department.status = 'active'
+	`, enterpriseID, departmentID).Scan(&impact.DepartmentName, &impact.AffectedEmployees)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return impact, nil
+}
+
 func (s *Service) DeleteDepartment(ctx context.Context, enterpriseID, departmentID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_employees SET department_id = NULL, updated_at = NOW() WHERE enterprise_id = $1 AND department_id = $2`, enterpriseID, departmentID); err != nil {
+	var departmentName string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM enterprise_departments WHERE enterprise_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`, enterpriseID, departmentID).Scan(&departmentName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNotFound
+		}
 		return err
 	}
+	clearResult, err := tx.ExecContext(ctx, `UPDATE enterprise_employees SET department_id = NULL, updated_at = NOW() WHERE enterprise_id = $1 AND department_id = $2`, enterpriseID, departmentID)
+	if err != nil {
+		return err
+	}
+	affected, _ := clearResult.RowsAffected()
 	result, err := tx.ExecContext(ctx, `UPDATE enterprise_departments SET status = 'disabled', disabled_at = NOW(), updated_at = NOW() WHERE enterprise_id = $1 AND id = $2 AND status = 'active'`, enterpriseID, departmentID)
 	if err != nil {
 		return err
@@ -1188,14 +1239,14 @@ func (s *Service) DeleteDepartment(ctx context.Context, enterpriseID, department
 	if n, _ := result.RowsAffected(); n == 0 {
 		return errNotFound
 	}
-	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.disabled", "department", &departmentID, map[string]any{"result": "success"}); err != nil {
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "department.deleted", "department", &departmentID, map[string]any{"result": "success", "name": departmentName, "affected_employees": affected}); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Employee, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(current_email, email), status, department_id, must_change_password, terminated_at FROM enterprise_employees WHERE enterprise_id = $1 ORDER BY id`, enterpriseID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(current_email, email), status, department_id, must_change_password, terminated_at, version FROM enterprise_employees WHERE enterprise_id = $1 ORDER BY id`, enterpriseID)
 	if err != nil {
 		return nil, err
 	}
@@ -1205,7 +1256,7 @@ func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Empl
 		var item Employee
 		var dept sql.NullInt64
 		var terminated sql.NullTime
-		if err := rows.Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange, &terminated); err != nil {
+		if err := rows.Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange, &terminated, &item.Version); err != nil {
 			return nil, err
 		}
 		if dept.Valid {
@@ -1219,22 +1270,36 @@ func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Empl
 	return items, rows.Err()
 }
 
-func (s *Service) GetEmployee(ctx context.Context, enterpriseID, employeeID int64) (*Employee, error) {
-	item := new(Employee)
-	var departmentID sql.NullInt64
+// GetEmployee loads a single employee scoped to the caller's enterprise. A
+// cross-enterprise or unknown id returns the same errNotFound so the
+// response never reveals whether the id exists in another tenant.
+func (s *Service) GetEmployee(ctx context.Context, enterpriseID, employeeID int64) (*EmployeeDetail, error) {
+	item := new(EmployeeDetail)
+	var dept sql.NullInt64
+	var deptName sql.NullString
 	var terminated sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(current_email, email), status, department_id, must_change_password, terminated_at
-		FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2`, enterpriseID, employeeID).
-		Scan(&item.ID, &item.Email, &item.Status, &departmentID, &item.MustChange, &terminated)
+		SELECT employee.id, COALESCE(employee.current_email, employee.email), employee.status,
+		       employee.department_id, department.name, employee.must_change_password,
+		       employee.terminated_at, employee.version, employee.created_at
+		FROM enterprise_employees AS employee
+		LEFT JOIN enterprise_departments AS department
+		  ON department.enterprise_id = employee.enterprise_id AND department.id = employee.department_id
+		WHERE employee.enterprise_id = $1 AND employee.id = $2
+	`, enterpriseID, employeeID).Scan(
+		&item.ID, &item.Email, &item.Status, &dept, &deptName, &item.MustChange, &terminated, &item.Version, &item.CreatedAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if departmentID.Valid {
-		item.DepartmentID = &departmentID.Int64
+	if dept.Valid {
+		item.DepartmentID = &dept.Int64
+	}
+	if deptName.Valid {
+		item.DepartmentName = &deptName.String
 	}
 	if terminated.Valid {
 		item.TerminatedAt = &terminated.Time
@@ -1361,8 +1426,8 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 			INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, department_id, status, must_change_password, initial_password_expires_at)
 		SELECT $1, $2, $2, $3, $4, 'active', TRUE, NOW() + INTERVAL '24 hours'
 		WHERE $4::bigint IS NULL OR EXISTS (SELECT 1 FROM enterprise_departments WHERE enterprise_id = $1 AND id = $4 AND status = 'active')
-		RETURNING id, current_email, status, department_id, must_change_password
-		`, enterpriseID, email, string(hash), departmentID).Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange)
+		RETURNING id, current_email, status, department_id, must_change_password, version
+		`, enterpriseID, email, string(hash), departmentID).Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange, &item.Version)
 	}
 	if actor == "" {
 		err = insertEmployee(s.db)
@@ -1374,7 +1439,7 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 		defer tx.Rollback()
 		err = insertEmployee(tx)
 		if err == nil {
-			if auditErr := writeAuditEvent(ctx, tx, enterpriseID, "employee.created", "employee", &item.ID, map[string]any{"result": "success", "department_id": departmentID}); auditErr != nil {
+			if auditErr := writeAuditEvent(ctx, tx, enterpriseID, "employee.created", "employee", &item.ID, map[string]any{"result": "success", "employee_id": item.ID, "department_id": departmentID}); auditErr != nil {
 				return nil, auditErr
 			}
 		}
@@ -1391,7 +1456,11 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 	return item, nil
 }
 
-func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID int64, status string, departmentID *int64) error {
+// UpdateEmployee applies an admin edit using optimistic concurrency: the
+// caller must supply the version it last observed. A mismatch means another
+// admin edited the same employee concurrently, so the write is rejected with
+// zero partial effect instead of silently overwriting the other admin's change.
+func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID int64, status string, departmentID *int64, expectedVersion int64) error {
 	if status != "active" && status != "disabled" {
 		return infraerrors.BadRequest("INVALID_EMPLOYEE_STATUS", "employee status is invalid")
 	}
@@ -1401,14 +1470,40 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var currentVersion int64
+	err = tx.QueryRowContext(ctx, `SELECT version FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2 AND status <> 'terminated' FOR UPDATE`, enterpriseID, employeeID).Scan(&currentVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if currentVersion != expectedVersion {
+		conflictErr := errEmployeeVersionConflict.WithMetadata(map[string]string{"current_version": fmt.Sprintf("%d", currentVersion)})
+		if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.update_rejected", "employee", &employeeID, map[string]any{
+			"result":           "rejected",
+			"reason":           "version_conflict",
+			"employee_id":      employeeID,
+			"expected_version": expectedVersion,
+			"current_version":  currentVersion,
+		}); err != nil {
+			return conflictErr
+		}
+		if err := tx.Commit(); err != nil {
+			return conflictErr
+		}
+		return conflictErr
+	}
+
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees SET status = $1, department_id = $2,
 		    disabled_at = CASE WHEN $1::varchar = 'disabled' THEN NOW() ELSE NULL END,
 		    auth_version = CASE WHEN status IS DISTINCT FROM $1 THEN auth_version + 1 ELSE auth_version END,
+		    version = version + 1,
 		    updated_at = NOW()
-		WHERE enterprise_id = $3 AND id = $4 AND status <> 'terminated'
+		WHERE enterprise_id = $3 AND id = $4 AND version = $5
 		  AND ($2::bigint IS NULL OR EXISTS (SELECT 1 FROM enterprise_departments WHERE enterprise_id = $3 AND id = $2 AND status = 'active'))
-	`, status, departmentID, enterpriseID, employeeID)
+	`, status, departmentID, enterpriseID, employeeID, expectedVersion)
 	if err != nil {
 		return err
 	}
@@ -1426,7 +1521,7 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 			return err
 		}
 	}
-	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.updated", "employee", &employeeID, map[string]any{"result": "success", "status": status, "department_id": departmentID}); err != nil {
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.updated", "employee", &employeeID, map[string]any{"result": "success", "employee_id": employeeID, "status": status, "department_id": departmentID, "version": expectedVersion + 1}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1444,7 +1539,7 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees SET status = 'terminated', current_email = NULL, department_id = NULL,
-		    disabled_at = COALESCE(disabled_at, NOW()), terminated_at = NOW(), auth_version = auth_version + 1, updated_at = NOW()
+		    disabled_at = COALESCE(disabled_at, NOW()), terminated_at = NOW(), auth_version = auth_version + 1, version = version + 1, updated_at = NOW()
 		WHERE enterprise_id = $1 AND id = $2 AND status <> 'terminated'
 	`, enterpriseID, employeeID)
 	if err != nil {
@@ -1460,7 +1555,7 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW() WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2`, enterpriseID, employeeID); err != nil {
 		return err
 	}
-	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.terminated", "employee", &employeeID, map[string]any{"result": "success"}); err != nil {
+	if err := writeAuditEvent(ctx, tx, enterpriseID, "employee.terminated", "employee", &employeeID, map[string]any{"result": "success", "employee_id": employeeID}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

@@ -1,4 +1,11 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    // 显式声明「自行处理加载失败」的调用点：source-unavailable 状态豁免全局会话状态页跳转，默认 false/未设置时行为不变
+    enterpriseSuppressUnavailableRedirect?: boolean
+  }
+}
 import { getAPIBaseURL } from './url'
 import type {
   EmployeeCreateInput,
@@ -8,7 +15,9 @@ import type {
   EnterpriseAllocationListResult,
   EnterpriseAllocationSummary,
   EnterpriseDepartment,
+  EnterpriseDepartmentDeletionImpact,
   EnterpriseEmployee,
+  EnterpriseEmployeeDetail,
   EnterpriseEmployeeKey,
   EnterpriseEmployeeKeyMutationResult,
   EnterpriseEmployeeHome,
@@ -63,6 +72,17 @@ export function enterpriseSessionStateForError(error: unknown): EnterpriseSessio
   if (status >= 500) return 'source-unavailable'
   if (status === 0 && axios.isAxiosError(error) && !response) return 'source-unavailable'
   return null
+}
+
+// 身份/权限/会话类状态（401/403/404 与三个 ENTERPRISE_* reason）始终跳转全局会话状态页；
+// 仅 source-unavailable（5xx/传输故障）可被调用方显式声明「自行处理加载失败」而豁免，默认行为不变。
+export function shouldRedirectForEnterpriseSessionState(
+  state: EnterpriseSessionState | null,
+  requestConfig?: { enterpriseSuppressUnavailableRedirect?: boolean },
+): boolean {
+  if (!state) return false
+  if (state === 'source-unavailable' && requestConfig?.enterpriseSuppressUnavailableRedirect) return false
+  return true
 }
 
 export function onEnterpriseAuthSession(listener: (pair: EnterpriseTokenPair) => void) {
@@ -121,7 +141,7 @@ enterpriseClient.interceptors.response.use(
     const data = error.response?.data as Record<string, unknown> | undefined
     const status = error.response?.status ?? 0
     const state = enterpriseSessionStateForError(error)
-    if (!isAuthRequest && state && typeof window !== 'undefined' && !window.location.pathname.startsWith('/enterprise/session-states')) {
+    if (!isAuthRequest && shouldRedirectForEnterpriseSessionState(state, request) && typeof window !== 'undefined' && !window.location.pathname.startsWith('/enterprise/session-states')) {
       window.location.href = `/enterprise/session-states?state=${state}`
     }
     return Promise.reject({
@@ -204,6 +224,12 @@ export function clearEnterpriseKeyMutationRetryState(): void {
   }
 }
 
+export function isEnterpriseEmployeeVersionConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const candidate = error as { status?: unknown; reason?: unknown }
+  return candidate.reason === 'EMPLOYEE_VERSION_CONFLICT' || candidate.status === 409
+}
+
 export function isEnterpriseKeyMutationStateConflict(error: unknown): boolean {
 	if (typeof error !== 'object' || error === null) return false
 	const candidate = error as { status?: unknown; code?: unknown; reason?: unknown }
@@ -263,11 +289,12 @@ export const enterpriseAPI = {
   rotateKey: (expected_api_key_id: number) => withEnterpriseKeyMutation('rotate', expected_api_key_id, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
     enterpriseClient.post('/enterprise/keys/rotate', { expected_api_key_id }, idempotencyHeaders(idempotencyKey)),
   )),
-  listDepartments: () => data<EnterpriseDepartment[]>(enterpriseClient.get('/enterprise/admin/departments')),
+  listDepartments: (options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseDepartment[]>(enterpriseClient.get('/enterprise/admin/departments', options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)),
   createDepartment: (name: string) => data<EnterpriseDepartment>(enterpriseClient.post('/enterprise/admin/departments', { name })),
   deleteDepartment: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/departments/${id}`)),
-  listEmployees: () => data<EnterpriseEmployee[]>(enterpriseClient.get('/enterprise/admin/employees')),
-  getEmployee: (id: number) => data<EnterpriseEmployee>(enterpriseClient.get(`/enterprise/admin/employees/${id}`)),
+  getDepartmentDeletionImpact: (id: number) => data<EnterpriseDepartmentDeletionImpact>(enterpriseClient.get(`/enterprise/admin/departments/${id}/deletion-impact`)),
+  listEmployees: (options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseEmployee[]>(enterpriseClient.get('/enterprise/admin/employees', options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)),
+  getEmployee: (id: number) => data<EnterpriseEmployeeDetail>(enterpriseClient.get(`/enterprise/admin/employees/${id}`)),
   createEmployee: (input: EmployeeCreateInput) => data<EnterpriseEmployee>(enterpriseClient.post('/enterprise/admin/employees', input)),
   updateEmployee: (id: number, input: EmployeeUpdateInput) => data<{ success: boolean }>(enterpriseClient.patch(`/enterprise/admin/employees/${id}`, input)),
   terminateEmployee: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/employees/${id}`)),

@@ -1,7 +1,9 @@
 package enterpriseidentity
 
 import (
+	"context"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
@@ -188,6 +190,50 @@ func TestGetSummarySurfacesScheduledSubscription(t *testing.T) {
 func TestSanitizeAuditActorRefRemovesLegacySessionIdentifiers(t *testing.T) {
 	require.Equal(t, "enterprise_actor", sanitizeAuditActorRef("enterprise_session:legacy-session-id"))
 	require.Equal(t, "enterprise_employee:22", sanitizeAuditActorRef("enterprise_employee:22"))
+}
+
+// TestListAuditEventsSurvivesEmployeeTerminationAndScopesByEnterprise proves
+// two of SHAN-239's acceptance criteria against the real query: (1) audit
+// history for an employee remains queryable after termination, because the
+// query only joins on payload->>'employee_id' and never filters on the
+// employee's current status; (2) every variant is always scoped by
+// enterprise_id first, so one enterprise's admin can never see another
+// enterprise's audit trail even when supplying the same employee_id.
+func TestListAuditEventsSurvivesEmployeeTerminationAndScopesByEnterprise(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	employeeID := int64(10)
+	terminatedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM enterprise_audit_events WHERE enterprise_id = $1 AND payload->>'employee_id' = $2::text")).
+		WithArgs(int64(1), employeeID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(regexp.QuoteMeta("WHERE enterprise_id = $1 AND payload->>'employee_id' = $2::text\n\t\tORDER BY created_at DESC, id DESC")).
+		WithArgs(int64(1), employeeID, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "event_type", "entity_type", "entity_id", "result", "reason", "payload", "actor_ref", "created_at"}).
+			AddRow(int64(99), "employee.terminated", "employee", employeeID, "success", "", []byte(`{"employee_id":10}`), "enterprise_admin:1", terminatedAt))
+
+	items, total, err := handler.listAuditEvents(context.Background(), 1, workbenchQuery{EmployeeID: &employeeID, Page: 1, PageSize: 20}, "", "", "", "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, items, 1)
+	require.Equal(t, "employee.terminated", items[0].EventType)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// The second enterprise's admin queries the same employee_id and must
+	// see nothing: the enterprise_id predicate isolates the two tenants.
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*) FROM enterprise_audit_events WHERE enterprise_id = $1 AND payload->>'employee_id' = $2::text")).
+		WithArgs(int64(2), employeeID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
+	mock.ExpectQuery(regexp.QuoteMeta("WHERE enterprise_id = $1 AND payload->>'employee_id' = $2::text\n\t\tORDER BY created_at DESC, id DESC")).
+		WithArgs(int64(2), employeeID, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "event_type", "entity_type", "entity_id", "result", "reason", "payload", "actor_ref", "created_at"}))
+
+	items, total, err = handler.listAuditEvents(context.Background(), 2, workbenchQuery{EmployeeID: &employeeID, Page: 1, PageSize: 20}, "", "", "", "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), total)
+	require.Empty(t, items)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestListAuditEventsFiltersOperatorResultReasonAndSearch(t *testing.T) {

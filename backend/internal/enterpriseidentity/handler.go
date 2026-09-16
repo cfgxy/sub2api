@@ -100,6 +100,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.Use(requireEnterpriseAdmin)
 	admin.GET("/departments", h.listDepartments)
 	admin.POST("/departments", h.createDepartment)
+	admin.GET("/departments/:id/deletion-impact", h.previewDepartmentDeletion)
 	admin.DELETE("/departments/:id", h.deleteDepartment)
 	admin.GET("/employees", h.listEmployees)
 	admin.GET("/employees/:id", h.getEmployee)
@@ -298,6 +299,7 @@ type employeeCreateRequest struct {
 type employeeUpdateRequest struct {
 	Status       string `json:"status" binding:"required"`
 	DepartmentID *int64 `json:"department_id"`
+	Version      int64  `json:"version" binding:"required"`
 }
 type employeeKeyMutationRequest struct {
 	ExpectedAPIKeyID int64 `json:"expected_api_key_id"`
@@ -698,6 +700,17 @@ func (h *Handler) createDepartment(c *gin.Context) {
 	}
 	response.Created(c, item)
 }
+func (h *Handler) previewDepartmentDeletion(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	impact, err := h.service.PreviewDepartmentDeletion(c.Request.Context(), mustClaims(c).EnterpriseID, id)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, impact)
+}
 func (h *Handler) deleteDepartment(c *gin.Context) {
 	claims := mustClaims(c)
 	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
@@ -729,6 +742,13 @@ func (h *Handler) getEmployee(c *gin.Context) {
 	if response.ErrorFrom(c, err) {
 		return
 	}
+	if h.keyRepository != nil {
+		key, err := h.keyRepository.GetEmployeeCurrentKey(c.Request.Context(), claims.EnterpriseID, id)
+		if response.ErrorFrom(c, err) {
+			return
+		}
+		item.CurrentKey = key
+	}
 	response.Success(c, item)
 }
 func (h *Handler) createEmployee(c *gin.Context) {
@@ -759,7 +779,7 @@ func (h *Handler) updateEmployee(c *gin.Context) {
 		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.update", "employee", &id, "invalid_request")
 		return
 	}
-	if response.ErrorFrom(c, h.service.UpdateEmployee(ctx, claims.EnterpriseID, id, req.Status, req.DepartmentID)) {
+	if response.ErrorFrom(c, h.service.UpdateEmployee(ctx, claims.EnterpriseID, id, req.Status, req.DepartmentID, req.Version)) {
 		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.update", "employee", &id, "rejected")
 		return
 	}
@@ -779,6 +799,7 @@ func (h *Handler) terminateEmployee(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"success": true})
 }
+
 func (h *Handler) getBrand(c *gin.Context) {
 	brand, err := h.service.GetBrand(c.Request.Context(), mustClaims(c).EnterpriseID)
 	if response.ErrorFrom(c, err) {
