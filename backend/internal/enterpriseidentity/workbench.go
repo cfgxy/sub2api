@@ -33,6 +33,7 @@ type workbenchQuery struct {
 	DepartmentID *int64
 	EmployeeID   *int64
 	APIKeyID     *int64
+	Model        string
 	WindowType   string
 	WindowAnchor *time.Time
 	StartAt      *time.Time
@@ -90,6 +91,7 @@ type WorkbenchUsageRow struct {
 	DepartmentID         *int64    `json:"department_id,omitempty"`
 	APIKeyID             int64     `json:"api_key_id"`
 	APIKeyMasked         string    `json:"api_key_masked"`
+	Model                string    `json:"model,omitempty"`
 	WindowType           string    `json:"window_type"`
 	WindowAnchor         time.Time `json:"window_anchor"`
 	RequestAt            time.Time `json:"request_at"`
@@ -185,6 +187,8 @@ func parseWorkbenchQuery(c *gin.Context, requirePage bool) (workbenchQuery, bool
 		*target = &value
 	}
 
+	q.Model = strings.TrimSpace(c.Query("model"))
+
 	q.WindowType = strings.TrimSpace(c.Query("window_type"))
 	if q.WindowType != "" && q.WindowType != "week" {
 		response.BadRequest(c, "invalid window_type")
@@ -275,6 +279,9 @@ func buildWorkbenchUsageScope(enterpriseID int64, q workbenchQuery) workbenchSQL
 	if q.APIKeyID != nil {
 		add("attribution.api_key_id = $%d", *q.APIKeyID)
 	}
+	if q.Model != "" {
+		add("usage_log.model = $%d", q.Model)
+	}
 	if q.WindowType != "" {
 		add("attribution.window_type = $%d", q.WindowType)
 	} else {
@@ -327,6 +334,7 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	if err := h.owner.service.db.QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT attribution.employee_id)
 		FROM enterprise_usage_attributions AS attribution
+		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
 		LEFT JOIN enterprise_employees AS employee
 		  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
 		WHERE `+scope.where+` AND attribution.employee_id IS NOT NULL`, scope.args...).Scan(&result.EmployeeCount); err != nil {
@@ -520,6 +528,7 @@ func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q 
 	scope := buildWorkbenchUsageScope(enterpriseID, q)
 	var total int64
 	countQuery := `SELECT COUNT(*) FROM enterprise_usage_attributions AS attribution
+		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
 		LEFT JOIN enterprise_employees AS employee
 		  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
 		WHERE ` + scope.where
@@ -535,6 +544,7 @@ func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q 
 		       attribution.api_key_id,
 		       CASE WHEN LENGTH(api_key.key) <= 10 THEN '********'
 		            ELSE SUBSTRING(api_key.key FROM 1 FOR 6) || '...' || RIGHT(api_key.key, 4) END,
+		       COALESCE(usage_log.model, ''),
 		       attribution.window_type, attribution.window_anchor, attribution.request_at,
 		       attribution.classification, attribution.assignment_generation,
 		       COALESCE(usage_log.actual_cost, 0)::text,
@@ -562,7 +572,7 @@ func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q 
 		var item WorkbenchUsageRow
 		var employeeID, departmentID sql.NullInt64
 		if err := rows.Scan(&item.AttributionID, &item.UsageLogID, &employeeID, &item.EmployeeEmail,
-			&departmentID, &item.APIKeyID, &item.APIKeyMasked, &item.WindowType, &item.WindowAnchor,
+			&departmentID, &item.APIKeyID, &item.APIKeyMasked, &item.Model, &item.WindowType, &item.WindowAnchor,
 			&item.RequestAt, &item.Classification, &item.AssignmentGeneration, &item.UsageCredit,
 			&item.ConfiguredCredit); err != nil {
 			return nil, 0, err
@@ -686,41 +696,42 @@ func nullableInt64(value sql.NullInt64) *int64 {
 	return &result
 }
 
+// auditPayloadFieldWhitelist enumerates every payload field any audit writer
+// in this codebase is known to emit. The detail drawer must never render a
+// field outside this set — unknown/unexpected keys are dropped rather than
+// passed through, so a future audit writer that accidentally includes a
+// secret-bearing field fails closed instead of leaking it.
+var auditPayloadFieldWhitelist = map[string]struct{}{
+	"result": {}, "reason": {},
+	"employee_id": {}, "department_id": {}, "api_key_id": {},
+	"subscription_id": {}, "upstream_subscription_id": {}, "upstream_group_id": {},
+	"cancelled_subscription_id": {}, "scheduled_subscription_id": {},
+	"previous_assignment_id": {}, "new_assignment_id": {},
+	"previous_api_key_id": {}, "previous_masked_key": {}, "masked_key": {},
+	"window_type": {}, "window_anchor": {},
+	"previous_window_start": {}, "observed_window_start": {},
+	"assignment_segment_boundary": {},
+	"expected_version": {}, "current_version": {}, "actual_version": {}, "version": {},
+	"name": {}, "status": {}, "affected_employees": {},
+	"initial": {}, "keys_disabled": {}, "fields": {},
+	"content_type": {}, "size_bytes": {},
+	"quota": {}, "quota_used": {},
+	"rate_limit_5h": {}, "rate_limit_1d": {}, "rate_limit_7d": {},
+	"usage_5h": {}, "usage_1d": {}, "usage_7d": {},
+	"window_5h_start": {}, "window_1d_start": {}, "window_7d_start": {},
+}
+
 func sanitizeAuditPayload(raw []byte) map[string]any {
 	var decoded map[string]any
 	if len(raw) == 0 || json.Unmarshal(raw, &decoded) != nil {
 		return map[string]any{}
 	}
-	return sanitizeAuditMap(decoded)
-}
-
-func sanitizeAuditMap(decoded map[string]any) map[string]any {
+	sanitized := make(map[string]any, len(decoded))
 	for key, value := range decoded {
-		lower := strings.ToLower(key)
-		if lower == "key" || strings.Contains(lower, "password") || strings.Contains(lower, "token") ||
-			strings.Contains(lower, "session") || strings.Contains(lower, "request_body") || strings.Contains(lower, "upstream_error") ||
-			strings.Contains(lower, "credential") {
-			delete(decoded, key)
+		if _, allowed := auditPayloadFieldWhitelist[key]; !allowed {
 			continue
 		}
-		switch nested := value.(type) {
-		case map[string]any:
-			decoded[key] = sanitizeAuditMap(nested)
-		case []any:
-			decoded[key] = sanitizeAuditList(nested)
-		}
+		sanitized[key] = value
 	}
-	return decoded
-}
-
-func sanitizeAuditList(items []any) []any {
-	for index, value := range items {
-		switch nested := value.(type) {
-		case map[string]any:
-			items[index] = sanitizeAuditMap(nested)
-		case []any:
-			items[index] = sanitizeAuditList(nested)
-		}
-	}
-	return items
+	return sanitized
 }
