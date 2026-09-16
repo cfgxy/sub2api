@@ -1323,7 +1323,7 @@ func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID
 	var limit sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start,
-		       upstream_subscription.weekly_limit_usd::text
+		       subscription_group.weekly_limit_usd::text
 		FROM enterprises AS enterprise
 		JOIN enterprise_employees AS employee ON employee.enterprise_id = enterprise.id AND employee.id = $2
 		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
@@ -1332,6 +1332,7 @@ func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
 		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
 		 AND upstream_subscription.deleted_at IS NULL
+		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
 		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID, employeeID).
 		Scan(&subscriptionID, &anchor, &limit)
 	if err != nil {
