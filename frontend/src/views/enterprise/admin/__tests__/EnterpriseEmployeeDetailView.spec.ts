@@ -3,18 +3,20 @@ import ElementPlus from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EnterpriseEmployeeDetailView from '../EnterpriseEmployeeDetailView.vue'
 
-const { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, listWorkbenchAuditEvents, pushMock } = vi.hoisted(() => ({
+const { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, listWorkbenchAuditEvents, updateEmployee, pushMock } = vi.hoisted(() => ({
   getEmployee: vi.fn(),
   listDepartments: vi.fn(),
   listWorkbenchUsage: vi.fn(),
   getWorkbenchSummary: vi.fn(),
   listWorkbenchAuditEvents: vi.fn(),
+  updateEmployee: vi.fn(),
   pushMock: vi.fn(),
 }))
 
 vi.mock('@/api/enterprise', () => ({
-  enterpriseAPI: { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, listWorkbenchAuditEvents },
+  enterpriseAPI: { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, listWorkbenchAuditEvents, updateEmployee },
   isEnterpriseEmployeeVersionConflict: (error: unknown) => (error as { reason?: string })?.reason === 'EMPLOYEE_VERSION_CONFLICT',
+  isEnterpriseEmployeeDepartmentInvalid: (error: unknown) => (error as { reason?: string })?.reason === 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID',
 }))
 
 vi.mock('vue-router', () => ({
@@ -99,6 +101,74 @@ describe('EnterpriseEmployeeDetailView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('该员工当前没有可用的 API Key')
+    wrapper.unmount()
+  })
+
+  it('keeps the edit dialog open and refills it with the latest data on a version conflict, instead of closing it', async () => {
+    const wrapper = mount(EnterpriseEmployeeDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((button) => button.text() === '编辑资料')
+    await editButton?.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+
+    updateEmployee.mockRejectedValueOnce({ reason: 'EMPLOYEE_VERSION_CONFLICT' })
+    const latestDetail = { ...baseDetail, department_id: 9, department_name: '市场中心', version: 4 }
+    getEmployee.mockResolvedValueOnce(latestDetail)
+    listDepartments.mockResolvedValueOnce([
+      { id: 7, name: '研发中心', created_at: '2026-01-01T00:00:00Z' },
+      { id: 9, name: '市场中心', created_at: '2026-01-01T00:00:00Z' },
+    ])
+
+    const saveButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '保存')
+    await saveButton?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+    expect(wrapper.find('.el-select__selected-item.el-select__placeholder').text()).toBe('市场中心')
+    wrapper.unmount()
+  })
+
+  it('keeps the edit dialog open with a readable error when the selected department is invalid, so the admin can pick another department without reopening the dialog', async () => {
+    const wrapper = mount(EnterpriseEmployeeDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((button) => button.text() === '编辑资料')
+    await editButton?.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+
+    updateEmployee.mockRejectedValueOnce({ status: 400, reason: 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID', message: 'selected department is invalid' })
+
+    const saveButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '保存')
+    await saveButton?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+    expect(getEmployee).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('所选部门无效')
+    wrapper.unmount()
+  })
+
+  it('invalidates the usage and history caches after a save, so the next tab visit refetches instead of showing stale data', async () => {
+    updateEmployee.mockResolvedValueOnce(undefined)
+    const wrapper = mount(EnterpriseEmployeeDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const usageTab = wrapper.findAll('.el-tabs__item').find((item) => item.text() === '额度与用量')
+    await usageTab?.trigger('click')
+    await flushPromises()
+    expect(listWorkbenchUsage).toHaveBeenCalledTimes(1)
+
+    const editButton = wrapper.findAll('button').find((button) => button.text() === '编辑资料')
+    await editButton?.trigger('click')
+    await flushPromises()
+    const saveButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '保存')
+    await saveButton?.trigger('click')
+    await flushPromises()
+
+    expect(listWorkbenchUsage).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 })

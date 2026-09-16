@@ -52,21 +52,22 @@ const (
 )
 
 var (
-	errInvalidCredentials       = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	errInvalidToken             = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
-	errEnterpriseInactive       = infraerrors.Unauthorized("ENTERPRISE_DISABLED", "enterprise workspace is not active")
-	errPrincipalInactive        = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise identity is not active")
-	errInactive                 = errPrincipalInactive
-	errWrongHost                = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
-	errPasswordExpired          = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
-	errForceChange              = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
-	errResetInvalid             = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
-	errDedicatedUserUnavailable = infraerrors.BadRequest("DEDICATED_UPSTREAM_USER_UNAVAILABLE", "dedicated upstream user is not active")
-	errSubscriptionUnavailable  = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
-	errNotFound                 = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
-	errConflict                 = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
-	errInvalidBrand             = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
-	errEmployeeVersionConflict  = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
+	errInvalidCredentials        = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	errInvalidToken              = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
+	errEnterpriseInactive        = infraerrors.Unauthorized("ENTERPRISE_DISABLED", "enterprise workspace is not active")
+	errPrincipalInactive         = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise identity is not active")
+	errInactive                  = errPrincipalInactive
+	errWrongHost                 = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
+	errPasswordExpired           = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
+	errForceChange               = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
+	errResetInvalid              = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
+	errDedicatedUserUnavailable  = infraerrors.BadRequest("DEDICATED_UPSTREAM_USER_UNAVAILABLE", "dedicated upstream user is not active")
+	errSubscriptionUnavailable   = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
+	errNotFound                  = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
+	errEmployeeDepartmentInvalid = infraerrors.BadRequest("ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID", "selected department is invalid")
+	errConflict                  = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
+	errInvalidBrand              = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
+	errEmployeeVersionConflict   = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
 )
 
 type PasswordResetMailer interface {
@@ -1509,7 +1510,11 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return errNotFound
+		// The employee row is locked and its version already matched above, so
+		// the only remaining condition guarded by the UPDATE's WHERE clause is
+		// the department validity check: department_id must be NULL or point
+		// to an active department belonging to this enterprise.
+		return errEmployeeDepartmentInvalid
 	}
 	var revokedKeys []string
 	if status == "disabled" {
