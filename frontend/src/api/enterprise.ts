@@ -230,6 +230,12 @@ export function isEnterpriseEmployeeVersionConflict(error: unknown): boolean {
   return candidate.reason === 'EMPLOYEE_VERSION_CONFLICT'
 }
 
+export function isEnterpriseEmployeeDepartmentInvalid(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const candidate = error as { reason?: unknown }
+  return candidate.reason === 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID'
+}
+
 export function isEnterpriseKeyMutationStateConflict(error: unknown): boolean {
 	if (typeof error !== 'object' || error === null) return false
 	const candidate = error as { status?: unknown; code?: unknown; reason?: unknown }

@@ -1,6 +1,6 @@
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, isEnterpriseEmployeeVersionConflict, shouldRedirectForEnterpriseSessionState, syncEnterpriseAuthSession } from '@/api/enterprise'
+import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, isEnterpriseEmployeeDepartmentInvalid, isEnterpriseEmployeeVersionConflict, shouldRedirectForEnterpriseSessionState, syncEnterpriseAuthSession } from '@/api/enterprise'
 
 const employeePrincipal = {
   enterprise_id: 12,
@@ -224,6 +224,13 @@ describe('enterprise API password handling', () => {
     expect(isEnterpriseEmployeeVersionConflict({ status: 409 })).toBe(false)
     expect(isEnterpriseEmployeeVersionConflict({ status: 404 })).toBe(false)
     expect(isEnterpriseEmployeeVersionConflict(new Error('network timeout'))).toBe(false)
+  })
+
+  it('classifies only the ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID reason as an invalid department error', () => {
+    expect(isEnterpriseEmployeeDepartmentInvalid({ status: 400, reason: 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID' })).toBe(true)
+    expect(isEnterpriseEmployeeDepartmentInvalid({ status: 409, reason: 'EMPLOYEE_VERSION_CONFLICT' })).toBe(false)
+    expect(isEnterpriseEmployeeDepartmentInvalid({ status: 400 })).toBe(false)
+    expect(isEnterpriseEmployeeDepartmentInvalid(new Error('network timeout'))).toBe(false)
   })
 
   it('keeps business validation and lifecycle conflicts on the calling page', () => {

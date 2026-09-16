@@ -16,6 +16,7 @@ const { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, l
 vi.mock('@/api/enterprise', () => ({
   enterpriseAPI: { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, listWorkbenchAuditEvents, updateEmployee },
   isEnterpriseEmployeeVersionConflict: (error: unknown) => (error as { reason?: string })?.reason === 'EMPLOYEE_VERSION_CONFLICT',
+  isEnterpriseEmployeeDepartmentInvalid: (error: unknown) => (error as { reason?: string })?.reason === 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID',
 }))
 
 vi.mock('vue-router', () => ({
@@ -126,6 +127,27 @@ describe('EnterpriseEmployeeDetailView', () => {
 
     expect(wrapper.find('.el-dialog').exists()).toBe(true)
     expect(wrapper.find('.el-select__selected-item.el-select__placeholder').text()).toBe('市场中心')
+    wrapper.unmount()
+  })
+
+  it('keeps the edit dialog open with a readable error when the selected department is invalid, so the admin can pick another department without reopening the dialog', async () => {
+    const wrapper = mount(EnterpriseEmployeeDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((button) => button.text() === '编辑资料')
+    await editButton?.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+
+    updateEmployee.mockRejectedValueOnce({ status: 400, reason: 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID', message: 'selected department is invalid' })
+
+    const saveButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '保存')
+    await saveButton?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+    expect(getEmployee).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('所选部门无效')
     wrapper.unmount()
   })
 
