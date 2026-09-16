@@ -299,7 +299,17 @@ type EmployeeUsageRecord struct {
 	RequestAt    time.Time `json:"request_at"`
 	WindowAnchor time.Time `json:"window_anchor"`
 	APIKeyMasked string    `json:"api_key_masked"`
+	Generation   int64     `json:"generation"`
 	ActualCost   string    `json:"actual_cost"`
+}
+
+// EmployeeUsageQuery bounds ListEmployeeUsage to a time window and a page;
+// StartAt/EndAt are optional and, when both set, StartAt must precede EndAt.
+type EmployeeUsageQuery struct {
+	StartAt  *time.Time
+	EndAt    *time.Time
+	Page     int
+	PageSize int
 }
 
 type BrandInput struct {
@@ -1307,6 +1317,75 @@ func (s *Service) GetEmployee(ctx context.Context, enterpriseID, employeeID int6
 	return item, nil
 }
 
+// EnterprisePoolStatus is the read-only enterprise-wide counterpart to
+// EmployeeUsageSummary, so e-03 can show a personal-vs-enterprise
+// comparison. It is computed independently of GetEmployeeUsage — that
+// function's subscription lookup still reads the not-yet-fixed
+// user_subscriptions.weekly_limit_usd column (SHAN-267, in flight); this
+// query instead follows the corrected groups.weekly_limit_usd join already
+// used by the admin workbench summary, so it never shares SHAN-267's bug.
+type EnterprisePoolStatus struct {
+	SourceStatus  string     `json:"source_status"`
+	PoolLimit     string     `json:"pool_limit"`
+	PoolUsed      string     `json:"pool_used"`
+	PoolRemaining string     `json:"pool_remaining"`
+	PoolExhausted bool       `json:"pool_exhausted"`
+	WindowAnchor  *time.Time `json:"window_anchor,omitempty"`
+}
+
+func (s *Service) GetEnterprisePoolStatus(ctx context.Context, enterpriseID int64) (*EnterprisePoolStatus, error) {
+	result := &EnterprisePoolStatus{SourceStatus: "unavailable", PoolLimit: "0", PoolUsed: "0", PoolRemaining: "0"}
+	var poolStatus sql.NullString
+	var poolLimit, poolUsed, poolRemaining sql.NullString
+	var poolExhausted sql.NullBool
+	var poolAnchor sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL
+		            OR subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0
+		       THEN 'unavailable' ELSE 'available' END,
+		       COALESCE(CASE WHEN subscription_group.weekly_limit_usd > 0 THEN subscription_group.weekly_limit_usd END, 0)::NUMERIC(20,8)::text,
+		       COALESCE(upstream_subscription.weekly_usage_usd, 0)::NUMERIC(20,8)::text,
+		       CASE WHEN subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0 THEN '0'
+		            ELSE GREATEST(subscription_group.weekly_limit_usd - COALESCE(upstream_subscription.weekly_usage_usd, 0), 0)::NUMERIC(20,8)::text END,
+		       (subscription_group.weekly_limit_usd IS NOT NULL AND subscription_group.weekly_limit_usd > 0
+		        AND COALESCE(upstream_subscription.weekly_usage_usd, 0) >= subscription_group.weekly_limit_usd),
+		       upstream_subscription.weekly_window_start
+		FROM enterprises AS enterprise
+		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
+		  ON enterprise_subscription.enterprise_id = enterprise.id AND enterprise_subscription.status = 'active'
+		LEFT JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
+		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID).Scan(
+		&poolStatus, &poolLimit, &poolUsed, &poolRemaining, &poolExhausted, &poolAnchor)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if poolStatus.Valid {
+		result.SourceStatus = poolStatus.String
+	}
+	if poolLimit.Valid {
+		result.PoolLimit = poolLimit.String
+	}
+	if poolUsed.Valid {
+		result.PoolUsed = poolUsed.String
+	}
+	if poolRemaining.Valid {
+		result.PoolRemaining = poolRemaining.String
+	}
+	result.PoolExhausted = poolExhausted.Valid && poolExhausted.Bool
+	if poolAnchor.Valid {
+		anchor := poolAnchor.Time.UTC()
+		result.WindowAnchor = &anchor
+	}
+	return result, nil
+}
+
 func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID int64) (*EmployeeUsageSummary, error) {
 	result := &EmployeeUsageSummary{
 		WindowType: "week", SourceStatus: "unavailable", Allocation: "0", ActualCost: "0", Remaining: "0", Overage: "0",
@@ -1367,26 +1446,107 @@ func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID
 	return result, nil
 }
 
-func (s *Service) ListEmployeeUsage(ctx context.Context, enterpriseID, employeeID int64) ([]EmployeeUsageRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `
+// ListEmployeeUsage returns the caller's own call-level attribution rows,
+// scoped by enterprise+employee (never accepts a client-supplied identity)
+// and bounded by an optional request_at window and page/page_size.
+func (s *Service) ListEmployeeUsage(ctx context.Context, enterpriseID, employeeID int64, q EmployeeUsageQuery) ([]EmployeeUsageRecord, int64, error) {
+	conditions := []string{"attribution.enterprise_id = $1", "attribution.employee_id = $2",
+		"attribution.window_type = 'week'", "attribution.classification = 'employee'"}
+	args := []any{enterpriseID, employeeID}
+	add := func(condition string, value any) {
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf(condition, len(args)))
+	}
+	if q.StartAt != nil {
+		add("attribution.request_at >= $%d", *q.StartAt)
+	}
+	if q.EndAt != nil {
+		add("attribution.request_at < $%d", *q.EndAt)
+	}
+	where := strings.Join(conditions, " AND ")
+
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM enterprise_usage_attributions AS attribution WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	page, pageSize := q.Page, q.PageSize
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	limitPos := len(args) + 1
+	offsetPos := len(args) + 2
+	listArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT attribution.request_at, attribution.window_anchor,
 		       CASE WHEN LENGTH(api_key.key) <= 10 THEN '********'
 		            ELSE SUBSTRING(api_key.key FROM 1 FOR 6) || '...' || RIGHT(api_key.key, 4) END,
+		       attribution.assignment_generation,
 		       COALESCE(usage_log.actual_cost, 0)::NUMERIC(20,8)::text
 		FROM enterprise_usage_attributions AS attribution
 		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
 		LEFT JOIN api_keys AS api_key ON api_key.id = attribution.api_key_id
-		WHERE attribution.enterprise_id = $1 AND attribution.employee_id = $2
-		  AND attribution.window_type = 'week' AND attribution.classification = 'employee'
-		ORDER BY attribution.request_at DESC, attribution.id DESC LIMIT 100`, enterpriseID, employeeID)
+		WHERE %s
+		ORDER BY attribution.request_at DESC, attribution.id DESC LIMIT $%d OFFSET $%d`, where, limitPos, offsetPos), listArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	items := make([]EmployeeUsageRecord, 0)
 	for rows.Next() {
 		var item EmployeeUsageRecord
-		if err := rows.Scan(&item.RequestAt, &item.WindowAnchor, &item.APIKeyMasked, &item.ActualCost); err != nil {
+		if err := rows.Scan(&item.RequestAt, &item.WindowAnchor, &item.APIKeyMasked, &item.Generation, &item.ActualCost); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
+// EmployeeUsageTrendPoint is one real daily aggregation point over the
+// caller's own attribution rows — never a fabricated or interpolated value.
+// R1's scheduled/backfilled history isn't implemented yet, so a window with
+// no attribution rows yields no points rather than a synthesized zero series.
+type EmployeeUsageTrendPoint struct {
+	At         time.Time `json:"at"`
+	Requests   int64     `json:"requests"`
+	ActualCost string    `json:"actual_cost"`
+}
+
+func (s *Service) ListEmployeeUsageTrend(ctx context.Context, enterpriseID, employeeID int64, q EmployeeUsageQuery) ([]EmployeeUsageTrendPoint, error) {
+	conditions := []string{"attribution.enterprise_id = $1", "attribution.employee_id = $2",
+		"attribution.window_type = 'week'", "attribution.classification = 'employee'"}
+	args := []any{enterpriseID, employeeID}
+	add := func(condition string, value any) {
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf(condition, len(args)))
+	}
+	if q.StartAt != nil {
+		add("attribution.request_at >= $%d", *q.StartAt)
+	}
+	if q.EndAt != nil {
+		add("attribution.request_at < $%d", *q.EndAt)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DATE_TRUNC('day', attribution.request_at),
+		       COUNT(*), COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0)::text
+		FROM enterprise_usage_attributions AS attribution
+		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+		WHERE `+strings.Join(conditions, " AND ")+`
+		GROUP BY 1 ORDER BY 1`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]EmployeeUsageTrendPoint, 0)
+	for rows.Next() {
+		var item EmployeeUsageTrendPoint
+		if err := rows.Scan(&item.At, &item.Requests, &item.ActualCost); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
