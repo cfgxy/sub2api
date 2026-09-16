@@ -712,6 +712,23 @@ func TestUpdateEmployeeRejectsStaleVersionWithoutMutatingOrRevoking(t *testing.T
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUpdateEmployeeReturnsDepartmentInvalidWhenDepartmentRejectsUpdate(t *testing.T) {
+	svc, mock := newMockService(t)
+	dept := int64(77)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(3))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE enterprise_employees SET status = $1, department_id = $2")).
+		WithArgs("active", &dept, int64(1), int64(10), int64(3)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	err := svc.UpdateEmployee(WithAuditActor(context.Background(), "admin:42"), 1, 10, "active", &dept, 3)
+	require.ErrorIs(t, err, errEmployeeDepartmentInvalid)
+	require.NotErrorIs(t, err, errNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUpdateEmployeeAttributesAuditEventToActorFromContext(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()

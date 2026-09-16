@@ -52,21 +52,22 @@ const (
 )
 
 var (
-	errInvalidCredentials       = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	errInvalidToken             = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
-	errEnterpriseInactive       = infraerrors.Unauthorized("ENTERPRISE_DISABLED", "enterprise workspace is not active")
-	errPrincipalInactive        = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise identity is not active")
-	errInactive                 = errPrincipalInactive
-	errWrongHost                = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
-	errPasswordExpired          = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
-	errForceChange              = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
-	errResetInvalid             = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
-	errDedicatedUserUnavailable = infraerrors.BadRequest("DEDICATED_UPSTREAM_USER_UNAVAILABLE", "dedicated upstream user is not active")
-	errSubscriptionUnavailable  = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
-	errNotFound                 = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
-	errConflict                 = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
-	errInvalidBrand             = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
-	errEmployeeVersionConflict  = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
+	errInvalidCredentials        = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	errInvalidToken              = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
+	errEnterpriseInactive        = infraerrors.Unauthorized("ENTERPRISE_DISABLED", "enterprise workspace is not active")
+	errPrincipalInactive         = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise identity is not active")
+	errInactive                  = errPrincipalInactive
+	errWrongHost                 = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
+	errPasswordExpired           = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
+	errForceChange               = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
+	errResetInvalid              = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
+	errDedicatedUserUnavailable  = infraerrors.BadRequest("DEDICATED_UPSTREAM_USER_UNAVAILABLE", "dedicated upstream user is not active")
+	errSubscriptionUnavailable   = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
+	errNotFound                  = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
+	errEmployeeDepartmentInvalid = infraerrors.BadRequest("ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID", "selected department is invalid")
+	errConflict                  = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
+	errInvalidBrand              = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
+	errEmployeeVersionConflict   = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
 )
 
 type PasswordResetMailer interface {
@@ -1319,11 +1320,10 @@ func (s *Service) GetEmployee(ctx context.Context, enterpriseID, employeeID int6
 
 // EnterprisePoolStatus is the read-only enterprise-wide counterpart to
 // EmployeeUsageSummary, so e-03 can show a personal-vs-enterprise
-// comparison. It is computed independently of GetEmployeeUsage — that
-// function's subscription lookup still reads the not-yet-fixed
-// user_subscriptions.weekly_limit_usd column (SHAN-267, in flight); this
-// query instead follows the corrected groups.weekly_limit_usd join already
-// used by the admin workbench summary, so it never shares SHAN-267's bug.
+// comparison. It is computed independently of GetEmployeeUsage to keep the
+// two read paths decoupled; both now follow the same corrected
+// groups.weekly_limit_usd join used by the admin workbench summary
+// (SHAN-267 fixed GetEmployeeUsage's copy on origin/main).
 type EnterprisePoolStatus struct {
 	SourceStatus  string     `json:"source_status"`
 	PoolLimit     string     `json:"pool_limit"`
@@ -1402,7 +1402,7 @@ func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID
 	var limit sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start,
-		       upstream_subscription.weekly_limit_usd::text
+		       subscription_group.weekly_limit_usd::text
 		FROM enterprises AS enterprise
 		JOIN enterprise_employees AS employee ON employee.enterprise_id = enterprise.id AND employee.id = $2
 		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
@@ -1411,6 +1411,7 @@ func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
 		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
 		 AND upstream_subscription.deleted_at IS NULL
+		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
 		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID, employeeID).
 		Scan(&subscriptionID, &anchor, &limit)
 	if err != nil {
@@ -1668,7 +1669,11 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return errNotFound
+		// The employee row is locked and its version already matched above, so
+		// the only remaining condition guarded by the UPDATE's WHERE clause is
+		// the department validity check: department_id must be NULL or point
+		// to an active department belonging to this enterprise.
+		return errEmployeeDepartmentInvalid
 	}
 	var revokedKeys []string
 	if status == "disabled" {
