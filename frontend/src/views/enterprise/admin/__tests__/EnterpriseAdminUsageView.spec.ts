@@ -42,7 +42,7 @@ describe('EnterpriseAdminUsageView', () => {
     const selects = wrapper.findAllComponents({ name: 'ElSelect' })
     expect(selects.length).toBeGreaterThanOrEqual(3) // window_type + department + employee
 
-    const modelInput = wrapper.find('input[placeholder="模型 / Key 生成代次"]')
+    const modelInput = wrapper.find('input[placeholder="模型"]')
     expect(modelInput.exists()).toBe(true)
     await modelInput.setValue('gpt-4o')
     await wrapper.find('button.el-button--primary').trigger('click')
@@ -50,6 +50,21 @@ describe('EnterpriseAdminUsageView', () => {
 
     const lastCall = listWorkbenchUsage.mock.calls.at(-1)?.[0] as Record<string, unknown>
     expect(lastCall.model).toBe('gpt-4o')
+    wrapper.unmount()
+  })
+
+  it('only offers window_type values the backend accepts (B1 regression)', async () => {
+    // backend/internal/enterpriseidentity/workbench.go parseWorkbenchQuery
+    // 400s any window_type other than "" or "week" — the window selector
+    // must never offer a value the API will reject, or the whole page
+    // degrades to "数据源不可用" on selection.
+    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    const windowSelect = wrapper.findAllComponents({ name: 'ElSelect' })[0]
+    const options = windowSelect.findAllComponents({ name: 'ElOption' })
+    const values = options.map((option) => option.props('value'))
+    expect(values).toEqual(['week'])
     wrapper.unmount()
   })
 

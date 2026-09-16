@@ -80,7 +80,7 @@ const auditPayloadFieldLabels: Record<string, string> = {
   window_type: '窗口类型', window_anchor: '窗口锚点',
   previous_window_start: '原窗口起点', observed_window_start: '观测窗口起点',
   assignment_segment_boundary: '分配区间边界',
-  expected_version: '期望版本', current_version: '当前版本', actual_version: '实际版本', version: '版本',
+  expected_version: '期望版本', current_version: '当前版本', actual_version: '实际版本', version: '版本', credit: '调整后额度',
   name: '名称', status: '状态', affected_employees: '受影响员工数',
   initial: '是否初始', keys_disabled: '已停用 Key 数', fields: '变更字段',
   content_type: '内容类型', size_bytes: '大小（字节）',

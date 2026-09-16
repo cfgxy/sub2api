@@ -79,6 +79,32 @@ describe('EnterpriseAdminAuditView', () => {
     wrapper.unmount()
   })
 
+  it('renders the allocation credit_changed amount in the detail drawer (B2 regression)', async () => {
+    // allocation.credit_changed is the only audit event that carries the
+    // post-change allocation amount; if the backend whitelist or this
+    // label table drops "credit", an admin can no longer see what an
+    // allocation was actually changed to.
+    listWorkbenchAuditEvents.mockResolvedValue({
+      items: [{
+        id: 2, event_type: 'allocation.credit_changed', entity_type: 'enterprise_allocation', entity_id: 11,
+        result: 'success', reason: 'manual_adjustment',
+        payload: { employee_id: 22, window_type: 'week', window_anchor: new Date().toISOString(), credit: '15.00', version: 2, reason: 'manual_adjustment' },
+        actor_ref: 'user:1', created_at: new Date().toISOString(),
+      }],
+      total: 1, page: 1, page_size: 20, pages: 1,
+    })
+    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    await wrapper.find('button.el-button--text, .el-button.is-link').trigger('click')
+    await flushPromises()
+
+    const drawerText = wrapper.text()
+    expect(drawerText).toContain('调整后额度')
+    expect(drawerText).toContain('15.00')
+    wrapper.unmount()
+  })
+
   it('respects pagination boundaries', async () => {
     listWorkbenchAuditEvents.mockResolvedValue({ items: [auditRow], total: 62, page: 1, page_size: 20, pages: 4 })
     const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [ElementPlus] } })

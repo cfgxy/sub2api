@@ -44,6 +44,11 @@ func TestParseWorkbenchQueryRejectsInvalidWindowAndRange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, target := range []string{
 		"/?window_type=quarter",
+		// day/month are exactly the values the standalone usage page's
+		// window selector used to offer before B1 was fixed — the frontend
+		// now only offers "week", but this guards the API contract itself.
+		"/?window_type=day",
+		"/?window_type=month",
 		"/?window_anchor=2026-09-08T00:00:00Z",
 		"/?start_at=2026-09-09T00:00:00Z&end_at=2026-09-08T00:00:00Z",
 		"/?page=0",

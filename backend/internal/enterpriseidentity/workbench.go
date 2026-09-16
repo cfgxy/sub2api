@@ -711,7 +711,7 @@ var auditPayloadFieldWhitelist = map[string]struct{}{
 	"window_type": {}, "window_anchor": {},
 	"previous_window_start": {}, "observed_window_start": {},
 	"assignment_segment_boundary": {},
-	"expected_version": {}, "current_version": {}, "actual_version": {}, "version": {},
+	"expected_version":            {}, "current_version": {}, "actual_version": {}, "version": {}, "credit": {},
 	"name": {}, "status": {}, "affected_employees": {},
 	"initial": {}, "keys_disabled": {}, "fields": {},
 	"content_type": {}, "size_bytes": {},

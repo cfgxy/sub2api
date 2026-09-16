@@ -39,8 +39,12 @@
 
     <section class="panel filter-panel">
       <div class="filter-grid">
+        <!-- 后端仅接受空值或 "week"（backend/internal/enterpriseidentity/workbench.go
+             parseWorkbenchQuery 对非 week 的取值一律 400），底层数据模型也只有订阅结算周
+             一种窗口粒度；此前提供的「按天/按月」选项后端必拒绝，导致整页降级为数据源
+             不可用（B1）。真实的日/月聚合属于 R1 范围（不含范围），本单不做。 -->
         <el-select v-model="filters.window_type" placeholder="统计窗口" @change="applyFilters">
-          <el-option label="按天" value="day" /><el-option label="按周" value="week" /><el-option label="按月" value="month" />
+          <el-option label="按周" value="week" />
         </el-select>
         <el-select v-model="filters.department_id" clearable filterable placeholder="部门" @change="applyFilters">
           <el-option v-for="dept in departments" :key="dept.id" :label="dept.name" :value="dept.id" />
@@ -48,7 +52,7 @@
         <el-select v-model="filters.employee_id" clearable filterable placeholder="员工" @change="applyFilters">
           <el-option v-for="employee in employees" :key="employee.id" :label="employee.email" :value="employee.id" />
         </el-select>
-        <el-input v-model="filters.model" clearable placeholder="模型 / Key 生成代次" @keyup.enter="applyFilters" @clear="applyFilters" />
+        <el-input v-model="filters.model" clearable placeholder="模型" @keyup.enter="applyFilters" @clear="applyFilters" />
         <el-date-picker v-model="dateRange" type="datetimerange" value-format="YYYY-MM-DDTHH:mm:ssZ" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" @change="applyFilters" />
         <el-button type="primary" :icon="Search" @click="applyFilters">查询</el-button>
       </div>
