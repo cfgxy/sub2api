@@ -1,63 +1,13 @@
 <template>
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-    <!-- Background -->
-    <div
-      class="absolute inset-0 bg-gradient-to-br from-gray-50 via-primary-50/30 to-gray-100 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
-    ></div>
-
-    <!-- Decorative Elements -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <!-- Gradient Orbs -->
-      <div
-        class="absolute -right-40 -top-40 h-80 w-80 rounded-full bg-primary-400/20 blur-3xl"
-      ></div>
-      <div
-        class="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-primary-500/15 blur-3xl"
-      ></div>
-      <div
-        class="absolute left-1/2 top-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-300/10 blur-3xl"
-      ></div>
-
-      <!-- Grid Pattern -->
-      <div
-        class="absolute inset-0 bg-[linear-gradient(rgba(20,184,166,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(20,184,166,0.03)_1px,transparent_1px)] bg-[size:64px_64px]"
-      ></div>
-    </div>
-
-    <!-- Content Container -->
-    <div class="relative z-10 w-full max-w-md">
-      <!-- Logo/Brand -->
-      <div class="mb-8 text-center">
-        <!-- Custom Logo or Default Logo -->
-        <template v-if="settingsLoaded">
-          <div
-            class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl shadow-lg shadow-primary-500/30"
-          >
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
-          </div>
-          <h1 class="text-gradient mb-2 text-3xl font-bold">
-            {{ siteName }}
-          </h1>
-          <p class="text-sm text-gray-500 dark:text-dark-400">
-            {{ siteSubtitle }}
-          </p>
-        </template>
+  <div class="auth-layout">
+    <div class="auth-content">
+      <div v-if="settingsLoaded" class="auth-brand">
+        <div class="auth-logo"><img :src="siteLogo || '/logo.svg'" alt="Logo" /></div>
+        <h1>{{ siteName }}</h1>
+        <p>{{ siteSubtitle }}</p>
       </div>
-
-      <!-- Card Container -->
-      <div class="card-glass rounded-2xl p-8 shadow-glass">
-        <slot />
-      </div>
-
-      <!-- Footer Links -->
-      <div class="mt-6 text-center text-sm">
-        <slot name="footer" />
-      </div>
-
-      <!-- Copyright -->
-      <div class="mt-8 text-center text-xs text-gray-400 dark:text-dark-500">
-        &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
-      </div>
+      <div class="auth-panel"><slot /></div>
+      <div class="auth-footer"><slot name="footer" /><p>© {{ currentYear }} {{ siteName }}</p></div>
     </div>
   </div>
 </template>
@@ -68,21 +18,15 @@ import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
 
 const appStore = useAppStore()
-
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Subscription to API Conversion Platform')
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
-
 const currentYear = computed(() => new Date().getFullYear())
 
-onMounted(() => {
-  appStore.fetchPublicSettings()
-})
+onMounted(() => { appStore.fetchPublicSettings() })
 </script>
 
 <style scoped>
-.text-gradient {
-  @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
-}
+.auth-layout{display:flex;min-height:100vh;align-items:center;justify-content:center;padding:32px 16px;background:#f0f2f5;color:#172033}.auth-content{width:100%;max-width:440px}.auth-brand{margin-bottom:24px;text-align:center}.auth-logo{display:inline-flex;width:48px;height:48px;align-items:center;justify-content:center;overflow:hidden;border:1px solid #dbe5f5;border-radius:8px;background:#fff}.auth-logo img{width:100%;height:100%;object-fit:contain}.auth-brand h1{margin:12px 0 4px;color:#172033;font-size:24px;font-weight:700;line-height:1.3}.auth-brand p{margin:0;color:#667085;font-size:13px}.auth-panel{padding:32px;background:#fff;border:1px solid #dfe3ea;border-radius:8px;box-shadow:0 12px 28px rgba(25,35,55,.06)}.auth-footer{margin-top:18px;color:#667085;text-align:center;font-size:12px}.auth-footer p{margin:14px 0 0;color:#98a2b3;font-size:11px}@media(max-width:480px){.auth-layout{padding:20px 14px}.auth-panel{padding:24px}}
 </style>

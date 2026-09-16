@@ -130,6 +130,14 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+
+		// 企业租户开通与生命周期
+		if h.Enterprise != nil {
+			admin.GET("/enterprises", h.Enterprise.ListPlatformEnterprises)
+			admin.POST("/enterprises", h.Enterprise.CreatePlatformEnterprise)
+			admin.GET("/enterprises/:id", h.Enterprise.GetPlatformEnterprise)
+			admin.POST("/enterprises/:id/disable", h.Enterprise.DisablePlatformEnterprise)
+		}
 	}
 }
 

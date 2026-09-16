@@ -17,6 +17,7 @@ import (
 type EnterpriseAllocationStore interface {
 	SetAllocation(context.Context, enterprise.SetAllocationParams) (*enterprise.Allocation, error)
 	GetAllocationUsageSummary(context.Context, enterprise.AllocationUsageSummaryQuery) (*enterprise.AllocationUsageSummary, error)
+	ListSubscriptionAllocations(context.Context, enterprise.ListSubscriptionAllocationsQuery) (*enterprise.AllocationListResult, error)
 }
 
 type EnterpriseAllocationHandler struct {
@@ -74,6 +75,10 @@ func (h *EnterpriseAllocationHandler) Set(c *gin.Context) {
 		response.BadRequest(c, "Invalid allocation window")
 		return
 	}
+	if req.WindowType != enterprise.WindowTypeWeek {
+		response.BadRequest(c, "Only weekly allocation is supported")
+		return
+	}
 	if _, err = enterprise.NormalizeAmount(req.Credit); err != nil {
 		response.BadRequest(c, "Invalid allocation credit")
 		return
@@ -129,6 +134,10 @@ func (h *EnterpriseAllocationHandler) Summary(c *gin.Context) {
 		response.BadRequest(c, "Invalid allocation window")
 		return
 	}
+	if c.Query("window_type") != enterprise.WindowTypeWeek {
+		response.BadRequest(c, "Only weekly allocation is supported")
+		return
+	}
 	summary, err := h.store.GetAllocationUsageSummary(c.Request.Context(), enterprise.AllocationUsageSummaryQuery{
 		RequesterUserID: subject.UserID,
 		EnterpriseID:    enterpriseID, SubscriptionID: subscriptionID, EmployeeID: employeeID,
@@ -139,6 +148,52 @@ func (h *EnterpriseAllocationHandler) Summary(c *gin.Context) {
 		return
 	}
 	response.Success(c, summary)
+}
+
+func (h *EnterpriseAllocationHandler) List(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	enterpriseID, err := strconv.ParseInt(c.Query("enterprise_id"), 10, 64)
+	if err != nil || enterpriseID <= 0 {
+		response.BadRequest(c, "Invalid enterprise ID")
+		return
+	}
+	if claims, exists := enterpriseidentity.ClaimsFromContext(c); exists && claims.EnterpriseID != enterpriseID {
+		response.NotFound(c, "Allocation not found")
+		return
+	}
+	subscriptionID, err := strconv.ParseInt(c.Param("subscription_id"), 10, 64)
+	if err != nil || subscriptionID <= 0 {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	windowType := c.Query("window_type")
+	anchor, err := time.Parse(time.RFC3339, c.Query("window_anchor"))
+	if err != nil {
+		response.BadRequest(c, "Invalid window anchor")
+		return
+	}
+	if err = enterprise.ValidateAllocationWindow(windowType, anchor); err != nil {
+		response.BadRequest(c, "Invalid allocation window")
+		return
+	}
+	if windowType != enterprise.WindowTypeWeek {
+		response.BadRequest(c, "Only weekly allocation is supported")
+		return
+	}
+	result, err := h.store.ListSubscriptionAllocations(c.Request.Context(), enterprise.ListSubscriptionAllocationsQuery{
+		RequesterUserID: subject.UserID,
+		EnterpriseID:    enterpriseID, SubscriptionID: subscriptionID,
+		WindowType: windowType, WindowAnchor: anchor,
+	})
+	if err != nil {
+		writeEnterpriseAllocationError(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 func writeEnterpriseAllocationError(c *gin.Context, err error) {

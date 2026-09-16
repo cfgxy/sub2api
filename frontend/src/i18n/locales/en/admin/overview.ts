@@ -1,4 +1,11 @@
 export default {
+    // Platform admin login (dedicated entry, no consumer register/OAuth/passkey)
+    platformLogin: {
+      title: 'Sign in to Platform Admin Console',
+      eyebrow: 'Platform Administrator',
+      subtitle: 'Verify your platform identity to manage enterprises, primary account linking, and platform audit.'
+    },
+
     // Dashboard
     dashboard: {
       title: 'Admin Dashboard',

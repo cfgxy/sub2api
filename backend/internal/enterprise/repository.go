@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 var (
@@ -99,6 +101,8 @@ type SetAllocationParams struct {
 }
 
 type AllocationUsageSummary struct {
+	AllocationID       int64   `json:"allocation_id"`
+	AllocationVersion  int64   `json:"allocation_version"`
 	ConfiguredCredit   string  `json:"configured_credit"`
 	UsageCredit        string  `json:"usage_credit"`
 	RemainingCredit    string  `json:"remaining_credit"`
@@ -107,6 +111,45 @@ type AllocationUsageSummary struct {
 	AuthoritativeLimit *string `json:"authoritative_limit"`
 	OverallocatedBy    string  `json:"overallocated_by"`
 	Warning            string  `json:"warning,omitempty"`
+}
+
+type ListSubscriptionAllocationsQuery struct {
+	RequesterUserID int64
+	EnterpriseID    int64
+	SubscriptionID  int64
+	WindowType      string
+	WindowAnchor    time.Time
+}
+
+type AllocationListItem struct {
+	EmployeeID        int64  `json:"employee_id"`
+	Email             string `json:"email"`
+	DepartmentID      *int64 `json:"department_id,omitempty"`
+	AllocationID      int64  `json:"allocation_id"`
+	AllocationVersion int64  `json:"allocation_version"`
+	ConfiguredCredit  string `json:"configured_credit"`
+	UsageCredit       string `json:"usage_credit"`
+	RemainingCredit   string `json:"remaining_credit"`
+	OverageCredit     string `json:"overage_credit"`
+	Status            string `json:"status"`
+}
+
+const (
+	AllocationStatusNormal  = "normal"
+	AllocationStatusOverage = "overage"
+)
+
+type AllocationListResult struct {
+	SubscriptionID     int64                `json:"subscription_id"`
+	WindowType         string               `json:"window_type"`
+	WindowAnchor       time.Time            `json:"window_anchor"`
+	AuthoritativeLimit *string              `json:"authoritative_limit"`
+	AllocatedTotal     string               `json:"allocated_total"`
+	UnallocatedTotal   string               `json:"unallocated_total"`
+	OverallocatedBy    string               `json:"overallocated_by"`
+	PoolSourceStatus   string               `json:"pool_source_status"`
+	Warning            string               `json:"warning,omitempty"`
+	Items              []AllocationListItem `json:"items"`
 }
 
 type ReplaceScheduledSubscriptionParams struct {
@@ -618,13 +661,15 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 	}
 	err = r.db.QueryRowContext(ctx, `
 		WITH latest_configurations AS (
-			SELECT DISTINCT ON (employee_id) employee_id, amount
-			FROM enterprise_weekly_allocations
+				SELECT DISTINCT ON (employee_id) employee_id, id, amount, version
+				FROM enterprise_weekly_allocations
 			WHERE enterprise_id = $1 AND subscription_id = $2
 			  AND window_type = $5 AND window_anchor <= $3
 			ORDER BY employee_id, window_anchor DESC, version DESC
-		), configured AS (
-			SELECT amount FROM latest_configurations WHERE employee_id = $4
+				), configured AS (
+					SELECT COALESCE((SELECT id FROM latest_configurations WHERE employee_id = $4), 0) AS id,
+					       COALESCE((SELECT version FROM latest_configurations WHERE employee_id = $4), 0) AS version,
+					       COALESCE((SELECT amount FROM latest_configurations WHERE employee_id = $4), 0)::NUMERIC(20,8) AS amount
 		), allocation_total AS (
 			SELECT COALESCE(SUM(amount), 0)::NUMERIC(20,8) AS allocated_total
 			FROM latest_configurations
@@ -648,7 +693,7 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 			  AND attribution.window_type = $5
 			  AND attribution.classification = 'employee'
 		)
-		SELECT configured.amount::NUMERIC(20,8)::text,
+			SELECT configured.id, configured.version, configured.amount::NUMERIC(20,8)::text,
 		       usage_total.actual_cost::text,
 		       GREATEST(configured.amount - usage_total.actual_cost, 0)::NUMERIC(20,8)::text,
 		       GREATEST(usage_total.actual_cost - configured.amount, 0)::NUMERIC(20,8)::text,
@@ -659,8 +704,10 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 		FROM configured
 		CROSS JOIN usage_total
 		CROSS JOIN allocation_total
-	`, query.EnterpriseID, query.SubscriptionID, query.WindowAnchor.UTC(), query.EmployeeID,
+		`, query.EnterpriseID, query.SubscriptionID, query.WindowAnchor.UTC(), query.EmployeeID,
 		query.WindowType, authoritativeLimitArg).Scan(
+		&summary.AllocationID,
+		&summary.AllocationVersion,
 		&summary.ConfiguredCredit,
 		&summary.UsageCredit,
 		&summary.RemainingCredit,
@@ -675,6 +722,146 @@ func (r *Repository) GetAllocationUsageSummary(ctx context.Context, query Alloca
 		summary.Warning = AllocationWarningOverallocated
 	}
 	return summary, nil
+}
+
+// ListSubscriptionAllocations 返回订阅当前 weekly 窗口下全部在职员工的 allocation 合计视图，
+// 用于管理员额度分配页面：企业总池权威上限、已分配合计、未分配差额与逐员工超配状态。
+func (r *Repository) ListSubscriptionAllocations(ctx context.Context, query ListSubscriptionAllocationsQuery) (*AllocationListResult, error) {
+	if err := ValidateAllocationWindow(query.WindowType, query.WindowAnchor); err != nil {
+		return nil, err
+	}
+	if query.WindowType != WindowTypeWeek {
+		return nil, ErrInvalidWindowType
+	}
+
+	var currentAnchor sql.NullTime
+	var authoritativeLimit sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT upstream_subscription.weekly_window_start,
+		       CASE WHEN subscription_group.weekly_limit_usd > 0 THEN subscription_group.weekly_limit_usd END::NUMERIC(20,8)::text
+		FROM enterprise_subscriptions AS subscription
+		JOIN enterprises AS enterprise
+		  ON enterprise.id = subscription.enterprise_id
+		JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
+		WHERE subscription.enterprise_id = $1
+		  AND subscription.id = $2
+		  AND ($3 = 0 OR enterprise.dedicated_upstream_user_id = $3)
+		  AND enterprise.status = 'active'
+	`, query.EnterpriseID, query.SubscriptionID, query.RequesterUserID).Scan(&currentAnchor, &authoritativeLimit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEnterpriseAccessDenied
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	anchorAllowed := currentAnchor.Valid && query.WindowAnchor.UTC().Equal(currentAnchor.Time.UTC())
+	if !anchorAllowed {
+		if err = r.db.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM enterprise_weekly_allocations
+				WHERE enterprise_id = $1 AND subscription_id = $2
+				  AND window_type = $3 AND window_anchor = $4
+			) OR EXISTS (
+				SELECT 1 FROM enterprise_usage_attributions
+				WHERE enterprise_id = $1 AND subscription_id = $2
+				  AND window_type = $3 AND window_anchor = $4
+			)
+		`, query.EnterpriseID, query.SubscriptionID, query.WindowType, query.WindowAnchor.UTC()).Scan(&anchorAllowed); err != nil {
+			return nil, err
+		}
+	}
+	if !anchorAllowed {
+		return nil, ErrInvalidWindowAnchor
+	}
+
+	result := &AllocationListResult{
+		SubscriptionID: query.SubscriptionID, WindowType: query.WindowType, WindowAnchor: query.WindowAnchor.UTC(),
+		PoolSourceStatus: "unavailable", Items: make([]AllocationListItem, 0),
+	}
+	if authoritativeLimit.Valid {
+		value := authoritativeLimit.String
+		result.AuthoritativeLimit = &value
+		result.PoolSourceStatus = "available"
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		WITH latest_configurations AS (
+			SELECT DISTINCT ON (employee_id) employee_id, id, amount, version
+			FROM enterprise_weekly_allocations
+			WHERE enterprise_id = $1 AND subscription_id = $2
+			  AND window_type = $4 AND window_anchor <= $3
+			ORDER BY employee_id, window_anchor DESC, version DESC
+		), usage_totals AS (
+			SELECT attribution.employee_id, COALESCE(SUM(usage_log.actual_cost), 0)::NUMERIC(20,8) AS actual_cost
+			FROM enterprise_usage_attributions AS attribution
+			JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+			WHERE attribution.enterprise_id = $1 AND attribution.subscription_id = $2
+			  AND attribution.window_type = $4 AND attribution.window_anchor = $3
+			  AND attribution.classification = 'employee' AND attribution.employee_id IS NOT NULL
+			GROUP BY attribution.employee_id
+		)
+		SELECT employee.id, COALESCE(employee.current_email, employee.email, ''), employee.department_id,
+		       COALESCE(configuration.id, 0), COALESCE(configuration.version, 0),
+		       COALESCE(configuration.amount, 0)::NUMERIC(20,8)::text,
+		       COALESCE(usage_totals.actual_cost, 0)::NUMERIC(20,8)::text,
+		       GREATEST(COALESCE(configuration.amount, 0) - COALESCE(usage_totals.actual_cost, 0), 0)::NUMERIC(20,8)::text,
+		       GREATEST(COALESCE(usage_totals.actual_cost, 0) - COALESCE(configuration.amount, 0), 0)::NUMERIC(20,8)::text
+		FROM enterprise_employees AS employee
+		LEFT JOIN latest_configurations AS configuration ON configuration.employee_id = employee.id
+		LEFT JOIN usage_totals ON usage_totals.employee_id = employee.id
+		WHERE employee.enterprise_id = $1 AND employee.status = 'active'
+		ORDER BY employee.id
+	`, query.EnterpriseID, query.SubscriptionID, query.WindowAnchor.UTC(), query.WindowType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	allocatedTotal := decimal.Zero
+	for rows.Next() {
+		var item AllocationListItem
+		var departmentID sql.NullInt64
+		if err := rows.Scan(&item.EmployeeID, &item.Email, &departmentID, &item.AllocationID, &item.AllocationVersion,
+			&item.ConfiguredCredit, &item.UsageCredit, &item.RemainingCredit, &item.OverageCredit); err != nil {
+			return nil, err
+		}
+		item.DepartmentID = nullInt64Pointer(departmentID)
+		item.Status = AllocationStatusNormal
+		if item.OverageCredit != "0.00000000" {
+			item.Status = AllocationStatusOverage
+		}
+		configured, err := decimal.NewFromString(item.ConfiguredCredit)
+		if err != nil {
+			return nil, err
+		}
+		allocatedTotal = allocatedTotal.Add(configured)
+		result.Items = append(result.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result.AllocatedTotal = allocatedTotal.StringFixed(8)
+	result.UnallocatedTotal = "0.00000000"
+	result.OverallocatedBy = "0.00000000"
+	if result.AuthoritativeLimit != nil {
+		limit, err := decimal.NewFromString(*result.AuthoritativeLimit)
+		if err != nil {
+			return nil, err
+		}
+		if limit.GreaterThan(allocatedTotal) {
+			result.UnallocatedTotal = limit.Sub(allocatedTotal).StringFixed(8)
+		} else if allocatedTotal.GreaterThan(limit) {
+			result.OverallocatedBy = allocatedTotal.Sub(limit).StringFixed(8)
+			result.Warning = AllocationWarningOverallocated
+		}
+	}
+	return result, nil
 }
 
 func (r *Repository) ReplaceScheduledSubscription(

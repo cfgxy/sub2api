@@ -3,7 +3,7 @@
 <el-skeleton v-if="detailLoading" :rows="3" animated/>
 <el-alert v-else-if="detailError" type="error" :title="detailError" :closable="false" class="notice"><el-button size="small" @click="loadDetail">重试</el-button></el-alert>
 <template v-else-if="detail">
-<div class="profile-head"><div class="avatar">{{ avatarLetter }}</div><div class="profile-meta"><h2>{{ detail.email.split('@')[0] }} <el-tag :type="statusType(detail.status)" size="small">{{ statusLabel(detail.status) }}</el-tag></h2><p>{{ maskDots }} · {{ maskEmail(detail.email) }} · {{ detail.department_name || '未分配部门' }}</p></div><div class="actions"><el-button :icon="Edit" :disabled="detail.status==='terminated'" @click="openEdit">编辑资料</el-button><el-button type="danger" plain :disabled="detail.status==='terminated'" @click="terminate">标记离职</el-button></div></div>
+<div class="profile-head"><div class="avatar">{{ avatarLetter }}</div><div class="profile-meta"><h2>{{ detail.email.split('@')[0] }} <el-tag :type="statusType(detail.status)" size="small">{{ statusLabel(detail.status) }}</el-tag></h2><p>{{ maskDots }} · {{ maskEmail(detail.email) }} · {{ detail.department_name || '未分配部门' }}</p></div><div class="actions"><el-button :icon="Edit" :disabled="detail.status==='terminated'" @click="openEdit">编辑资料</el-button><el-button type="danger" plain :disabled="detail.status==='terminated'" @click="terminate">标记离职</el-button><el-button type="primary" plain @click="router.push({path:'/enterprise/admin/allocation',query:{employee_id:String(detail.id)}})">配置 allocation</el-button><el-button plain @click="router.push('/enterprise/admin/keys')">查看员工 Key</el-button></div></div>
 
 <el-tabs v-model="activeTab" class="detail-tabs" @tab-change="onTabChange">
   <el-tab-pane label="基本信息" name="profile">

@@ -1,21 +1,18 @@
 <template>
-  <main class="enterprise-auth" :style="backgroundStyle">
-    <div class="enterprise-auth__shade"></div>
-    <section class="enterprise-auth__brand" aria-label="企业品牌">
-      <span class="enterprise-auth__mark"><Icon name="shield" size="xl" /></span>
-      <p class="enterprise-auth__eyebrow">{{ brand.enterprise_name }}</p>
-      <h1>{{ brand.title }}</h1>
-      <p class="enterprise-auth__slogan">{{ brand.slogan }}</p>
-      <p class="enterprise-auth__body">{{ brand.body }}</p>
+  <main class="enterprise-auth">
+    <header class="topbar"><div class="wordmark"><span class="mark">S</span><div><strong>{{ brand.enterprise_name }}</strong><small>企业 API 访问与用量管理</small></div></div><span class="topbar-note">安全、统一的企业访问入口</span></header>
+    <div class="auth-background" :style="backgroundStyle" aria-hidden="true" />
+    <section class="auth-content">
+      <div class="brand-copy"><div class="eyebrow">企业入口</div><h1>{{ brand.title }}</h1><p>{{ brand.body }}</p><span>{{ brand.slogan }}</span></div>
+      <section class="auth-card"><slot /></section>
+      <footer>仅限授权企业成员访问 · 不会在页面显示密码、Token 或完整 API Key</footer>
     </section>
-    <section class="enterprise-auth__form"><slot /></section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { enterpriseAPI } from '@/api/enterprise'
-import Icon from '@/components/icons/Icon.vue'
 import type { EnterpriseBrand } from '@/types/enterprise'
 
 const defaultBrand: EnterpriseBrand = {
@@ -25,50 +22,56 @@ const defaultBrand: EnterpriseBrand = {
   slogan: '安全、统一的企业访问入口',
   background_url: '/logo.svg',
   background_content_type: 'image/svg+xml',
-  background_sha256: 'ce1f2ac07efcfff80904a9582578b5db8fdd14a3118a5c7b58f408ed06df18e1',
-  background_size_bytes: 2010,
+  background_sha256: '',
+  background_size_bytes: 0,
 }
 const brand = reactive<EnterpriseBrand>({ ...defaultBrand })
-const controlledBackgroundURLs = new Set(['/logo.svg', '/api/v1/enterprise/brand/background'])
-const backgroundStyle = computed(() => {
-  const url = controlledBackgroundURLs.has(brand.background_url) ? brand.background_url : defaultBrand.background_url
-  const version = url === '/api/v1/enterprise/brand/background' && /^[a-f\d]{64}$/i.test(brand.background_sha256)
-    ? `?v=${brand.background_sha256}`
-    : ''
-  return { backgroundImage: `url("${url}${version}")` }
-})
+
+const customBackgroundVerified = ref(false)
 
 function applyBrand(response: EnterpriseBrand) {
   brand.enterprise_name = response.enterprise_name?.trim() || defaultBrand.enterprise_name
   brand.title = response.title?.trim() || defaultBrand.title
   brand.body = response.body?.trim() || defaultBrand.body
   brand.slogan = response.slogan?.trim() || defaultBrand.slogan
-  brand.background_url = controlledBackgroundURLs.has(response.background_url) ? response.background_url : defaultBrand.background_url
+  brand.background_url = response.background_url === '/api/v1/enterprise/brand/background' ? response.background_url : defaultBrand.background_url
   brand.background_content_type = response.background_content_type || defaultBrand.background_content_type
-  brand.background_sha256 = response.background_sha256 || defaultBrand.background_sha256
+  brand.background_sha256 = /^[a-f\d]{64}$/i.test(response.background_sha256 || '') ? response.background_sha256 : defaultBrand.background_sha256
   brand.background_size_bytes = response.background_size_bytes > 0 ? response.background_size_bytes : defaultBrand.background_size_bytes
 }
 
+// 数据库仍保留 background_object_key 不代表对象存储中的素材可读；先用 Image 探测真实加载结果，
+// 加载失败（对象已删除/读取报错）时回退默认背景，避免入口消费失效 URL。
+function verifyCustomBackground(url: string) {
+  customBackgroundVerified.value = false
+  if (typeof window === 'undefined' || typeof window.Image === 'undefined') return
+  const probe = new window.Image()
+  probe.onload = () => { customBackgroundVerified.value = true }
+  probe.onerror = () => { customBackgroundVerified.value = false }
+  probe.src = url
+}
+
+const backgroundStyle = computed(() => {
+  const isCustom = brand.background_url === '/api/v1/enterprise/brand/background'
+  const url = isCustom && customBackgroundVerified.value ? brand.background_url : defaultBrand.background_url
+  const version = isCustom && customBackgroundVerified.value && /^[a-f\d]{64}$/i.test(brand.background_sha256)
+    ? `?v=${brand.background_sha256}`
+    : ''
+  return { backgroundImage: `url("${url}${version}")` }
+})
+
 onMounted(async () => {
-  try { applyBrand(await enterpriseAPI.getBrand()) } catch { /* Keep per-field platform defaults when branding is unavailable. */ }
+  try {
+    const response = await enterpriseAPI.getBrand()
+    applyBrand(response)
+    if (brand.background_url === '/api/v1/enterprise/brand/background') {
+      const version = /^[a-f\d]{64}$/i.test(brand.background_sha256) ? `?v=${brand.background_sha256}` : ''
+      verifyCustomBackground(`${brand.background_url}${version}`)
+    }
+  } catch { /* 品牌来源不可用时保留受控默认值 */ }
 })
 </script>
 
 <style scoped>
-.enterprise-auth { position: relative; display: grid; min-height: 100vh; grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); background-color: #143c3b; background-position: center; background-size: cover; color: white; }
-.enterprise-auth__shade { position: absolute; inset: 0; background: rgba(9, 31, 31, .74); }
-.enterprise-auth__brand, .enterprise-auth__form { position: relative; z-index: 1; }
-.enterprise-auth__brand { align-self: end; max-width: 720px; padding: clamp(40px, 7vw, 96px); }
-.enterprise-auth__mark { display: inline-flex; padding: 12px; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; }
-.enterprise-auth__eyebrow { margin: 28px 0 10px; color: #a7f3d0; font-size: 14px; font-weight: 700; }
-h1 { margin: 0; max-width: 14ch; font-size: clamp(40px, 6vw, 72px); line-height: 1.05; letter-spacing: 0; overflow-wrap: anywhere; }
-.enterprise-auth__slogan { margin: 20px 0 0; font-size: 22px; font-weight: 600; }
-.enterprise-auth__body { max-width: 54ch; margin: 12px 0 0; color: #d1fae5; line-height: 1.7; }
-.enterprise-auth__form { display: flex; align-items: center; background: rgba(255,255,255,.97); color: #172121; padding: clamp(24px, 5vw, 72px); }
-.enterprise-auth__form :deep(.auth-panel) { width: 100%; max-width: 440px; margin: auto; }
-.enterprise-auth__form :deep(.auth-panel h2) { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
-.enterprise-auth__form :deep(.auth-panel .subtitle) { margin: 0 0 28px; color: #64748b; }
-.enterprise-auth__form :deep(.el-button) { width: 100%; }
-.enterprise-auth__form :deep(.auth-links) { display: flex; justify-content: space-between; gap: 16px; margin-top: 20px; font-size: 14px; }
-@media (max-width: 800px) { .enterprise-auth { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 42vh) auto; } .enterprise-auth__brand { align-self: end; padding: 28px 24px; } h1 { font-size: 38px; } .enterprise-auth__eyebrow { margin-top: 18px; } .enterprise-auth__slogan { font-size: 18px; } .enterprise-auth__body { display: none; } .enterprise-auth__form { align-items: flex-start; min-height: 58vh; padding: 32px 24px; } }
+.enterprise-auth{position:relative;min-height:100vh;background:#f0f2f5;color:#172033;isolation:isolate}.auth-background{position:absolute;inset:64px 0 0;z-index:-1;background-position:center;background-size:cover;opacity:.16}.topbar{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;height:64px;padding:0 max(20px,calc((100vw - 1328px)/2));background:#fff;border-bottom:1px solid #dfe3ea}.wordmark{display:flex;align-items:center;gap:10px;font-size:17px}.wordmark strong,.wordmark small{display:block}.wordmark strong{font-weight:750}.wordmark small{margin-top:2px;color:#667085;font-size:11px}.mark{display:grid;width:28px;height:28px;place-items:center;border-radius:7px;background:#2563eb;color:#fff;font-size:14px;font-weight:800}.topbar-note{color:#667085;font-size:12px}.auth-content{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,420px) minmax(360px,460px);gap:72px;align-items:center;width:min(960px,calc(100% - 40px));min-height:calc(100vh - 64px);margin:0 auto;padding:48px 0}.brand-copy .eyebrow{margin-bottom:10px;color:#2563eb;font-size:12px;font-weight:700;letter-spacing:.08em}.brand-copy h1{margin:0 0 14px;font-size:36px;line-height:1.2}.brand-copy p{margin:0 0 18px;color:#526078;font-size:15px;line-height:1.8}.brand-copy span{color:#667085;font-size:13px}.auth-card{padding:32px;background:#fff;border:1px solid #dfe3ea;border-radius:8px;box-shadow:0 12px 28px rgba(25,35,55,.06)}.auth-card :deep(.auth-panel h2){margin:0 0 8px;font-size:24px;line-height:1.3}.auth-card :deep(.subtitle){margin:0 0 24px;color:#667085;line-height:1.6}.auth-card :deep(.el-button){min-height:40px}.auth-card :deep(.auth-links){display:flex;justify-content:flex-end;gap:16px;margin-top:18px;font-size:13px}.auth-card :deep(a){color:#2563eb;text-decoration:none}.auth-content footer{grid-column:1/-1;align-self:end;color:#98a2b3;text-align:center;font-size:11px}@media(max-width:760px){.topbar{padding:0 20px}.topbar-note{display:none}.auth-content{display:flex;flex-direction:column;align-items:stretch;gap:24px;width:calc(100% - 32px);min-height:calc(100vh - 64px);padding:30px 0 22px}.brand-copy h1{font-size:28px}.brand-copy p{margin-bottom:8px;font-size:14px}.auth-card{padding:24px}.auth-content footer{margin-top:auto}}
 </style>

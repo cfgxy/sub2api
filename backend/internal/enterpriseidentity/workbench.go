@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -46,14 +48,38 @@ type WorkbenchEmployeeSummary struct {
 	Requests         int64  `json:"requests"`
 	ConfiguredCredit string `json:"configured_credit"`
 	UsageCredit      string `json:"usage_credit"`
+	RemainingCredit  string `json:"remaining_credit"`
+	OverageCredit    string `json:"overage_credit"`
+	Recommendation   string `json:"recommendation"`
+}
+
+type WorkbenchUsageTrendPoint struct {
+	At          time.Time `json:"at"`
+	Requests    int64     `json:"requests"`
+	UsageCredit string    `json:"usage_credit"`
 }
 
 type WorkbenchSummary struct {
-	TotalUsageCredit    string                     `json:"total_usage_credit"`
-	TotalRequests       int64                      `json:"total_requests"`
-	EmployeeCount       int64                      `json:"employee_count"`
-	ActiveEmployeeCount int64                      `json:"active_employee_count"`
-	EmployeeSummaries   []WorkbenchEmployeeSummary `json:"employee_summaries"`
+	TotalUsageCredit           string                     `json:"total_usage_credit"`
+	TotalRequests              int64                      `json:"total_requests"`
+	EmployeeCount              int64                      `json:"employee_count"`
+	ActiveEmployeeCount        int64                      `json:"active_employee_count"`
+	SubscriptionID             *int64                     `json:"subscription_id,omitempty"`
+	SubscriptionStatus         string                     `json:"subscription_status"`
+	SubscriptionPlan           string                     `json:"subscription_plan"`
+	EnterprisePoolLimit        string                     `json:"enterprise_pool_limit"`
+	EnterprisePoolUsed         string                     `json:"enterprise_pool_used"`
+	EnterprisePoolRemaining    string                     `json:"enterprise_pool_remaining"`
+	EnterprisePoolExhausted    bool                       `json:"enterprise_pool_exhausted"`
+	PoolSourceStatus           string                     `json:"pool_source_status"`
+	PoolSource                 string                     `json:"pool_source"`
+	PoolWindowType             string                     `json:"pool_window_type"`
+	PoolWindowAnchor           *time.Time                 `json:"pool_window_anchor,omitempty"`
+	PoolObservedAt             *time.Time                 `json:"pool_observed_at,omitempty"`
+	ScheduledSubscriptionPlan  string                     `json:"scheduled_subscription_plan,omitempty"`
+	ScheduledSubscriptionSince *time.Time                 `json:"scheduled_subscription_since,omitempty"`
+	EmployeeSummaries          []WorkbenchEmployeeSummary `json:"employee_summaries"`
+	UsageTrend                 []WorkbenchUsageTrendPoint `json:"usage_trend"`
 }
 
 type WorkbenchUsageRow struct {
@@ -78,6 +104,8 @@ type WorkbenchAuditEvent struct {
 	EventType  string         `json:"event_type"`
 	EntityType string         `json:"entity_type"`
 	EntityID   *int64         `json:"entity_id,omitempty"`
+	Result     string         `json:"result"`
+	Reason     string         `json:"reason,omitempty"`
 	Payload    map[string]any `json:"payload"`
 	ActorRef   string         `json:"actor_ref"`
 	CreatedAt  time.Time      `json:"created_at"`
@@ -127,7 +155,11 @@ func (h *WorkbenchHandler) auditEvents(c *gin.Context) {
 	}
 	eventType := strings.TrimSpace(c.Query("event_type"))
 	entityType := strings.TrimSpace(c.Query("entity_type"))
-	items, total, err := h.listAuditEvents(c.Request.Context(), claims.EnterpriseID, query, eventType, entityType)
+	actorRef := strings.TrimSpace(c.Query("actor_ref"))
+	result := strings.TrimSpace(c.Query("result"))
+	reason := strings.TrimSpace(c.Query("reason"))
+	search := strings.TrimSpace(c.Query("search"))
+	items, total, err := h.listAuditEvents(c.Request.Context(), claims.EnterpriseID, query, eventType, entityType, actorRef, result, reason, search)
 	if response.ErrorFrom(c, err) {
 		return
 	}
@@ -154,7 +186,7 @@ func parseWorkbenchQuery(c *gin.Context, requirePage bool) (workbenchQuery, bool
 	}
 
 	q.WindowType = strings.TrimSpace(c.Query("window_type"))
-	if q.WindowType != "" && q.WindowType != "day" && q.WindowType != "week" && q.WindowType != "month" {
+	if q.WindowType != "" && q.WindowType != "week" {
 		response.BadRequest(c, "invalid window_type")
 		return workbenchQuery{}, false
 	}
@@ -263,7 +295,17 @@ func buildWorkbenchUsageScope(enterpriseID int64, q workbenchQuery) workbenchSQL
 
 func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q workbenchQuery) (*WorkbenchSummary, error) {
 	scope := buildWorkbenchUsageScope(enterpriseID, q)
-	result := &WorkbenchSummary{TotalUsageCredit: "0", EmployeeSummaries: make([]WorkbenchEmployeeSummary, 0)}
+	result := &WorkbenchSummary{
+		TotalUsageCredit:        "0",
+		EnterprisePoolLimit:     "0",
+		EnterprisePoolUsed:      "0",
+		EnterprisePoolRemaining: "0",
+		PoolSourceStatus:        "unavailable",
+		PoolSource:              "upstream subscription",
+		PoolWindowType:          "week",
+		EmployeeSummaries:       make([]WorkbenchEmployeeSummary, 0),
+		UsageTrend:              make([]WorkbenchUsageTrendPoint, 0),
+	}
 	if err := h.owner.service.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0)::text, COUNT(*)
 		FROM enterprise_usage_attributions AS attribution
@@ -299,13 +341,144 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	for rows.Next() {
 		var item WorkbenchEmployeeSummary
 		var departmentID sql.NullInt64
-		if err := rows.Scan(&item.EmployeeID, &item.Email, &departmentID, &item.Requests, &item.ConfiguredCredit, &item.UsageCredit); err != nil {
+		if err := rows.Scan(&item.EmployeeID, &item.Email, &departmentID, &item.Requests, &item.ConfiguredCredit, &item.UsageCredit, &item.RemainingCredit, &item.OverageCredit); err != nil {
 			return nil, err
 		}
 		item.DepartmentID = nullableInt64(departmentID)
+		// overage 由数据库 NUMERIC 定长 ::text 输出，零值形态不固定（"0" 或 "0.00000000"），
+		// 必须按数值语义判断；解析失败视为无法确认，保留人工核对提示。
+		item.Recommendation = "当前 allocation 范围内"
+		if overage, err := decimal.NewFromString(item.OverageCredit); err != nil || overage.IsPositive() {
+			item.Recommendation = "核对个人超用，并按业务需要调整 allocation"
+		}
 		result.EmployeeSummaries = append(result.EmployeeSummaries, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var poolStatus, plan, subscriptionStatus sql.NullString
+	var poolLimit, poolUsed, poolRemaining sql.NullString
+	var poolExhausted sql.NullBool
+	var poolAnchor sql.NullTime
+	var subscriptionID sql.NullInt64
+	if err := h.owner.service.db.QueryRowContext(ctx, `
+		SELECT enterprise_subscription.id,
+		       CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL
+		                 OR subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0
+		            THEN 'unavailable' ELSE 'available' END,
+		       COALESCE(subscription_group.name, ''), COALESCE(upstream_subscription.status, ''),
+		       COALESCE(CASE WHEN subscription_group.weekly_limit_usd > 0 THEN subscription_group.weekly_limit_usd END, 0)::NUMERIC(20, 8)::text,
+		       COALESCE(upstream_subscription.weekly_usage_usd, 0)::NUMERIC(20, 8)::text,
+		       CASE WHEN subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0 THEN '0'
+		            ELSE GREATEST(subscription_group.weekly_limit_usd - COALESCE(upstream_subscription.weekly_usage_usd, 0), 0)::NUMERIC(20, 8)::text END,
+		       (subscription_group.weekly_limit_usd IS NOT NULL AND subscription_group.weekly_limit_usd > 0
+		        AND COALESCE(upstream_subscription.weekly_usage_usd, 0) >= subscription_group.weekly_limit_usd),
+		       upstream_subscription.weekly_window_start
+		FROM enterprises AS enterprise
+		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
+		  ON enterprise_subscription.enterprise_id = enterprise.id AND enterprise_subscription.status = 'active'
+		LEFT JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
+		WHERE enterprise.id = $1`, enterpriseID).Scan(
+		&subscriptionID, &poolStatus, &plan, &subscriptionStatus, &poolLimit, &poolUsed, &poolRemaining, &poolExhausted, &poolAnchor); err != nil {
+		return nil, err
+	}
+	if poolStatus.Valid {
+		result.PoolSourceStatus = poolStatus.String
+	}
+	result.SubscriptionID = nullableInt64(subscriptionID)
+	result.SubscriptionPlan = plan.String
+	result.SubscriptionStatus = subscriptionStatus.String
+	if poolLimit.Valid {
+		result.EnterprisePoolLimit = poolLimit.String
+	}
+	if poolUsed.Valid {
+		result.EnterprisePoolUsed = poolUsed.String
+	}
+	if poolRemaining.Valid {
+		result.EnterprisePoolRemaining = poolRemaining.String
+	}
+	result.EnterprisePoolExhausted = poolExhausted.Valid && poolExhausted.Bool
+	if poolAnchor.Valid {
+		anchor := poolAnchor.Time
+		result.PoolWindowAnchor = &anchor
+	}
+	if subscriptionID.Valid {
+		var observedAt sql.NullTime
+		if err := h.owner.service.db.QueryRowContext(ctx, `
+			SELECT observed_at
+			FROM enterprise_subscription_windows
+			WHERE enterprise_id = $1 AND subscription_id = $2
+			ORDER BY observed_weekly_window_start DESC, observed_at DESC
+			LIMIT 1`, enterpriseID, subscriptionID.Int64).Scan(&observedAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if observedAt.Valid {
+			observed := observedAt.Time
+			result.PoolObservedAt = &observed
+		}
+	}
+
+	var scheduledPlan sql.NullString
+	var scheduledSince sql.NullTime
+	if err := h.owner.service.db.QueryRowContext(ctx, `
+		SELECT COALESCE(subscription_group.name, ''), enterprise_subscription.created_at
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN enterprises AS enterprise ON enterprise.id = enterprise_subscription.enterprise_id
+		LEFT JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
+		WHERE enterprise_subscription.enterprise_id = $1 AND enterprise_subscription.status = 'scheduled'
+		ORDER BY enterprise_subscription.created_at DESC
+		LIMIT 1`, enterpriseID).Scan(&scheduledPlan, &scheduledSince); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if scheduledSince.Valid {
+		result.ScheduledSubscriptionPlan = scheduledPlan.String
+		since := scheduledSince.Time
+		result.ScheduledSubscriptionSince = &since
+	}
+	if q.WindowType != "" && q.WindowType != "week" {
+		// 当前产品契约只冻结 weekly 总池；其他窗口的 usage 可以查询，但不得借用 weekly 权威值。
+		result.PoolSourceStatus = "unavailable"
+		result.EnterprisePoolLimit = "0"
+		result.EnterprisePoolUsed = "0"
+		result.EnterprisePoolRemaining = "0"
+		result.EnterprisePoolExhausted = false
+		result.PoolWindowAnchor = nil
+	}
+
+	granularity := "hour"
+	if q.WindowType == "" || q.WindowType == "week" {
+		granularity = "day"
+	}
+	trendRows, err := h.owner.service.db.QueryContext(ctx, `
+		SELECT DATE_TRUNC('`+granularity+`', attribution.request_at),
+		       COUNT(*), COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0)::text
+		FROM enterprise_usage_attributions AS attribution
+		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+		LEFT JOIN enterprise_employees AS employee
+		  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
+		WHERE `+scope.where+`
+		GROUP BY 1 ORDER BY 1`, scope.args...)
+	if err != nil {
+		return nil, err
+	}
+	defer trendRows.Close()
+	for trendRows.Next() {
+		var point WorkbenchUsageTrendPoint
+		if err := trendRows.Scan(&point.At, &point.Requests, &point.UsageCredit); err != nil {
+			return nil, err
+		}
+		result.UsageTrend = append(result.UsageTrend, point)
+	}
+	return result, trendRows.Err()
 }
 
 func buildEmployeeSummaryQuery(scope workbenchSQLScope) string {
@@ -328,7 +501,9 @@ func buildEmployeeSummaryQuery(scope workbenchSQLScope) string {
 		)
 		SELECT usage.employee_id, usage.email, usage.department_id,
 		       SUM(usage.requests), COALESCE(SUM(allocation.amount), 0)::text,
-		       COALESCE(SUM(usage.usage_credit), 0)::text
+		       COALESCE(SUM(usage.usage_credit), 0)::text,
+		       GREATEST(COALESCE(SUM(allocation.amount), 0) - COALESCE(SUM(usage.usage_credit), 0), 0)::text,
+		       GREATEST(COALESCE(SUM(usage.usage_credit), 0) - COALESCE(SUM(allocation.amount), 0), 0)::text
 		FROM employee_window_usage AS usage
 		LEFT JOIN enterprise_weekly_allocations AS allocation
 		  ON allocation.enterprise_id = usage.enterprise_id
@@ -399,7 +574,7 @@ func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q 
 	return items, total, rows.Err()
 }
 
-func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int64, q workbenchQuery, eventType, entityType string) ([]WorkbenchAuditEvent, int64, error) {
+func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int64, q workbenchQuery, eventType, entityType, actorRef, result, reason, search string) ([]WorkbenchAuditEvent, int64, error) {
 	conditions := []string{"enterprise_id = $1"}
 	args := []any{enterpriseID}
 	add := func(condition string, value any) {
@@ -438,6 +613,22 @@ func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int
 	if entityType != "" {
 		add("entity_type = $%d", entityType)
 	}
+	if actorRef != "" {
+		add("actor_ref = $%d", actorRef)
+	}
+	if result != "" {
+		args = append(args, result)
+		position := len(args)
+		conditions = append(conditions, fmt.Sprintf("COALESCE(payload->>'result', payload->>'status', 'success') = $%d", position))
+	}
+	if reason != "" {
+		add("payload->>'reason' ILIKE '%%' || $%d || '%%'", reason)
+	}
+	if search != "" {
+		args = append(args, search)
+		position := len(args)
+		conditions = append(conditions, fmt.Sprintf("(event_type ILIKE '%%' || $%d || '%%' OR entity_type ILIKE '%%' || $%d || '%%' OR actor_ref ILIKE '%%' || $%d || '%%' OR payload::text ILIKE '%%' || $%d || '%%')", position, position, position, position))
+	}
 	if q.StartAt != nil {
 		add("created_at >= $%d", *q.StartAt)
 	}
@@ -453,7 +644,9 @@ func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int
 	offsetPos := len(args) + 2
 	listArgs := append(append([]any{}, args...), q.PageSize, (q.Page-1)*q.PageSize)
 	rows, err := h.owner.service.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id, event_type, entity_type, entity_id, payload, actor_ref, created_at
+		SELECT id, event_type, entity_type, entity_id,
+		       COALESCE(payload->>'result', payload->>'status', 'success'),
+		       COALESCE(payload->>'reason', ''), payload, actor_ref, created_at
 		FROM enterprise_audit_events
 		WHERE %s
 		ORDER BY created_at DESC, id DESC
@@ -467,7 +660,7 @@ func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int
 		var item WorkbenchAuditEvent
 		var entityID sql.NullInt64
 		var payload []byte
-		if err := rows.Scan(&item.ID, &item.EventType, &item.EntityType, &entityID, &payload, &item.ActorRef, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.EventType, &item.EntityType, &entityID, &item.Result, &item.Reason, &payload, &item.ActorRef, &item.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		item.EntityID = nullableInt64(entityID)

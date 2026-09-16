@@ -45,6 +45,11 @@ type employeeKeyStore interface {
 	RotateEmployeeKey(context.Context, enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error)
 }
 
+type enterpriseAdminKeyStore interface {
+	ListEnterpriseKeys(context.Context, int64) ([]enterprise.EnterpriseKeySummary, error)
+	RevokeEnterpriseKey(context.Context, int64, int64, string, string) (*enterprise.EmployeeKeyMutationResult, error)
+}
+
 type employeeKeyGenerator interface {
 	GenerateKey() (string, error)
 }
@@ -77,6 +82,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	authenticated := root.Group("")
 	authenticated.Use(h.authenticate())
 	authenticated.POST("/password/first-change", h.changeInitialPassword)
+	authenticated.POST("/password/change", h.changePassword)
 	authenticated.GET("/sessions", h.listSessions)
 	authenticated.GET("/sessions/:id", h.getSession)
 	authenticated.DELETE("/sessions/:id", h.revokeSession)
@@ -85,6 +91,10 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	authenticated.POST("/keys", h.employeeKeyMutationRateLimit(), h.createKey)
 	authenticated.POST("/keys/disable", h.employeeKeyMutationRateLimit(), h.disableKey)
 	authenticated.POST("/keys/rotate", h.employeeKeyMutationRateLimit(), h.rotateKey)
+	authenticated.GET("/home", h.employeeHome)
+	authenticated.GET("/usage/me", h.employeeUsage)
+	authenticated.GET("/usage/me/details", h.employeeUsageDetails)
+	authenticated.GET("/profile", h.employeeProfile)
 
 	admin := authenticated.Group("/admin")
 	admin.Use(requireEnterpriseAdmin)
@@ -100,6 +110,8 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.GET("/brand", h.getBrand)
 	admin.PUT("/brand", h.putBrand)
 	admin.POST("/brand/background", h.uploadBrandBackground)
+	admin.GET("/keys", h.listAdminKeys)
+	admin.POST("/keys/:id/revoke", h.revokeAdminKey)
 	if h.workbench != nil {
 		h.workbench.registerRoutes(admin)
 	}
@@ -293,6 +305,13 @@ type employeeKeyMutationRequest struct {
 	ExpectedAPIKeyID int64 `json:"expected_api_key_id"`
 }
 
+type platformEnterpriseRequest struct {
+	Name                  string `json:"name" binding:"required"`
+	Host                  string `json:"portal_host" binding:"required"`
+	DedicatedUpstreamUser int64  `json:"dedicated_upstream_user_id" binding:"required"`
+	Reason                string `json:"reason" binding:"required"`
+}
+
 func (h *Handler) login(c *gin.Context) {
 	var req loginRequest
 	if !bind(c, &req) {
@@ -303,6 +322,67 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 	response.Success(c, pair)
+}
+
+func (h *Handler) CreatePlatformEnterprise(c *gin.Context) {
+	subject, ok := servermiddleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	var req platformEnterpriseRequest
+	if !bind(c, &req) {
+		return
+	}
+	item, err := h.service.CreateEnterprise(c.Request.Context(), CreateEnterpriseInput{
+		Name: req.Name, Host: req.Host, DedicatedUpstreamUser: req.DedicatedUpstreamUser, Reason: req.Reason,
+	}, subject.UserID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Created(c, item)
+}
+
+func (h *Handler) ListPlatformEnterprises(c *gin.Context) {
+	items, err := h.service.ListPlatformEnterprises(c.Request.Context(), c.Query("search"), c.Query("status"))
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, items)
+}
+
+func (h *Handler) GetPlatformEnterprise(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	item, err := h.service.GetPlatformEnterprise(c.Request.Context(), id)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, item)
+}
+
+func (h *Handler) DisablePlatformEnterprise(c *gin.Context) {
+	subject, ok := servermiddleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if !bind(c, &req) {
+		return
+	}
+	if response.ErrorFrom(c, h.service.DisableEnterprise(c.Request.Context(), id, subject.UserID, req.Reason)) {
+		return
+	}
+	response.Success(c, gin.H{"success": true})
 }
 
 func (h *Handler) refresh(c *gin.Context) {
@@ -334,7 +414,8 @@ func (h *Handler) forgotPassword(c *gin.Context) {
 		return
 	}
 	resetBaseURL := "https://" + requestHost(c.Request) + "/enterprise/reset-password"
-	if response.ErrorFrom(c, h.service.RequestReset(c.Request.Context(), requestHost(c.Request), req.Email, resetBaseURL, c.GetHeader("Accept-Language"))) {
+	ctx := WithAuditActor(c.Request.Context(), "enterprise_public")
+	if response.ErrorFrom(c, h.service.RequestReset(ctx, requestHost(c.Request), req.Email, resetBaseURL, c.GetHeader("Accept-Language"))) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -345,7 +426,8 @@ func (h *Handler) resetPassword(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	if response.ErrorFrom(c, h.service.ResetPassword(c.Request.Context(), requestHost(c.Request), req.Token, req.Password)) {
+	ctx := WithAuditActor(c.Request.Context(), "enterprise_public")
+	if response.ErrorFrom(c, h.service.ResetPassword(ctx, requestHost(c.Request), req.Token, req.Password)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -356,7 +438,22 @@ func (h *Handler) changeInitialPassword(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	if response.ErrorFrom(c, h.service.ChangeInitialPassword(c.Request.Context(), mustClaims(c), req.CurrentPassword, req.NewPassword)) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	if response.ErrorFrom(c, h.service.ChangeInitialPassword(ctx, claims, req.CurrentPassword, req.NewPassword)) {
+		return
+	}
+	response.Success(c, gin.H{"success": true})
+}
+
+func (h *Handler) changePassword(c *gin.Context) {
+	var req changePasswordRequest
+	if !bind(c, &req) {
+		return
+	}
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	if response.ErrorFrom(c, h.service.ChangePassword(ctx, claims, req.CurrentPassword, req.NewPassword)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -385,14 +482,18 @@ func (h *Handler) getSession(c *gin.Context) {
 }
 
 func (h *Handler) revokeSession(c *gin.Context) {
-	if response.ErrorFrom(c, h.service.RevokeSession(c.Request.Context(), mustClaims(c), c.Param("id"))) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	if response.ErrorFrom(c, h.service.RevokeSession(ctx, claims, c.Param("id"))) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
 }
 
 func (h *Handler) revokeAllSessions(c *gin.Context) {
-	if response.ErrorFrom(c, h.service.RevokeAllSessions(c.Request.Context(), mustClaims(c))) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	if response.ErrorFrom(c, h.service.RevokeAllSessions(ctx, claims)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -412,6 +513,61 @@ func (h *Handler) getCurrentKey(c *gin.Context) {
 		return
 	}
 	response.Success(c, key)
+}
+
+func (h *Handler) employeeHome(c *gin.Context) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	usage, err := h.service.GetEmployeeUsage(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	var key *enterprise.EmployeeKey
+	if h.keyRepository != nil {
+		key, err = h.keyRepository.GetEmployeeCurrentKey(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+		if response.ErrorFrom(c, err) {
+			return
+		}
+	}
+	response.Success(c, gin.H{"usage": usage, "key": key})
+}
+
+func (h *Handler) employeeUsage(c *gin.Context) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	usage, err := h.service.GetEmployeeUsage(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, usage)
+}
+
+func (h *Handler) employeeUsageDetails(c *gin.Context) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	items, err := h.service.ListEmployeeUsage(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, items)
+}
+
+func (h *Handler) employeeProfile(c *gin.Context) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	item, err := h.service.GetEmployee(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, item)
 }
 
 func (h *Handler) createKey(c *gin.Context) {
@@ -530,12 +686,16 @@ func (h *Handler) listDepartments(c *gin.Context) {
 	response.Success(c, items)
 }
 func (h *Handler) createDepartment(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	var req departmentRequest
 	if !bind(c, &req) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "department.create", "department", nil, "invalid_request")
 		return
 	}
-	item, err := h.service.CreateDepartment(h.adminActorContext(c), mustClaims(c).EnterpriseID, req.Name)
+	item, err := h.service.CreateDepartment(ctx, claims.EnterpriseID, req.Name)
 	if response.ErrorFrom(c, err) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "department.create", "department", nil, "rejected")
 		return
 	}
 	response.Created(c, item)
@@ -552,11 +712,15 @@ func (h *Handler) previewDepartmentDeletion(c *gin.Context) {
 	response.Success(c, impact)
 }
 func (h *Handler) deleteDepartment(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	id, ok := pathID(c)
 	if !ok {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "department.disable", "department", nil, "invalid_request")
 		return
 	}
-	if response.ErrorFrom(c, h.service.DeleteDepartment(h.adminActorContext(c), mustClaims(c).EnterpriseID, id)) {
+	if response.ErrorFrom(c, h.service.DeleteDepartment(ctx, claims.EnterpriseID, id)) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "department.disable", "department", &id, "rejected")
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -588,51 +752,54 @@ func (h *Handler) getEmployee(c *gin.Context) {
 	response.Success(c, item)
 }
 func (h *Handler) createEmployee(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	var req employeeCreateRequest
 	if !bind(c, &req) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.create", "employee", nil, "invalid_request")
 		return
 	}
-	item, err := h.service.CreateEmployee(h.adminActorContext(c), mustClaims(c).EnterpriseID, req.Email, req.InitialPassword, req.DepartmentID)
+	item, err := h.service.CreateEmployee(ctx, claims.EnterpriseID, req.Email, req.InitialPassword, req.DepartmentID)
 	if response.ErrorFrom(c, err) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.create", "employee", nil, "rejected")
 		return
 	}
 	response.Created(c, item)
 }
 func (h *Handler) updateEmployee(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	id, ok := pathID(c)
 	if !ok {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.update", "employee", nil, "invalid_request")
 		return
 	}
 	var req employeeUpdateRequest
 	if !bind(c, &req) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.update", "employee", &id, "invalid_request")
 		return
 	}
-	if response.ErrorFrom(c, h.service.UpdateEmployee(h.adminActorContext(c), mustClaims(c).EnterpriseID, id, req.Status, req.DepartmentID, req.Version)) {
+	if response.ErrorFrom(c, h.service.UpdateEmployee(ctx, claims.EnterpriseID, id, req.Status, req.DepartmentID, req.Version)) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.update", "employee", &id, "rejected")
 		return
 	}
 	response.Success(c, gin.H{"success": true})
 }
 func (h *Handler) terminateEmployee(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	id, ok := pathID(c)
 	if !ok {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.terminate", "employee", nil, "invalid_request")
 		return
 	}
-	if response.ErrorFrom(c, h.service.TerminateEmployee(h.adminActorContext(c), mustClaims(c).EnterpriseID, id)) {
+	if response.ErrorFrom(c, h.service.TerminateEmployee(ctx, claims.EnterpriseID, id)) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "employee.terminate", "employee", &id, "rejected")
 		return
 	}
 	response.Success(c, gin.H{"success": true})
 }
 
-// adminActorContext attaches the authenticated enterprise admin's identity to
-// the request context so audit events written by the service layer are
-// attributable to the acting principal instead of a generic "system" actor.
-func (h *Handler) adminActorContext(c *gin.Context) context.Context {
-	claims := mustClaims(c)
-	if claims == nil {
-		return c.Request.Context()
-	}
-	return WithActorRef(c.Request.Context(), fmt.Sprintf("admin:%d", claims.PrincipalID))
-}
 func (h *Handler) getBrand(c *gin.Context) {
 	brand, err := h.service.GetBrand(c.Request.Context(), mustClaims(c).EnterpriseID)
 	if response.ErrorFrom(c, err) {
@@ -641,40 +808,100 @@ func (h *Handler) getBrand(c *gin.Context) {
 	response.Success(c, brand)
 }
 func (h *Handler) putBrand(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	var req BrandInput
 	if !bind(c, &req) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "brand.update", "enterprise_branding", &claims.EnterpriseID, "invalid_request")
 		return
 	}
-	brand, err := h.service.PutBrand(c.Request.Context(), mustClaims(c).EnterpriseID, req)
+	brand, err := h.service.PutBrand(ctx, claims.EnterpriseID, req)
 	if response.ErrorFrom(c, err) {
+		_ = h.service.RecordRejectedAuditEvent(ctx, claims.EnterpriseID, "brand.update", "enterprise_branding", &claims.EnterpriseID, "rejected")
 		return
 	}
 	response.Success(c, brand)
 }
 
 func (h *Handler) uploadBrandBackground(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBrandBackgroundBytes+(1<<20))
 	fileHeader, err := c.FormFile("file")
 	if err != nil || fileHeader.Size <= 0 || fileHeader.Size > maxBrandBackgroundBytes {
 		response.ErrorFrom(c, errInvalidBrand)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "invalid_request")
 		return
 	}
 	file, err := fileHeader.Open()
 	if err != nil {
 		response.ErrorFrom(c, errInvalidBrand)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "rejected")
 		return
 	}
 	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxBrandBackgroundBytes+1))
 	if err != nil || int64(len(data)) > maxBrandBackgroundBytes {
 		response.ErrorFrom(c, errInvalidBrand)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "invalid_request")
 		return
 	}
-	asset, err := h.service.UploadBrandBackground(c.Request.Context(), mustClaims(c).EnterpriseID, c.PostForm("sha256"), data)
+	asset, err := h.service.UploadBrandBackground(ctx, claims.EnterpriseID, c.PostForm("sha256"), data)
 	if response.ErrorFrom(c, err) {
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "brand.background.upload", "enterprise_branding", &claims.EnterpriseID, "rejected")
 		return
 	}
 	response.Success(c, asset)
+}
+
+func (h *Handler) listAdminKeys(c *gin.Context) {
+	store, ok := h.keyRepository.(enterpriseAdminKeyStore)
+	if !ok {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		return
+	}
+	items, err := store.ListEnterpriseKeys(c.Request.Context(), mustClaims(c).EnterpriseID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, items)
+}
+
+func (h *Handler) revokeAdminKey(c *gin.Context) {
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	store, ok := h.keyRepository.(enterpriseAdminKeyStore)
+	if !ok {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, "rejected")
+		return
+	}
+	id, ok := pathID(c)
+	if !ok {
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, "invalid_request")
+		return
+	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 128 {
+		response.BadRequest(c, "Idempotency-Key header is required and must not exceed 128 characters")
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, "invalid_request")
+		return
+	}
+	result, err := store.RevokeEnterpriseKey(ctx, claims.EnterpriseID, id, idempotencyKey, auditActor(ctx))
+	if response.ErrorFrom(c, err) {
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, "rejected")
+		return
+	}
+	if result != nil {
+		result.Plaintext = ""
+	}
+	response.Success(c, result)
+}
+
+func (h *Handler) recordRejectedAudit(ctx context.Context, enterpriseID int64, eventType, entityType string, entityID *int64, reason string) {
+	if h.service != nil {
+		_ = h.service.RecordRejectedAuditEvent(ctx, enterpriseID, eventType, entityType, entityID, reason)
+	}
 }
 
 func bind(c *gin.Context, value any) bool {

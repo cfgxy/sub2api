@@ -54,6 +54,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/login',
+    name: 'AdminLogin',
+    component: () => import('@/views/auth/LoginView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Platform Login',
+      titleKey: 'admin.platformLogin.title'
+    }
+  },
+  {
     path: '/register',
     name: 'Register',
     component: () => import('@/views/auth/RegisterView.vue'),
@@ -418,6 +428,24 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/enterprises',
+    name: 'AdminEnterprises',
+    component: () => import('@/views/admin/EnterprisesView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Enterprise Tenants' }
+  },
+  {
+    path: '/admin/enterprises/new',
+    name: 'AdminEnterpriseCreate',
+    component: () => import('@/views/admin/EnterpriseCreateView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Create Enterprise' }
+  },
+  {
+    path: '/admin/enterprises/:id',
+    name: 'AdminEnterpriseDetail',
+    component: () => import('@/views/admin/EnterpriseDetailView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Enterprise Detail' }
+  },
+  {
     path: '/admin/ops',
     name: 'AdminOps',
     component: () => import('@/views/admin/ops/OpsDashboard.vue'),
@@ -754,7 +782,7 @@ let authInitialized = false
 const navigationLoading = useNavigationLoadingState()
 // 延迟初始化预加载，传入 router 实例
 let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/admin/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
 const BACKEND_MODE_CALLBACK_PATHS = [
   '/auth/callback',
   '/auth/linuxdo/callback',
@@ -839,7 +867,7 @@ router.beforeEach(async (to, _from, next) => {
   // If route doesn't require auth, allow access
   if (!requiresAuth) {
     // If already authenticated and trying to access login/register, redirect to appropriate dashboard
-    if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
+    if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/admin/login' || to.path === '/register')) {
       // In backend mode, non-admin users should NOT be redirected away from login
       // (they are blocked from all protected routes, so redirecting would cause a loop)
       if (appStore.backendModeEnabled && !authStore.isAdmin) {
@@ -895,9 +923,11 @@ router.beforeEach(async (to, _from, next) => {
 
   // Route requires authentication
   if (!authStore.isAuthenticated) {
-    // Not authenticated, redirect to login
+    // Not authenticated, redirect to login.
+    // 平台专属路由（requiresAdmin）走独立的 /admin/login 入口，避免把注册、OAuth、Passkey
+    // 等普通用户入口带入平台管理主体的登录流程。
     next({
-      path: '/login',
+      path: requiresAdmin ? '/admin/login' : '/login',
       query: { redirect: to.fullPath } // Save intended destination
     })
     return
