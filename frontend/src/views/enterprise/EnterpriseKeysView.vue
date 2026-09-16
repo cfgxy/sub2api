@@ -13,7 +13,11 @@
     </div>
 
     <div v-loading="loading">
-      <el-empty v-if="!loading && !key" description="尚未创建 API Key" />
+      <div v-if="!loading && loadError" data-testid="keys-load-error" class="field-error">
+        API Key 信息暂时不可用，请稍后重试。
+        <el-button link type="primary" data-testid="keys-load-retry" @click="load">重新加载</el-button>
+      </div>
+      <el-empty v-else-if="!loading && !key" description="尚未创建 API Key" />
       <template v-if="key">
         <div class="key-line">
           <div><span class="label">当前 Key</span><code>{{ key.masked_key }}</code></div>
@@ -49,6 +53,7 @@ import type { EnterpriseEmployeeKey } from '@/types/enterprise'
 
 const key = ref<EnterpriseEmployeeKey | null>(null)
 const loading = ref(false)
+const loadError = ref(false)
 const mutating = ref(false)
 const secret = ref('')
 const secretVisible = ref(false)
@@ -60,9 +65,11 @@ const statusLabel = (status: string) => ({ active: '有效', disabled: '已停�
 
 async function load() {
   loading.value = true
+  loadError.value = false
   try {
     key.value = await enterpriseAPI.getCurrentKey()
   } catch {
+    loadError.value = true
     ElMessage.error('加载 API Key 失败，请稍后重试')
   } finally {
     loading.value = false
@@ -149,5 +156,5 @@ onMounted(load)
 </script>
 
 <style scoped>
-.workspace{min-width:0}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:24px}.page-heading h1{margin:0 0 6px;font-size:26px}.page-heading p,.label,article span,article small{margin:0;color:#64748b}.actions{display:flex;gap:10px}.key-line{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 0;border-top:1px solid #dce5e2;border-bottom:1px solid #dce5e2}.key-line>div{display:grid;gap:8px}.key-line code{font-size:16px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;padding-top:24px}.metrics article{display:grid;gap:10px;min-width:0;padding:18px;border:1px solid #dce5e2;border-radius:6px;background:#fff}.metrics strong{font-size:20px;overflow-wrap:anywhere}.metrics small{min-height:34px}.secret-input{margin-top:18px}.secret-input :deep(input){font-family:monospace}@media(max-width:900px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:640px){.page-heading{flex-direction:column}.actions,.page-heading>.el-button{width:100%}.actions .el-button{flex:1}.metrics{grid-template-columns:1fr}}
+.workspace{min-width:0}.field-error{display:flex;align-items:center;gap:8px;padding:14px 16px;border:1px solid #f5c2c7;border-radius:6px;background:#fdf2f2;color:#b42318;font-size:14px}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:24px}.page-heading h1{margin:0 0 6px;font-size:26px}.page-heading p,.label,article span,article small{margin:0;color:#64748b}.actions{display:flex;gap:10px}.key-line{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 0;border-top:1px solid #dce5e2;border-bottom:1px solid #dce5e2}.key-line>div{display:grid;gap:8px}.key-line code{font-size:16px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;padding-top:24px}.metrics article{display:grid;gap:10px;min-width:0;padding:18px;border:1px solid #dce5e2;border-radius:6px;background:#fff}.metrics strong{font-size:20px;overflow-wrap:anywhere}.metrics small{min-height:34px}.secret-input{margin-top:18px}.secret-input :deep(input){font-family:monospace}@media(max-width:900px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:640px){.page-heading{flex-direction:column}.actions,.page-heading>.el-button{width:100%}.actions .el-button{flex:1}.metrics{grid-template-columns:1fr}}
 </style>

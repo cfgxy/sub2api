@@ -94,6 +94,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	authenticated.GET("/home", h.employeeHome)
 	authenticated.GET("/usage/me", h.employeeUsage)
 	authenticated.GET("/usage/me/details", h.employeeUsageDetails)
+	authenticated.GET("/usage/me/trend", h.employeeUsageTrend)
 	authenticated.GET("/profile", h.employeeProfile)
 
 	admin := authenticated.Group("/admin")
@@ -524,6 +525,15 @@ func (h *Handler) employeeHome(c *gin.Context) {
 	if response.ErrorFrom(c, err) {
 		return
 	}
+	pool, err := h.service.GetEnterprisePoolStatus(c.Request.Context(), claims.EnterpriseID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	recentSince := time.Now().AddDate(0, 0, -7)
+	trend, err := h.service.ListEmployeeUsageTrend(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID, EmployeeUsageQuery{StartAt: &recentSince})
+	if response.ErrorFrom(c, err) {
+		return
+	}
 	var key *enterprise.EmployeeKey
 	if h.keyRepository != nil {
 		key, err = h.keyRepository.GetEmployeeCurrentKey(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
@@ -531,7 +541,7 @@ func (h *Handler) employeeHome(c *gin.Context) {
 			return
 		}
 	}
-	response.Success(c, gin.H{"usage": usage, "key": key})
+	response.Success(c, gin.H{"usage": usage, "enterprise_pool": pool, "recent_trend": trend, "key": key})
 }
 
 func (h *Handler) employeeUsage(c *gin.Context) {
@@ -543,7 +553,11 @@ func (h *Handler) employeeUsage(c *gin.Context) {
 	if response.ErrorFrom(c, err) {
 		return
 	}
-	response.Success(c, usage)
+	pool, err := h.service.GetEnterprisePoolStatus(c.Request.Context(), claims.EnterpriseID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, gin.H{"usage": usage, "enterprise_pool": pool})
 }
 
 func (h *Handler) employeeUsageDetails(c *gin.Context) {
@@ -551,7 +565,56 @@ func (h *Handler) employeeUsageDetails(c *gin.Context) {
 	if !ok {
 		return
 	}
-	items, err := h.service.ListEmployeeUsage(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	startAt, ok := parseOptionalTime(c, "start_at")
+	if !ok {
+		return
+	}
+	endAt, ok := parseOptionalTime(c, "end_at")
+	if !ok {
+		return
+	}
+	if startAt != nil && endAt != nil && !startAt.Before(*endAt) {
+		response.BadRequest(c, "end_at must be after start_at")
+		return
+	}
+	page, ok := parsePositiveQuery(c, "page", workbenchDefaultPage)
+	if !ok {
+		return
+	}
+	pageSize, ok := parsePositiveQuery(c, "page_size", workbenchDefaultPageSize)
+	if !ok {
+		return
+	}
+	if pageSize > workbenchMaxPageSize {
+		pageSize = workbenchMaxPageSize
+	}
+	items, total, err := h.service.ListEmployeeUsage(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID,
+		EmployeeUsageQuery{StartAt: startAt, EndAt: endAt, Page: page, PageSize: pageSize})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Paginated(c, items, total, page, pageSize)
+}
+
+func (h *Handler) employeeUsageTrend(c *gin.Context) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	startAt, ok := parseOptionalTime(c, "start_at")
+	if !ok {
+		return
+	}
+	endAt, ok := parseOptionalTime(c, "end_at")
+	if !ok {
+		return
+	}
+	if startAt != nil && endAt != nil && !startAt.Before(*endAt) {
+		response.BadRequest(c, "end_at must be after start_at")
+		return
+	}
+	items, err := h.service.ListEmployeeUsageTrend(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID,
+		EmployeeUsageQuery{StartAt: startAt, EndAt: endAt})
 	if response.ErrorFrom(c, err) {
 		return
 	}

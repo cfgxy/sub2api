@@ -167,6 +167,27 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     wrapper.unmount()
   })
 
+  it('shows a distinct load-error state (not the empty state) when the key source is unavailable, and recovers on retry', async () => {
+    getCurrentKey.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce({
+      id: 20, masked_key: 'sk-rec...abcd', name: 'Enterprise employee key', status: 'active',
+      quota: 25, quota_used: 0, rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0,
+      usage_5h: 0, usage_1d: 0, usage_7d: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    })
+    vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
+    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="keys-load-error"]').exists()).toBe(true)
+    expect(wrapper.find('.el-empty').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="keys-load-retry"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="keys-load-error"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('sk-rec...abcd')
+    wrapper.unmount()
+  })
+
   it('reuses the same operation key after a failed create and blocks same-tick duplicate clicks', async () => {
     const key = {
       id: 16, masked_key: 'sk-ret...abcd', name: 'Enterprise employee key', status: 'active' as const,

@@ -68,6 +68,27 @@ export interface EnterpriseEmployeeUsageRecord {
   request_at: string
   window_anchor: string
   api_key_masked: string
+  generation: number
+  actual_cost: string
+}
+
+export interface EnterpriseEnterprisePoolStatus {
+  source_status: 'available' | 'unavailable'
+  pool_limit: string
+  pool_used: string
+  pool_remaining: string
+  pool_exhausted: boolean
+  window_anchor?: string
+}
+
+export interface EnterpriseEmployeeUsagePage {
+  usage: EnterpriseEmployeeUsageSummary
+  enterprise_pool: EnterpriseEnterprisePoolStatus
+}
+
+export interface EnterpriseEmployeeUsageTrendPoint {
+  at: string
+  requests: number
   actual_cost: string
 }
 
@@ -86,6 +107,8 @@ export interface EnterpriseAllocationSummary {
 
 export interface EnterpriseEmployeeHome {
   usage: EnterpriseEmployeeUsageSummary
+  enterprise_pool: EnterpriseEnterprisePoolStatus
+  recent_trend: EnterpriseEmployeeUsageTrendPoint[]
   key: EnterpriseEmployeeKey | null
 }
 

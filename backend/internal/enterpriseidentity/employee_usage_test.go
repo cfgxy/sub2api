@@ -32,6 +32,106 @@ func TestGetEmployeeUsageReturnsEmptyStateWhenAllocationIsNotConfigured(t *testi
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestListEmployeeUsageAppliesWindowFilterAndPagination(t *testing.T) {
+	svc, mock := newMockService(t)
+	start := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_usage_attributions AS attribution WHERE`).
+		WithArgs(int64(7), int64(22), start, end).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(37)))
+	mock.ExpectQuery(`SELECT attribution\.request_at, attribution\.window_anchor`).
+		WithArgs(int64(7), int64(22), start, end, 10, 10).
+		WillReturnRows(sqlmock.NewRows([]string{"request_at", "window_anchor", "api_key_masked", "generation", "actual_cost"}).
+			AddRow(start, start, "sk-ab...cd12", int64(2), "1.50000000"))
+
+	items, total, err := svc.ListEmployeeUsage(context.Background(), 7, 22, EmployeeUsageQuery{StartAt: &start, EndAt: &end, Page: 2, PageSize: 10})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(37), total)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(2), items[0].Generation)
+	require.Equal(t, "1.50000000", items[0].ActualCost)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListEmployeeUsageRejectsCrossEmployeeQueryByConstruction(t *testing.T) {
+	svc, mock := newMockService(t)
+	// 调用方只能传入服务端解析出的 enterpriseID/employeeID（来自认证上下文），
+	// 该测试确认这两个值原样落入 WHERE 子句参数，不接受调用方额外传入的越权标识。
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_usage_attributions AS attribution WHERE`).
+		WithArgs(int64(7), int64(22)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
+	mock.ExpectQuery(`SELECT attribution\.request_at, attribution\.window_anchor`).
+		WithArgs(int64(7), int64(22), 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"request_at", "window_anchor", "api_key_masked", "generation", "actual_cost"}))
+
+	items, total, err := svc.ListEmployeeUsage(context.Background(), 7, 22, EmployeeUsageQuery{})
+
+	require.NoError(t, err)
+	require.Zero(t, total)
+	require.Empty(t, items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetEnterprisePoolStatusReturnsUnavailableWithoutFabricatingNumbers(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(`FROM enterprises AS enterprise`).WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor"}).
+			AddRow("unavailable", "0", "0", "0", false, nil))
+
+	result, err := svc.GetEnterprisePoolStatus(context.Background(), 7)
+
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", result.SourceStatus)
+	require.Equal(t, "0", result.PoolLimit)
+	require.Nil(t, result.WindowAnchor)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetEnterprisePoolStatusReturnsAvailablePoolFigures(t *testing.T) {
+	svc, mock := newMockService(t)
+	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`FROM enterprises AS enterprise`).WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor"}).
+			AddRow("available", "550.00000000", "120.00000000", "430.00000000", false, anchor))
+
+	result, err := svc.GetEnterprisePoolStatus(context.Background(), 7)
+
+	require.NoError(t, err)
+	require.Equal(t, "available", result.SourceStatus)
+	require.Equal(t, "550.00000000", result.PoolLimit)
+	require.Equal(t, "430.00000000", result.PoolRemaining)
+	require.False(t, result.PoolExhausted)
+	require.NotNil(t, result.WindowAnchor)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListEmployeeUsageTrendReturnsRealAggregatesOnly(t *testing.T) {
+	svc, mock := newMockService(t)
+	day := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).WithArgs(int64(7), int64(22)).
+		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "actual_cost"}).AddRow(day, int64(4), "3.20000000"))
+
+	items, err := svc.ListEmployeeUsageTrend(context.Background(), 7, 22, EmployeeUsageQuery{})
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(4), items[0].Requests)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListEmployeeUsageTrendReturnsEmptyWhenNoAttributionRowsExistYet(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).WithArgs(int64(7), int64(22)).
+		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "actual_cost"}))
+
+	items, err := svc.ListEmployeeUsageTrend(context.Background(), 7, 22, EmployeeUsageQuery{})
+
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestGetEmployeeUsageHidesMissingEmployeeAsNotFound(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM enterprise_employees`).WithArgs(int64(7), int64(22)).
