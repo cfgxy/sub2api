@@ -122,7 +122,7 @@ async function load() {
 async function loadRecentCalls() {
   recentCallsState.value = 'loading'
   try {
-    const result = await enterpriseAPI.listEmployeeUsage({ page: 1, page_size: 5 })
+    const result = await enterpriseAPI.listEmployeeUsage({ page: 1, page_size: 5 }, { suppressUnavailableRedirect: true })
     recentCalls.value = result.items
     recentCallsState.value = 'ready'
   } catch {

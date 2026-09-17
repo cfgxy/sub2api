@@ -282,8 +282,8 @@ export const enterpriseAPI = {
   getCurrentKey: () => data<EnterpriseEmployeeKey | null>(enterpriseClient.get('/enterprise/keys/current')),
   getEmployeeHome: () => data<EnterpriseEmployeeHome>(enterpriseClient.get('/enterprise/home')),
   getEmployeeUsage: () => data<EnterpriseEmployeeUsagePage>(enterpriseClient.get('/enterprise/usage/me')),
-  listEmployeeUsage: (params?: { start_at?: string; end_at?: string; page?: number; page_size?: number }) =>
-    data<EnterprisePaginated<EnterpriseEmployeeUsageRecord>>(enterpriseClient.get('/enterprise/usage/me/details', { params })),
+  listEmployeeUsage: (params?: { start_at?: string; end_at?: string; page?: number; page_size?: number }, options?: { suppressUnavailableRedirect?: boolean }) =>
+    data<EnterprisePaginated<EnterpriseEmployeeUsageRecord>>(enterpriseClient.get('/enterprise/usage/me/details', { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
   getEmployeeUsageTrend: (params?: { start_at?: string; end_at?: string }) =>
     data<EnterpriseEmployeeUsageTrendPoint[]>(enterpriseClient.get('/enterprise/usage/me/trend', { params })),
   getEmployeeProfile: () => data<EnterpriseEmployee>(enterpriseClient.get('/enterprise/profile')),
