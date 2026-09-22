@@ -57,6 +57,7 @@ type Allocation struct {
 	Version            int64     `json:"version"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+	ActorRef           string    `json:"actor_ref,omitempty"`
 }
 
 type CreateAllocationParams struct {
@@ -411,6 +412,7 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 	allocation.Credit = credit
 	allocation.Amount = credit
 	actorRef := fmt.Sprintf("user:%d", params.RequesterUserID)
+	allocation.ActorRef = actorRef
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO enterprise_allocation_revisions (
 			enterprise_id, allocation_id, version, previous_amount, new_amount, reason, actor_ref
