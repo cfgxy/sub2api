@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,19 +15,23 @@ import (
 )
 
 type enterpriseAllocationStoreStub struct {
-	setParams    enterprise.SetAllocationParams
-	setErr       error
-	summaryErr   error
-	listQuery    enterprise.ListSubscriptionAllocationsQuery
-	listErr      error
-	calls        int
-	summaryCalls int
-	listCalls    int
+	setAllocation *enterprise.Allocation
+	setParams     enterprise.SetAllocationParams
+	setErr        error
+	summaryErr    error
+	listQuery     enterprise.ListSubscriptionAllocationsQuery
+	listErr       error
+	calls         int
+	summaryCalls  int
+	listCalls     int
 }
 
 func (s *enterpriseAllocationStoreStub) SetAllocation(_ context.Context, params enterprise.SetAllocationParams) (*enterprise.Allocation, error) {
 	s.calls++
 	s.setParams = params
+	if s.setAllocation != nil {
+		return s.setAllocation, s.setErr
+	}
 	return &enterprise.Allocation{ID: 1, Version: 1, Amount: params.Amount}, s.setErr
 }
 
@@ -116,6 +121,10 @@ func TestEnterpriseAllocationListReturnsAggregatedResult(t *testing.T) {
 }
 
 func serveEnterpriseAllocationSet(t *testing.T, store EnterpriseAllocationStore, authenticated bool, body string) int {
+	return serveEnterpriseAllocationSetWithResponse(t, store, authenticated, body).Code
+}
+
+func serveEnterpriseAllocationSetWithResponse(t *testing.T, store EnterpriseAllocationStore, authenticated bool, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -130,7 +139,27 @@ func serveEnterpriseAllocationSet(t *testing.T, store EnterpriseAllocationStore,
 	req := httptest.NewRequest(http.MethodPut, "/subscriptions/11/allocations/22", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, req)
-	return recorder.Code
+	return recorder
+}
+
+func TestEnterpriseAllocationSetResponseReturnsActorRef(t *testing.T) {
+	store := &enterpriseAllocationStoreStub{setAllocation: &enterprise.Allocation{
+		ID: 31, Version: 5, Credit: "10.00000000", ActorRef: "user:42",
+	}}
+	recorder := serveEnterpriseAllocationSetWithResponse(t, store, true,
+		`{"enterprise_id":9,"window_type":"week","window_anchor":"2026-09-08T10:00:00Z","credit":"10","reason":"change"}`)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var body struct {
+		Code int `json:"code"`
+		Data struct {
+			ActorRef string `json:"actor_ref"`
+			Version  int64  `json:"version"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, 0, body.Code)
+	require.Equal(t, "user:42", body.Data.ActorRef)
+	require.Equal(t, int64(5), body.Data.Version)
 }
 
 func serveEnterpriseAllocationSummary(t *testing.T, store EnterpriseAllocationStore, authenticated bool) int {
