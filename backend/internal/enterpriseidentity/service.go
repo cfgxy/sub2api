@@ -409,23 +409,34 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 	if upstreamStatus != "active" {
 		return nil, errDedicatedUserUnavailable
 	}
-	var subscriptionAvailable bool
+	// SHAN-322 baseline A: activating the enterprise subscription happens inside this
+	// same transaction. The active row mirrors the upstream native subscription —
+	// observed_weekly_window_start copies the upstream weekly_window_start and amounts
+	// stay in the upstream group, so no values are invented here. A soft-deleted or
+	// anchor-less subscription is rejected: enterprise_subscriptions requires a
+	// non-NULL observed anchor for active rows, and every downstream reader (pool
+	// status, employee key lifecycle, usage attribution) filters deleted_at IS NULL.
+	var upstreamSubscriptionID int64
+	var observedWindowStart time.Time
 	if err = tx.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM user_subscriptions AS subscription
-			JOIN groups AS group_record ON group_record.id = subscription.group_id
-			WHERE subscription.user_id = $1
-			  AND subscription.status = 'active'
-			  AND subscription.starts_at <= NOW()
-			  AND subscription.expires_at > NOW()
-			  AND group_record.status = 'active'
-			  AND COALESCE(group_record.weekly_limit_usd, 0) > 0
-		)
-	`, input.DedicatedUpstreamUser).Scan(&subscriptionAvailable); err != nil {
+		SELECT subscription.id, subscription.weekly_window_start
+		FROM user_subscriptions AS subscription
+		JOIN groups AS group_record ON group_record.id = subscription.group_id
+		WHERE subscription.user_id = $1
+		  AND subscription.status = 'active'
+		  AND subscription.starts_at <= NOW()
+		  AND subscription.expires_at > NOW()
+		  AND subscription.deleted_at IS NULL
+		  AND subscription.weekly_window_start IS NOT NULL
+		  AND group_record.status = 'active'
+		  AND COALESCE(group_record.weekly_limit_usd, 0) > 0
+		ORDER BY subscription.id
+		LIMIT 1
+	`, input.DedicatedUpstreamUser).Scan(&upstreamSubscriptionID, &observedWindowStart); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errSubscriptionUnavailable
+		}
 		return nil, err
-	}
-	if !subscriptionAvailable {
-		return nil, errSubscriptionUnavailable
 	}
 
 	result := new(PlatformEnterprise)
@@ -444,6 +455,28 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 		return nil, marshalErr
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref) VALUES ($1, 'enterprise.created', 'enterprise', $1, $2::jsonb, $3)`, result.ID, payload, actor); err != nil {
+		return nil, err
+	}
+
+	var enterpriseSubscriptionID int64
+	if err = tx.QueryRowContext(ctx, `
+		INSERT INTO enterprise_subscriptions (
+			enterprise_id, upstream_user_subscription_id, status,
+			observed_weekly_window_start, activated_at, actor_ref
+		) VALUES ($1, $2, 'active', $3, NOW(), $4)
+		RETURNING id
+	`, result.ID, upstreamSubscriptionID, observedWindowStart, actor).Scan(&enterpriseSubscriptionID); err != nil {
+		return nil, err
+	}
+	activationPayload, marshalErr := json.Marshal(map[string]any{
+		"result":                   "success",
+		"subscription_id":          enterpriseSubscriptionID,
+		"upstream_subscription_id": upstreamSubscriptionID,
+	})
+	if marshalErr != nil {
+		return nil, marshalErr
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref) VALUES ($1, 'subscription.activated', 'enterprise_subscription', $2, $3::jsonb, $4)`, result.ID, enterpriseSubscriptionID, activationPayload, actor); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {

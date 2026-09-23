@@ -1097,7 +1097,7 @@ func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(
 	employeeBefore := readEmployee()
 	sessionBefore := readSession()
 	svc := enterpriseidentity.NewService(db, &config.Config{}, nil, nil, nil)
-	err := svc.UpdateEmployee(ctx, requestEnterpriseID, targetEmployeeID, "disabled", nil)
+	err := svc.UpdateEmployee(ctx, requestEnterpriseID, targetEmployeeID, "disabled", nil, 1)
 	statusCode, body := infraerrors.ToHTTP(err)
 
 	require.Equal(t, http.StatusNotFound, statusCode)
@@ -1105,7 +1105,7 @@ func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(
 	require.Equal(t, employeeBefore, readEmployee())
 	require.Equal(t, sessionBefore, readSession())
 
-	require.NoError(t, svc.UpdateEmployee(ctx, targetEnterpriseID, targetEmployeeID, "disabled", nil))
+	require.NoError(t, svc.UpdateEmployee(ctx, targetEnterpriseID, targetEmployeeID, "disabled", nil, 1))
 	employeeAfter := readEmployee()
 	sessionAfter := readSession()
 	require.Equal(t, "disabled", employeeAfter.Status)

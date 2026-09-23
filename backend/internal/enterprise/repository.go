@@ -468,6 +468,9 @@ func (r *Repository) recordAllocationVersionConflictAudit(ctx context.Context, p
 	`, params.EnterpriseID, payload, actorRef)
 }
 
+// SHAN-322 audit: no production caller yet (tests only); live allocation writes
+// go through SetAllocation. Kept as the R1 wiring target for the
+// scheduled-subscription lifecycle (ADR-001 decision 3).
 func (r *Repository) CreateAllocation(ctx context.Context, params CreateAllocationParams) (*Allocation, error) {
 	params.ActorRef = strings.TrimSpace(params.ActorRef)
 	if params.ActorRef == "" {
@@ -524,6 +527,8 @@ func (r *Repository) CreateAllocation(ctx context.Context, params CreateAllocati
 	return allocation, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the actor-attributed allocation revision chain.
 func (r *Repository) ReviseAllocation(ctx context.Context, params ReviseAllocationParams) (*Allocation, error) {
 	params.ActorRef = strings.TrimSpace(params.ActorRef)
 	if params.ActorRef == "" {
@@ -893,6 +898,10 @@ func (r *Repository) ListSubscriptionAllocations(ctx context.Context, query List
 	return result, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the scheduled→active subscription replacement step of the weekly
+// window observation chain (ADR-001 decision 3); baseline A wires platform
+// creation only, real window observation stays out of scope this phase.
 func (r *Repository) ReplaceScheduledSubscription(
 	ctx context.Context,
 	params ReplaceScheduledSubscriptionParams,
@@ -980,6 +989,9 @@ func (r *Repository) ReplaceScheduledSubscription(
 	return replacement, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the weekly window observation/renewal step of the subscription
+// lifecycle chain; baseline A deliberately does not wire real window observation.
 func (r *Repository) ObserveWeeklyWindow(
 	ctx context.Context,
 	params ObserveWeeklyWindowParams,
@@ -1070,6 +1082,8 @@ func (r *Repository) ObserveWeeklyWindow(
 	return result, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the employee key self-service rebind flow.
 func (r *Repository) RebindKeyAssignment(
 	ctx context.Context,
 	params RebindKeyAssignmentParams,
@@ -1284,6 +1298,8 @@ func (r *Repository) RebindKeyAssignment(
 	return assignment, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the per-generation key revocation flow.
 func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGenerationParams) error {
 	params.ActorRef = strings.TrimSpace(params.ActorRef)
 	if params.ActorRef == "" {
@@ -1407,6 +1423,9 @@ func (r *Repository) RevokeKeyGeneration(ctx context.Context, params RevokeKeyGe
 	return nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the usage attribution aggregation/replay chain; live attribution
+// writes happen in the usage-log ingest path.
 func (r *Repository) CreateUsageAttributionSnapshot(
 	ctx context.Context,
 	params CreateUsageAttributionSnapshotParams,
@@ -1510,6 +1529,8 @@ func (r *Repository) CreateUsageAttributionSnapshot(
 	return attributions, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the usage attribution aggregation/replay chain.
 func (r *Repository) CreateUsageAttribution(
 	ctx context.Context,
 	params CreateUsageAttributionParams,
@@ -1645,6 +1666,8 @@ func (r *Repository) CreateUsageAttribution(
 	return attribution, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for attribution lookup and replay verification.
 func (r *Repository) GetUsageAttributionByUsageLogID(
 	ctx context.Context,
 	usageLogID int64,
@@ -1690,6 +1713,8 @@ func getUsageAttributionByUsageLogID(
 	return attribution, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the allocation revision history view.
 func (r *Repository) ListAllocationRevisions(
 	ctx context.Context,
 	allocationID int64,
@@ -1733,6 +1758,9 @@ func (r *Repository) ListAllocationRevisions(
 	return revisions, nil
 }
 
+// SHAN-322 audit: no production caller yet (tests only). Kept as the R1 wiring
+// target for the admin audit view; the write path into enterprise_audit_events
+// is live.
 func (r *Repository) ListAuditEvents(
 	ctx context.Context,
 	enterpriseID int64,
