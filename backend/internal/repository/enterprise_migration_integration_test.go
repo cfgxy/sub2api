@@ -1027,7 +1027,9 @@ func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {
 func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
-	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+	// SHAN-322: migrate through 244 — SHAN-242's optimistic-lock SQL reads
+	// enterprise_employees.version, which only exists from migration 244.
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "244_enterprise_employee_optimistic_lock.sql")))
 
 	createEnterprise := func(email, host string) int64 {
 		var userID, enterpriseID int64
