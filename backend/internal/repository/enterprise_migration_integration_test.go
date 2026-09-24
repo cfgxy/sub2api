@@ -1027,7 +1027,9 @@ func TestEnterprise237UsesUserFingerprintAndRejectsRefreshReplay(t *testing.T) {
 func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
-	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "237_enterprise_identity.sql")))
+	// SHAN-322: migrate through 244 — SHAN-242's optimistic-lock SQL reads
+	// enterprise_employees.version, which only exists from migration 244.
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "244_enterprise_employee_optimistic_lock.sql")))
 
 	createEnterprise := func(email, host string) int64 {
 		var userID, enterpriseID int64
@@ -1097,7 +1099,7 @@ func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(
 	employeeBefore := readEmployee()
 	sessionBefore := readSession()
 	svc := enterpriseidentity.NewService(db, &config.Config{}, nil, nil, nil)
-	err := svc.UpdateEmployee(ctx, requestEnterpriseID, targetEmployeeID, "disabled", nil)
+	err := svc.UpdateEmployee(ctx, requestEnterpriseID, targetEmployeeID, "disabled", nil, 1)
 	statusCode, body := infraerrors.ToHTTP(err)
 
 	require.Equal(t, http.StatusNotFound, statusCode)
@@ -1105,7 +1107,7 @@ func TestEnterprise237UpdateEmployeeRejectsCrossEnterpriseTargetWithoutMutation(
 	require.Equal(t, employeeBefore, readEmployee())
 	require.Equal(t, sessionBefore, readSession())
 
-	require.NoError(t, svc.UpdateEmployee(ctx, targetEnterpriseID, targetEmployeeID, "disabled", nil))
+	require.NoError(t, svc.UpdateEmployee(ctx, targetEnterpriseID, targetEmployeeID, "disabled", nil, 1))
 	employeeAfter := readEmployee()
 	sessionAfter := readSession()
 	require.Equal(t, "disabled", employeeAfter.Status)

@@ -755,7 +755,7 @@ func TestEnterpriseEmployeeStatusChangeRevokesCurrentKey(t *testing.T) {
 			name:           "disable",
 			expectedStatus: "disabled",
 			apply: func(svc *enterpriseidentity.Service, ctx context.Context, fixture enterpriseFixture) error {
-				return svc.UpdateEmployee(ctx, fixture.enterpriseID, fixture.employeeID, "disabled", nil)
+				return svc.UpdateEmployee(ctx, fixture.enterpriseID, fixture.employeeID, "disabled", nil, 1)
 			},
 		},
 		{

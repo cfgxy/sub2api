@@ -448,6 +448,10 @@ func createEnterpriseUsageAttributions(ctx context.Context, sqlq sqlExecutor, lo
 		return nil
 	}
 	snapshot := log.EnterpriseAttribution
+	// PG timestamptz 只保留微秒（写入按微秒四舍五入）。快照 RequestAt 可能携带运行时钟
+	// 的纳秒位，落库读回后与内存值 Equal 恒不等，整笔用量会被回滚丢弃。本函数是归因行
+	// 唯一的写入+校验收口，在此把 RequestAt 收敛到存储精度，保证写入与比对基准同源。
+	snapshot.RequestAt = snapshot.RequestAt.UTC().Truncate(time.Microsecond)
 	windows := []struct {
 		windowType string
 		anchor     *time.Time
