@@ -246,7 +246,7 @@ func newEnterpriseJWTAllocationRouteTestRouter(t *testing.T, store handler.Enter
 	router := gin.New()
 	RegisterUserRoutes(router.Group("/api/v1"), &handler.Handlers{
 		Enterprise:           identityHandler,
-		EnterpriseAllocation: handler.NewEnterpriseAllocationHandlerWithStore(store),
+		EnterpriseAllocation: handler.NewEnterpriseAllocationHandler(store),
 	}, jwtAuth, auditLog, nil, &middleware.PanelRateLimiter{})
 
 	if claims.PrincipalType == "" {
@@ -303,7 +303,7 @@ func newEnterpriseAllocationRouteTestRouter(store handler.EnterpriseAllocationSt
 		c.Next()
 	})
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
-	RegisterEnterpriseAllocationRoutes(authenticated, handler.NewEnterpriseAllocationHandlerWithStore(store))
+	RegisterEnterpriseAllocationRoutes(authenticated, handler.NewEnterpriseAllocationHandler(store))
 	return router
 }
 

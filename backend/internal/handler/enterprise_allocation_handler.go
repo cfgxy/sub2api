@@ -24,11 +24,7 @@ type EnterpriseAllocationHandler struct {
 	store EnterpriseAllocationStore
 }
 
-func NewEnterpriseAllocationHandler(store *enterprise.Repository) *EnterpriseAllocationHandler {
-	return &EnterpriseAllocationHandler{store: store}
-}
-
-func NewEnterpriseAllocationHandlerWithStore(store EnterpriseAllocationStore) *EnterpriseAllocationHandler {
+func NewEnterpriseAllocationHandler(store EnterpriseAllocationStore) *EnterpriseAllocationHandler {
 	return &EnterpriseAllocationHandler{store: store}
 }
 
