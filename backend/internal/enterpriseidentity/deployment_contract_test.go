@@ -38,18 +38,23 @@ func TestEnterpriseDeploymentSecretContract(t *testing.T) {
 
 	composePath := filepath.Join(repoRoot, "deploy", "docker-compose.shan-152.yml")
 	t.Run("all required secrets resolve", func(t *testing.T) {
-		output, err := runComposeConfig(composePath, "SHAN152_JWT_SECRET", "SHAN152_TOTP_ENCRYPTION_KEY")
+		output, err := runComposeConfig(composePath, "SHAN152_JWT_SECRET", "SHAN152_TOTP_ENCRYPTION_KEY", "SHAN152_REDIS_PASSWORD")
 		require.NoError(t, err, string(output))
 	})
 	t.Run("missing JWT secret fails closed", func(t *testing.T) {
-		output, err := runComposeConfig(composePath, "SHAN152_TOTP_ENCRYPTION_KEY")
+		output, err := runComposeConfig(composePath, "SHAN152_TOTP_ENCRYPTION_KEY", "SHAN152_REDIS_PASSWORD")
 		require.Error(t, err)
 		require.Contains(t, string(output), "SHAN152_JWT_SECRET is required")
 	})
 	t.Run("missing encryption key fails closed", func(t *testing.T) {
-		output, err := runComposeConfig(composePath, "SHAN152_JWT_SECRET")
+		output, err := runComposeConfig(composePath, "SHAN152_JWT_SECRET", "SHAN152_REDIS_PASSWORD")
 		require.Error(t, err)
 		require.Contains(t, string(output), "SHAN152_TOTP_ENCRYPTION_KEY is required")
+	})
+	t.Run("missing redis password fails closed", func(t *testing.T) {
+		output, err := runComposeConfig(composePath, "SHAN152_JWT_SECRET", "SHAN152_TOTP_ENCRYPTION_KEY")
+		require.Error(t, err)
+		require.Contains(t, string(output), "SHAN152_REDIS_PASSWORD is required")
 	})
 
 	documentation, err := os.ReadFile(filepath.Join(repoRoot, "deploy", "SHAN-152-SECURITY.md"))
@@ -74,6 +79,7 @@ func runComposeConfig(composePath string, presentSecrets ...string) ([]byte, err
 		"SHAN152_JWT_SECRET":          {},
 		"SHAN152_POSTGRES_PASSWORD":   {},
 		"SHAN152_TOTP_ENCRYPTION_KEY": {},
+		"SHAN152_REDIS_PASSWORD":      {},
 	}
 	environment := make([]string, 0, len(os.Environ())+4)
 	for _, entry := range os.Environ() {

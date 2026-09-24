@@ -2,6 +2,8 @@
 
 企业积分分配接口用于按 Sub2API 原生订阅窗口配置员工积分目标并查询实际使用量。该能力仅用于管理与报表，不改变原生订阅限额执行，不修改 group，不预留或预扣积分，也不阻断员工请求。
 
+> 契约权威：本文档是分配域接口的实现说明；窗口与分配契约的权威定义见规划仓 `cfgxy/sub2api-enterprise` 的 `docs/adr/001-enterprise-subscription-pool.md`（ADR-001），两者不一致时以 ADR-001 为准。
+
 ## 窗口契约
 
 `window_type` 仅接受以下值：
