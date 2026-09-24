@@ -229,7 +229,7 @@ export default {
       email: '邮箱',
       password: '密码',
       confirmPassword: '确认密码',
-      passwordPlaceholder: '至少 8 个字符',
+      passwordPlaceholder: '至少 12 个字符',
       confirmPasswordPlaceholder: '确认密码',
       passwordMismatch: '密码不匹配'
     },

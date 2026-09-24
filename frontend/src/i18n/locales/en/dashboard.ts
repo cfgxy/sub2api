@@ -785,11 +785,11 @@ export default {
     currentPassword: 'Current Password',
     newPassword: 'New Password',
     confirmNewPassword: 'Confirm New Password',
-    passwordHint: 'Password must be at least 8 characters long',
+    passwordHint: 'Password must be at least 12 characters long',
     changingPassword: 'Changing...',
     changePasswordButton: 'Change Password',
     passwordsNotMatch: 'New passwords do not match',
-    passwordTooShort: 'Password must be at least 8 characters long',
+    passwordTooShort: 'Password must be at least 12 characters long',
     passwordChangeSuccess: 'Password changed successfully',
     passwordChangeFailed: 'Failed to change password',
     // TOTP 2FA

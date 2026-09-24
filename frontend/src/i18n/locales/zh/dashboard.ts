@@ -789,11 +789,11 @@ export default {
     currentPassword: '当前密码',
     newPassword: '新密码',
     confirmNewPassword: '确认新密码',
-    passwordHint: '密码至少需要 8 个字符',
+    passwordHint: '密码至少需要 12 个字符',
     changingPassword: '修改中...',
     changePasswordButton: '修改密码',
     passwordsNotMatch: '两次输入的密码不一致',
-    passwordTooShort: '密码至少需要 8 个字符',
+    passwordTooShort: '密码至少需要 12 个字符',
     passwordChangeSuccess: '密码修改成功',
     passwordChangeFailed: '密码修改失败',
     // TOTP 2FA
