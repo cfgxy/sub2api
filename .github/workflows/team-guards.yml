@@ -1,0 +1,27 @@
+name: Team guards
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: false
+      - name: Team files guard
+        run: |
+          BASE="${{ github.base_ref }}"
+          if [ -z "$BASE" ]; then BASE=ab99d56e9626e6cd731592dae8553c9758a0efa2; fi
+          bash backend/scripts/check-team-files.sh "$BASE"
+      - name: Deadcode and U1000 guards
+        run: bash backend/scripts/check-deadcode.sh
+      - name: Env key closure guard
+        run: sh deploy/tests/env-key-closure-test.sh

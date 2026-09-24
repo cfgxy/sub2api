@@ -1,0 +1,76 @@
+# SHAN-356 env 键闭环守卫基线：现状偏差登记（新偏差将被 deploy/tests/env-key-closure-test.sh 拦截）
+# 格式: <类别> <键名>
+# required-missing: compose 必填插值(:?)但样例未列 —— 全部来自上游 docker-compose.standalone.yml
+#   (外部数据库/Redis 部署形态, 用户必须自备连接信息), 上游原产不处置。
+# sample-extra: 样例有而 compose 不插值 —— 后端 viper 直读键(LOG_*/DASHBOARD_* 等)与
+#   apple-container 辅助脚本键, 样例作为后端配置参考属有意设计。
+# compose-extra: compose 插值而样例未列 —— 上游支付/批量图像/OAuth 密钥与开发代理键,
+#   样例有意不展示。
+required-missing DATABASE_HOST
+required-missing DATABASE_PASSWORD
+required-missing REDIS_HOST
+sample-extra APPLE_CONTAINER_POSTGRES_IMAGE
+sample-extra APPLE_CONTAINER_REDIS_IMAGE
+sample-extra APPLE_CONTAINER_SUB2API_IMAGE
+sample-extra DASHBOARD_AGGREGATION_BACKFILL_ENABLED
+sample-extra DASHBOARD_AGGREGATION_BACKFILL_MAX_DAYS
+sample-extra DASHBOARD_AGGREGATION_ENABLED
+sample-extra DASHBOARD_AGGREGATION_INTERVAL_SECONDS
+sample-extra DASHBOARD_AGGREGATION_LOOKBACK_SECONDS
+sample-extra DASHBOARD_AGGREGATION_RECOMPUTE_DAYS
+sample-extra DASHBOARD_AGGREGATION_RETENTION_DAILY_DAYS
+sample-extra DASHBOARD_AGGREGATION_RETENTION_HOURLY_DAYS
+sample-extra DASHBOARD_AGGREGATION_RETENTION_USAGE_LOGS_DAYS
+sample-extra JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+sample-extra LOG_CALLER
+sample-extra LOG_ENV
+sample-extra LOG_FORMAT
+sample-extra LOG_LEVEL
+sample-extra LOG_OUTPUT_FILE_PATH
+sample-extra LOG_OUTPUT_TO_FILE
+sample-extra LOG_OUTPUT_TO_STDOUT
+sample-extra LOG_ROTATION_COMPRESS
+sample-extra LOG_ROTATION_LOCAL_TIME
+sample-extra LOG_ROTATION_MAX_AGE_DAYS
+sample-extra LOG_ROTATION_MAX_BACKUPS
+sample-extra LOG_ROTATION_MAX_SIZE_MB
+sample-extra LOG_SAMPLING_ENABLED
+sample-extra LOG_SAMPLING_INITIAL
+sample-extra LOG_SAMPLING_THEREAFTER
+sample-extra LOG_SERVICE_NAME
+sample-extra LOG_STACKTRACE_LEVEL
+sample-extra OPS_ENABLED
+sample-extra RATE_LIMIT_OVERLOAD_COOLDOWN_MINUTES
+sample-extra REDIS_MAXCLIENTS
+sample-extra SERVER_H2C_ENABLED
+sample-extra SERVER_H2C_IDLE_TIMEOUT
+sample-extra SERVER_H2C_MAX_CONCURRENT_STREAMS
+sample-extra SERVER_H2C_MAX_READ_FRAME_SIZE
+sample-extra SERVER_H2C_MAX_UPLOAD_BUFFER_PER_CONNECTION
+sample-extra SERVER_H2C_MAX_UPLOAD_BUFFER_PER_STREAM
+sample-extra SERVER_MAX_REQUEST_BODY_SIZE
+compose-extra ALIPAY_MOBILE_PRECREATE_DEEP_LINK
+compose-extra ANTIGRAVITY_OAUTH_CLIENT_SECRET
+compose-extra ANTIGRAVITY_USER_AGENT_VERSION
+compose-extra BATCH_IMAGE_ENABLED
+compose-extra BATCH_IMAGE_QUEUE_ENABLED
+compose-extra BATCH_IMAGE_VERTEX_ENABLED
+compose-extra BATCH_IMAGE_VERTEX_INPUT_RETENTION_HOURS
+compose-extra BATCH_IMAGE_VERTEX_LOCATION
+compose-extra BATCH_IMAGE_VERTEX_MANAGED_GCS_BUCKET
+compose-extra BATCH_IMAGE_VERTEX_MANAGED_GCS_PREFIX
+compose-extra BATCH_IMAGE_VERTEX_OUTPUT_RETENTION_HOURS
+compose-extra BATCH_IMAGE_VERTEX_PROJECT_ID
+compose-extra DATABASE_DBNAME
+compose-extra DATABASE_HOST
+compose-extra DATABASE_PASSWORD
+compose-extra DATABASE_SSLMODE
+compose-extra DATABASE_USER
+compose-extra GEMINI_CLI_OAUTH_CLIENT_SECRET
+compose-extra NPM_CONFIG_REGISTRY
+compose-extra REDIS_HOST
+compose-extra SECURITY_URL_ALLOWLIST_UPSTREAM_HOSTS
+compose-extra SUB2API_DEV_ALL_PROXY
+compose-extra SUB2API_DEV_HTTP_PROXY
+compose-extra SUB2API_DEV_HTTPS_PROXY
+compose-extra SUB2API_DEV_NO_PROXY
