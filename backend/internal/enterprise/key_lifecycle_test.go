@@ -24,12 +24,6 @@ func TestEmployeeKeyRequestHashBindsOperationAndExpectedKey(t *testing.T) {
 	require.NotEqual(t, base, EmployeeKeyRequestHash("rotate", 43))
 }
 
-func TestNullableJSONParameterPreservesNullableIPRestrictions(t *testing.T) {
-	require.Nil(t, nullableJSONParameter(nil))
-	require.Nil(t, nullableJSONParameter([]byte{}))
-	require.Equal(t, `["198.51.100.0/24"]`, nullableJSONParameter([]byte(`["198.51.100.0/24"]`)))
-}
-
 func TestNormalizeEmployeeKeyPresentationUsesGatewayExpiryAndWindowRules(t *testing.T) {
 	now := time.Date(2026, time.September, 12, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(-time.Second)

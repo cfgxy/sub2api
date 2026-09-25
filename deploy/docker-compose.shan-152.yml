@@ -17,7 +17,7 @@ services:
       AUTO_SETUP: "true"
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 8080
-      SERVER_MODE: debug
+      SERVER_MODE: ${SHAN152_SERVER_MODE:-debug}
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_USER: ${SHAN152_POSTGRES_USER:-sub2api}
@@ -26,7 +26,7 @@ services:
       DATABASE_SSLMODE: disable
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${SHAN152_REDIS_PASSWORD:-shan152-local-only}
+      REDIS_PASSWORD: ${SHAN152_REDIS_PASSWORD:?SHAN152_REDIS_PASSWORD is required}
       JWT_SECRET: ${SHAN152_JWT_SECRET:?SHAN152_JWT_SECRET is required}
       TOTP_ENCRYPTION_KEY: ${SHAN152_TOTP_ENCRYPTION_KEY:?SHAN152_TOTP_ENCRYPTION_KEY is required}
       ADMIN_EMAIL: ${SHAN152_ADMIN_EMAIL:-admin@shan-152.local}
@@ -66,14 +66,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+      start_period: 5s
 
   redis:
     image: redis:8-alpine
     container_name: shan-152-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${SHAN152_REDIS_PASSWORD:-shan152-local-only}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${SHAN152_REDIS_PASSWORD:?SHAN152_REDIS_PASSWORD is required}"]
     environment:
-      REDISCLI_AUTH: ${SHAN152_REDIS_PASSWORD:-shan152-local-only}
+      REDISCLI_AUTH: ${SHAN152_REDIS_PASSWORD:?SHAN152_REDIS_PASSWORD is required}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - shan-152-redis:/data
@@ -84,6 +85,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+      start_period: 5s
 
 networks:
   shan-152:

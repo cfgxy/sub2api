@@ -84,8 +84,6 @@ type EnterpriseKeySummary struct {
 type employeeKeyRow struct {
 	EmployeeKey
 	Plaintext       string
-	IPWhitelistJSON []byte
-	IPBlacklistJSON []byte
 	SubscriptionID  int64
 	UpstreamGroupID int64
 	Generation      int64
@@ -392,7 +390,6 @@ const employeeKeySelect = `
 	       api_key.rate_limit_5h, api_key.rate_limit_1d, api_key.rate_limit_7d,
 	       api_key.usage_5h, api_key.usage_1d, api_key.usage_7d,
 	       api_key.window_5h_start, api_key.window_1d_start, api_key.window_7d_start,
-	       api_key.ip_whitelist, api_key.ip_blacklist,
 	       api_key.created_at, api_key.updated_at,
 	       assignment.upstream_user_subscription_id, assignment.upstream_group_id, assignment.generation, assignment.id
 	FROM enterprise_key_assignments AS assignment
@@ -446,7 +443,7 @@ func scanEmployeeKey(row *sql.Row) (employeeKeyRow, error) {
 		&result.Quota, &result.QuotaUsed, &groupID, &expiresAt,
 		&result.RateLimit5h, &result.RateLimit1d, &result.RateLimit7d,
 		&result.Usage5h, &result.Usage1d, &result.Usage7d,
-		&window5h, &window1d, &window7d, &result.IPWhitelistJSON, &result.IPBlacklistJSON,
+		&window5h, &window1d, &window7d,
 		&result.CreatedAt, &result.UpdatedAt, &result.SubscriptionID, &result.UpstreamGroupID, &result.Generation, &result.AssignmentID)
 	if err != nil {
 		return result, err
@@ -626,13 +623,6 @@ func insertSuccessorEmployeeKey(ctx context.Context, tx *sql.Tx, params Employee
 	return loadEmployeeKeyByID(ctx, tx, params.EnterpriseID, params.EmployeeID, keyID)
 }
 
-func nullableJSONParameter(value []byte) any {
-	if len(value) == 0 {
-		return nil
-	}
-	return string(value)
-}
-
 func writeEmployeeKeyAudit(ctx context.Context, tx *sql.Tx, params EmployeeKeyMutationParams, operation string, previous, result employeeKeyRow) error {
 	payload := map[string]any{
 		"employee_id": params.EmployeeID, "api_key_id": result.ID, "masked_key": result.MaskedKey,
@@ -654,12 +644,4 @@ func writeEmployeeKeyAudit(ctx context.Context, tx *sql.Tx, params EmployeeKeyMu
 		VALUES ($1, $2, 'api_key', $3, $4::jsonb, $5)`,
 		params.EnterpriseID, "key.employee_"+operation, result.ID, raw, params.ActorRef)
 	return err
-}
-
-func addDuration(start *time.Time, duration time.Duration) *time.Time {
-	if start == nil {
-		return nil
-	}
-	result := start.Add(duration)
-	return &result
 }
