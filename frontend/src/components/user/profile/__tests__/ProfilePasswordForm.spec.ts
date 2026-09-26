@@ -32,11 +32,11 @@ vi.mock('vue-i18n', async (importOriginal) => {
           'profile.currentPassword': 'Current Password',
           'profile.newPassword': 'New Password',
           'profile.confirmNewPassword': 'Confirm New Password',
-          'profile.passwordHint': 'Password must be at least 12 characters long',
+          'profile.passwordHint': 'Password must be at least 8 characters long',
           'profile.changingPassword': 'Changing...',
           'profile.changePasswordButton': 'Change Password',
           'profile.passwordsNotMatch': 'New passwords do not match',
-          'profile.passwordTooShort': 'Password must be at least 12 characters long',
+          'profile.passwordTooShort': 'Password must be at least 8 characters long',
           'profile.passwordChangeSuccess': 'Password changed successfully',
           'profile.passwordChangeFailed': 'Failed to change password'
         }
@@ -60,8 +60,8 @@ describe('ProfilePasswordForm', () => {
     expect(wrapper.find('.input-error-text').exists()).toBe(false)
   })
 
-  it('rejects a password shorter than 12 characters before calling the API', async () => {
-    const shortPassword = 'Ab1' + 'c'.repeat(8) // 11 位
+  it('rejects a password shorter than 8 characters before calling the API', async () => {
+    const shortPassword = 'Ab1cdef' // 7 位：下界拒绝，无组成复杂度要求
     const wrapper = mount(ProfilePasswordForm)
 
     await wrapper.get('#old_password').setValue('old-password')
@@ -70,7 +70,7 @@ describe('ProfilePasswordForm', () => {
     await wrapper.get('form').trigger('submit.prevent')
 
     expect(changePasswordMock).not.toHaveBeenCalled()
-    expect(showErrorMock).toHaveBeenCalledWith('Password must be at least 12 characters long')
+    expect(showErrorMock).toHaveBeenCalledWith('Password must be at least 8 characters long')
   })
 
   it.each([

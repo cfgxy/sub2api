@@ -127,8 +127,7 @@ const isPasswordPolicySatisfied = computed(() => passwordValidationMessage.value
 
 const passwordValidationMessage = computed(() => {
   if (!isPasswordFormFillable.value) return ''
-  if (form.new_password.length < 12) return '新密码至少需要 12 个字符'
-  if (!/[a-zA-Z]/.test(form.new_password) || !/[0-9]/.test(form.new_password)) return '新密码需同时包含字母和数字'
+  if (form.new_password.length < 8) return '新密码至少需要 8 个字符'
   if (form.new_password !== form.confirm_password) return '两次输入的新密码不一致'
   return ''
 })

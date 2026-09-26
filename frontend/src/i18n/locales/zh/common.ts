@@ -240,11 +240,11 @@ export default {
     passwordLabel: '密码',
     passwordPlaceholder: '请输入密码',
     createPasswordPlaceholder: '创建一个安全的密码',
-    passwordHint: '至少 6 个字符',
+    passwordHint: '至少 8 个字符',
     emailRequired: '请输入邮箱',
     invalidEmail: '请输入有效的邮箱地址',
     passwordRequired: '请输入密码',
-    passwordMinLength: '密码至少需要 6 个字符',
+    passwordMinLength: '密码至少需要 8 个字符',
     loginFailed: '登录失败，请检查您的凭据后重试。',
     errors: {
       USER_NOT_ACTIVE: '账号已被禁用',

@@ -4,7 +4,7 @@ const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const MAX_BACKGROUND_BYTES = 5 * 1024 * 1024
 
 export function validatePassword(value: string): string {
-  return value.length >= 12 ? '' : '密码至少需要 12 个字符'
+  return value.length >= 8 ? '' : '密码至少需要 8 个字符'
 }
 
 export function validateDepartmentName(value: string): string {

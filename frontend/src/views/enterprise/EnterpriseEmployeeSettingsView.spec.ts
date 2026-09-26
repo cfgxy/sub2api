@@ -71,11 +71,12 @@ describe('EnterpriseEmployeeSettingsView', () => {
     await wrapper.get('[data-testid="current-password"]').setValue('old-password-1')
     await wrapper.get('[data-testid="new-password"]').setValue('short1')
     await wrapper.get('[data-testid="confirm-password"]').setValue('short1')
-    expect(wrapper.get('[data-testid="password-validation-error"]').text()).toContain('至少需要 12 个字符')
+    expect(wrapper.get('[data-testid="password-validation-error"]').text()).toContain('至少需要 8 个字符')
 
+    // 无组成复杂度要求：纯字母 18 位直接满足策略
     await wrapper.get('[data-testid="new-password"]').setValue('longenoughpassword')
     await wrapper.get('[data-testid="confirm-password"]').setValue('longenoughpassword')
-    expect(wrapper.get('[data-testid="password-validation-error"]').text()).toContain('字母和数字')
+    expect(wrapper.get('[data-testid="password-policy-ok"]').exists()).toBe(true)
 
     await wrapper.get('[data-testid="new-password"]').setValue('longenough12345')
     await wrapper.get('[data-testid="confirm-password"]').setValue('mismatch12345')
