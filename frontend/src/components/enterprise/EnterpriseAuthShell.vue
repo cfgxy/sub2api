@@ -11,7 +11,10 @@
       <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ brand.slogan }}</p>
     </template>
     <slot />
-    <template #footer>仅限授权企业成员访问</template>
+    <template #footer>
+      <slot name="footer" />
+      <p class="mt-2">仅限授权企业成员访问</p>
+    </template>
   </AuthLayout>
   <main v-else class="enterprise-auth">
     <header class="topbar"><div class="wordmark"><span class="mark">S</span><div><strong>{{ brand.enterprise_name }}</strong><small>企业 API 访问与用量管理</small></div></div><span class="topbar-note">{{ brand.slogan }}</span></header>

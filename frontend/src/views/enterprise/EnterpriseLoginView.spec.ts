@@ -59,6 +59,8 @@ describe('EnterpriseLoginView', () => {
     expect(layoutSource).toContain('max-width:440px')
     expect(layoutSource).toContain('@media(max-width:480px)')
     expect(layoutSource).toContain('dark:bg-dark-950')
+    expect(layoutSource).toContain('.auth-layout-enterprise .auth-brand h1{@apply text-gray-900 dark:text-gray-100')
+    expect(layoutSource).toContain('.auth-layout-enterprise .auth-brand p{@apply text-gray-500 dark:text-dark-400')
     expect(viewSource).toContain('dark:text-gray-100')
     expect(viewSource).toContain('dark:text-dark-400')
     expect(viewSource).not.toMatch(/#409eff|#2563eb/i)
