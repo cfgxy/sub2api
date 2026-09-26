@@ -714,6 +714,7 @@ var auditPayloadFieldWhitelist = map[string]struct{}{
 	"expected_version":            {}, "current_version": {}, "actual_version": {}, "version": {}, "credit": {},
 	"name": {}, "status": {}, "affected_employees": {},
 	"initial": {}, "keys_disabled": {}, "fields": {},
+	"previous_portal_host": {}, "portal_host": {},
 	"content_type": {}, "size_bytes": {},
 	"quota": {}, "quota_used": {},
 	"rate_limit_5h": {}, "rate_limit_1d": {}, "rate_limit_7d": {},

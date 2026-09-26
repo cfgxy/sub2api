@@ -30,4 +30,6 @@ export const enterprisePlatformAPI = {
   get: (id: number) => apiClient.get<PlatformEnterprise>(`/admin/enterprises/${id}`).then((response) => response.data),
   create: (input: { name: string; portal_host: string; dedicated_upstream_user_id: number; reason: string }) => apiClient.post<PlatformEnterprise>('/admin/enterprises', input).then((response) => response.data),
   disable: (id: number, reason: string) => apiClient.post<{ success: boolean }>(`/admin/enterprises/${id}/disable`, { reason }).then((response) => response.data),
+  enable: (id: number, reason: string) => apiClient.post<{ success: boolean }>(`/admin/enterprises/${id}/enable`, { reason }).then((response) => response.data),
+  updateHost: (id: number, portal_host: string, reason: string) => apiClient.put<{ success: boolean }>(`/admin/enterprises/${id}/portal-host`, { portal_host, reason }).then((response) => response.data),
 }
