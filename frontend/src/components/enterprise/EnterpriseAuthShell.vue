@@ -1,5 +1,19 @@
 <template>
-  <main class="enterprise-auth">
+  <AuthLayout v-if="authLayout" enterprise>
+    <template #background>
+      <div class="enterprise-auth-background" :style="backgroundStyle" aria-hidden="true" />
+    </template>
+    <template #brand>
+      <div class="mx-auto flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800">
+        <img src="/logo.svg" alt="" class="h-full w-full object-contain" />
+      </div>
+      <h1 class="mt-3 text-2xl font-bold text-gray-900 dark:text-gray-100">{{ brand.enterprise_name }}</h1>
+      <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ brand.slogan }}</p>
+    </template>
+    <slot />
+    <template #footer>仅限授权企业成员访问</template>
+  </AuthLayout>
+  <main v-else class="enterprise-auth">
     <header class="topbar"><div class="wordmark"><span class="mark">S</span><div><strong>{{ brand.enterprise_name }}</strong><small>企业 API 访问与用量管理</small></div></div><span class="topbar-note">{{ brand.slogan }}</span></header>
     <div class="auth-background" :style="backgroundStyle" aria-hidden="true" />
     <div class="stage">
@@ -15,7 +29,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { enterpriseAPI } from '@/api/enterprise'
+import AuthLayout from '@/components/layout/AuthLayout.vue'
 import type { EnterpriseBrand } from '@/types/enterprise'
+
+defineProps<{ authLayout?: boolean }>()
 
 const defaultBrand: EnterpriseBrand = {
   enterprise_name: 'Sub2API',
@@ -75,5 +92,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.enterprise-auth-background{@apply pointer-events-none absolute inset-0 bg-cover bg-center opacity-10}
 .enterprise-auth{position:relative;min-height:100vh;background:#f0f2f5;color:#172033;isolation:isolate}.auth-background{position:absolute;inset:64px 0 0;z-index:-1;background-position:center;background-size:cover;opacity:.16}.topbar{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;height:64px;padding:0 max(20px,calc((100vw - 1328px)/2));background:#fff;border-bottom:1px solid #dfe3ea}.wordmark{display:flex;align-items:center;gap:10px;font-size:17px}.wordmark strong,.wordmark small{display:block}.wordmark strong{font-weight:750}.wordmark small{margin-top:2px;color:#667085;font-size:11px}.mark{display:grid;width:28px;height:28px;place-items:center;border-radius:7px;background:#2563eb;color:#fff;font-size:14px;font-weight:800}.topbar-note{color:#667085;font-size:12px}.stage{position:relative;z-index:1;display:grid;place-items:center;min-height:calc(100vh - 64px - 52px);padding:48px 24px}.auth-card{position:relative;width:440px;max-width:100%;padding:32px 32px 28px;background:#fff;border:1px solid #dfe3ea;border-radius:8px;box-shadow:0 18px 42px rgba(25,35,55,.08)}.auth-card:before{content:"";position:absolute;left:0;top:28px;bottom:28px;width:3px;background:#2563eb;border-radius:0 2px 2px 0}.brand-intro{margin:0 0 16px 8px;color:#667085;font-size:12px;line-height:1.6}.auth-card :deep(.auth-panel h2){margin:0 0 8px;font-size:24px;line-height:1.3}.auth-card :deep(.subtitle){margin:0 0 24px;color:#667085;line-height:1.6}.auth-card :deep(.el-button){min-height:40px}.auth-card :deep(.auth-links){display:flex;justify-content:flex-end;gap:16px;margin-top:18px;font-size:13px}.auth-card :deep(a){color:#2563eb;text-decoration:none}.auth-footer{position:relative;z-index:1;padding:0 0 28px;color:#98a2b3;text-align:center;font-size:11px}@media(max-width:760px){.topbar{padding:0 20px}.topbar-note{display:none}.stage{padding:28px 16px}.auth-card{width:100%;padding:24px}}
 </style>
