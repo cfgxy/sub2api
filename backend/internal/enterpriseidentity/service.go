@@ -27,9 +27,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/enterprise"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	platformservice "github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -68,6 +70,8 @@ var (
 	errConflict                  = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
 	errInvalidBrand              = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
 	errEmployeeVersionConflict   = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
+	errInvalidEnterpriseInput    = infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise id and reason are required")
+	errInvalidEnterpriseHost     = infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise portal host is invalid")
 )
 
 type PasswordResetMailer interface {
@@ -412,12 +416,13 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 	// SHAN-322 baseline A: activating the enterprise subscription happens inside this
 	// same transaction. The active row mirrors the upstream native subscription —
 	// observed_weekly_window_start copies the upstream weekly_window_start and amounts
-	// stay in the upstream group, so no values are invented here. A soft-deleted or
-	// anchor-less subscription is rejected: enterprise_subscriptions requires a
-	// non-NULL observed anchor for active rows, and every downstream reader (pool
-	// status, employee key lifecycle, usage attribution) filters deleted_at IS NULL.
+	// stay in the upstream group, so no values are invented here. A soft-deleted
+	// subscription is rejected, and every downstream reader (pool status, employee
+	// key lifecycle, usage attribution) filters deleted_at IS NULL.
+	// SHAN-382: 锚点未物化的候选订阅不再直接拒绝——企业创建即视为该订阅的首次消费，
+	// 在同一事务内按与网关首次使用激活（ActivateWindows）一致的语义做条件锚点初始化。
 	var upstreamSubscriptionID int64
-	var observedWindowStart time.Time
+	var upstreamAnchor sql.NullTime
 	if err = tx.QueryRowContext(ctx, `
 		SELECT subscription.id, subscription.weekly_window_start
 		FROM user_subscriptions AS subscription
@@ -427,16 +432,40 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 		  AND subscription.starts_at <= NOW()
 		  AND subscription.expires_at > NOW()
 		  AND subscription.deleted_at IS NULL
-		  AND subscription.weekly_window_start IS NOT NULL
 		  AND group_record.status = 'active'
 		  AND COALESCE(group_record.weekly_limit_usd, 0) > 0
 		ORDER BY subscription.id
 		LIMIT 1
-	`, input.DedicatedUpstreamUser).Scan(&upstreamSubscriptionID, &observedWindowStart); err != nil {
+	`, input.DedicatedUpstreamUser).Scan(&upstreamSubscriptionID, &upstreamAnchor); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errSubscriptionUnavailable
 		}
 		return nil, err
+	}
+	var observedWindowStart time.Time
+	if !upstreamAnchor.Valid {
+		now := s.now()
+		// 仅当三个窗口锚点仍同为 NULL 时写入，零行命中说明已并发激活：回读既有值，不覆盖。
+		if err = tx.QueryRowContext(ctx, `
+			UPDATE user_subscriptions
+			SET daily_window_start = $2, weekly_window_start = $3, monthly_window_start = $3, updated_at = NOW()
+			WHERE id = $1
+			  AND daily_window_start IS NULL
+			  AND weekly_window_start IS NULL
+			  AND monthly_window_start IS NULL
+			RETURNING weekly_window_start
+		`, upstreamSubscriptionID, timezone.StartOfDay(now), now).Scan(&observedWindowStart); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			if err = tx.QueryRowContext(ctx, `
+				SELECT weekly_window_start FROM user_subscriptions WHERE id = $1
+			`, upstreamSubscriptionID).Scan(&observedWindowStart); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		observedWindowStart = upstreamAnchor.Time
 	}
 
 	result := new(PlatformEnterprise)
@@ -619,6 +648,123 @@ func (s *Service) DisableEnterprise(ctx context.Context, id, actorUserID int64, 
 		return err
 	}
 	return tx.Commit()
+}
+
+// EnableEnterprise 以最小恢复语义重新启用已停用企业：仅置回 active 并落审计事件；
+// 已吊销的会话、已吊销的 Key 分配与已禁用的 API Key 不自动恢复，由管理员按需重新分配，
+// 避免自动恢复已禁用 Key 的安全歧义。对已处于 active 的企业幂等成功（无写入、无审计）。
+func (s *Service) EnableEnterprise(ctx context.Context, id, actorUserID int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if id <= 0 || reason == "" {
+		return errInvalidEnterpriseInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE enterprises SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'disabled'`, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		var status string
+		if err = tx.QueryRowContext(ctx, `SELECT status FROM enterprises WHERE id = $1`, id).Scan(&status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errNotFound
+			}
+			return err
+		}
+		if status == "active" {
+			return nil
+		}
+		return errNotFound
+	}
+	payload, err := json.Marshal(map[string]any{"result": "success", "reason": reason})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref) VALUES ($1, 'enterprise.enabled', 'enterprise', $1, $2::jsonb, $3)`, id, payload, fmt.Sprintf("platform_user:%d", actorUserID)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateEnterpriseHost 修改企业入口域名：格式校验 + 唯一性校验 + 审计事件。
+// 修改后既有企业 token 因 Host 绑定在旧域名自然失效，新域名即刻生效，该行为属预期；
+// 提交与当前一致的域名视为幂等成功（无写入、无审计）。
+func (s *Service) UpdateEnterpriseHost(ctx context.Context, id, actorUserID int64, host, reason string) error {
+	reason = strings.TrimSpace(reason)
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if id <= 0 || reason == "" || !validPortalHost(host) {
+		return errInvalidEnterpriseHost
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var currentHost string
+	if err = tx.QueryRowContext(ctx, `SELECT LOWER(BTRIM(portal_host)) FROM enterprises WHERE id = $1`, id).Scan(&currentHost); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNotFound
+		}
+		return err
+	}
+	if currentHost == host {
+		return nil
+	}
+	var taken bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM enterprises WHERE LOWER(BTRIM(portal_host)) = $1 AND id <> $2)`, host, id).Scan(&taken); err != nil {
+		return err
+	}
+	if taken {
+		return errConflict
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE enterprises SET portal_host = $2, updated_at = NOW() WHERE id = $1`, id, host)
+	if err != nil {
+		// 并发窗口内由唯一索引 uq_enterprises_portal_host 兜底
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return errConflict
+		}
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return errNotFound
+	}
+	payload, err := json.Marshal(map[string]any{"result": "success", "reason": reason, "previous_portal_host": currentHost, "portal_host": host})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref) VALUES ($1, 'enterprise.host_updated', 'enterprise', $1, $2::jsonb, $3)`, id, payload, fmt.Sprintf("platform_user:%d", actorUserID)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// validPortalHost 校验入口域名格式：小写化后仅允许小写字母、数字、点与连字符，
+// 标签 1–63 字符且不得以连字符开头/结尾，整体 1–255 字符；允许单标签与 IP 形态以便内网部署。
+func validPortalHost(host string) bool {
+	if host == "" || len(host) > 255 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) Login(ctx context.Context, host, email, password, userAgent, ip string) (*TokenPair, error) {

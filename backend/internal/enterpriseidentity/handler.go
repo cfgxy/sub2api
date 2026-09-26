@@ -386,6 +386,51 @@ func (h *Handler) DisablePlatformEnterprise(c *gin.Context) {
 	response.Success(c, gin.H{"success": true})
 }
 
+func (h *Handler) EnablePlatformEnterprise(c *gin.Context) {
+	subject, ok := servermiddleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if !bind(c, &req) {
+		return
+	}
+	if response.ErrorFrom(c, h.service.EnableEnterprise(c.Request.Context(), id, subject.UserID, req.Reason)) {
+		return
+	}
+	response.Success(c, gin.H{"success": true})
+}
+
+func (h *Handler) UpdatePlatformEnterpriseHost(c *gin.Context) {
+	subject, ok := servermiddleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Host   string `json:"portal_host" binding:"required"`
+		Reason string `json:"reason" binding:"required"`
+	}
+	if !bind(c, &req) {
+		return
+	}
+	if response.ErrorFrom(c, h.service.UpdateEnterpriseHost(c.Request.Context(), id, subject.UserID, req.Host, req.Reason)) {
+		return
+	}
+	response.Success(c, gin.H{"success": true})
+}
+
 func (h *Handler) refresh(c *gin.Context) {
 	var req refreshRequest
 	if !bind(c, &req) {
