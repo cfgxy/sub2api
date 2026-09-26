@@ -776,3 +776,24 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* ============================================================
+   Element Plus 主色映射（品牌 teal）
+   说明：
+   1. 本块必须保持在所有 @layer 之外。style.css 先于
+      element-plus/dist/index.css 加载，Tailwind @layer 内的规则
+      级联优先级恒低于 el 的未分层规则，只有未分层 + 更高特异性的
+      选择器（html:root 0,1,1 > :root 0,1,0）才能稳定覆盖。
+   2. 取值对应 tailwind.config.js 的 primary（teal）色阶，
+      全局生效，禁止在页面内用内联/行内样式替代。
+   ============================================================ */
+html:root {
+  --el-color-primary: #14b8a6;
+  --el-color-primary-rgb: 20, 184, 166;
+  --el-color-primary-light-3: #2dd4bf;
+  --el-color-primary-light-5: #5eead4;
+  --el-color-primary-light-7: #99f6e4;
+  --el-color-primary-light-8: #ccfbf1;
+  --el-color-primary-light-9: #f0fdfa;
+  --el-color-primary-dark-2: #0d9488;
+}
