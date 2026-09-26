@@ -639,6 +639,47 @@ func TestAuthService_Register_Success(t *testing.T) {
 	require.True(t, user.CheckPassword("password"))
 }
 
+func TestAuthService_Register_RequiresEightCharactersWithoutCompositionRule(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		password string
+		accepted bool
+	}{
+		{name: "7 位被拒", password: "abcdefg"},
+		{name: "8 位纯字母通过", password: "abcdefgh", accepted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &userRepoStub{}
+			svc := newAuthService(repo, map[string]string{SettingKeyRegistrationEnabled: "true"}, nil, nil)
+			_, user, err := svc.Register(context.Background(), "new@example.com", tc.password)
+			if tc.accepted {
+				require.NoError(t, err)
+				require.True(t, user.CheckPassword(tc.password))
+				require.Len(t, repo.created, 1)
+			} else {
+				require.ErrorIs(t, err, ErrPasswordTooShort)
+				require.ErrorContains(t, err, "密码至少需要 8 位")
+				require.Empty(t, repo.created)
+			}
+		})
+	}
+}
+
+func TestAuthService_Login_AcceptsExistingShortPasswords(t *testing.T) {
+	for _, password := range []string{"abcdef", "abcdefg"} {
+		t.Run(password, func(t *testing.T) {
+			user := &User{ID: 7, Email: "legacy@example.com", Status: StatusActive}
+			svc := newAuthService(&userRepoStub{user: user}, nil, nil, nil)
+			var err error
+			user.PasswordHash, err = svc.HashPassword(password)
+			require.NoError(t, err)
+			_, loggedIn, err := svc.Login(context.Background(), user.Email, password)
+			require.NoError(t, err)
+			require.Equal(t, user, loggedIn)
+		})
+	}
+}
+
 func TestAuthService_ValidateToken_ExpiredReturnsClaimsWithError(t *testing.T) {
 	repo := &userRepoStub{}
 	service := newAuthService(repo, nil, nil, nil)

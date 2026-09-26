@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessageBox } from 'element-plus'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EnterpriseEmployeesView from '../EnterpriseEmployeesView.vue'
 
 const { listEmployees, listDepartments, updateEmployee, createEmployee, resetEmployeePassword, pushMock } = vi.hoisted(() => ({
@@ -27,12 +27,33 @@ const baseEmployees = [
 ]
 
 const baseDepartments = [{ id: 7, name: '研发中心', created_at: '2026-01-01T00:00:00Z' }]
+const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+
+async function createDeliveryCard() {
+  const wrapper = mount(EnterpriseEmployeesView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+  await flushPromises()
+  await wrapper.findAll('button').find((button) => button.text() === '创建员工')?.trigger('click')
+  await flushPromises()
+  await wrapper.find('.el-dialog input.el-input__inner').setValue('new-hire@example.com')
+  await wrapper.find('.el-dialog input[type="password"]').setValue('abcdefgh')
+  createEmployee.mockResolvedValueOnce({ id: 11, email: 'new-hire@example.com', status: 'active', must_change_password: true })
+  await wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '创建')?.trigger('click')
+  await flushPromises()
+  expect(createEmployee).toHaveBeenCalledTimes(1)
+  return wrapper
+}
 
 describe('EnterpriseEmployeesView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     listEmployees.mockResolvedValue(baseEmployees)
     listDepartments.mockResolvedValue(baseDepartments)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+    else Reflect.deleteProperty(navigator, 'clipboard')
   })
 
   it('keeps the edit dialog open and refills it with the latest department on a version conflict, instead of closing it', async () => {
@@ -116,9 +137,34 @@ describe('EnterpriseEmployeesView', () => {
     await copyButton?.trigger('click')
     await flushPromises()
     const copied = (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
-    expect(copied).toContain('new-hire@example.com')
-    expect(copied).toContain(payload.initial_password)
-    expect(copied).toContain(window.location.origin)
+    expect(copied).toBe(`邮箱：new-hire@example.com\n初始密码：${payload.initial_password}\n入口域名：${window.location.origin}`)
+    expect(document.body.textContent).toContain('交付信息已复制')
+    expect(delivery.find('[data-testid="manual-copy-text"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['HTTP 环境不支持剪贴板', false],
+    ['剪贴板写入失败', true],
+  ])('%s 时提示并选中完整交付信息供手动复制', async (_scenario, rejects) => {
+    const clipboard = rejects ? { writeText: vi.fn().mockRejectedValue(new Error('not allowed')) } : undefined
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+    const errorMessage = vi.spyOn(ElMessage, 'error')
+    const wrapper = await createDeliveryCard()
+    const delivery = wrapper.find('[data-testid="initial-password-delivery"]')
+    await delivery.findAll('button').find((button) => button.text() === '复制交付信息')?.trigger('click')
+    await flushPromises()
+
+    const manualCopy = delivery.find<HTMLTextAreaElement>('[data-testid="manual-copy-text"]')
+    expect(manualCopy.exists()).toBe(true)
+    expect(manualCopy.element.value).toContain('邮箱：new-hire@example.com')
+    expect(manualCopy.element.value).toContain('初始密码：abcdefgh')
+    expect(manualCopy.element.value).toContain(`入口域名：${window.location.origin}`)
+    expect(document.activeElement).toBe(manualCopy.element)
+    expect(manualCopy.element.selectionStart).toBe(0)
+    expect(manualCopy.element.selectionEnd).toBe(manualCopy.element.value.length)
+    expect(delivery.text()).toContain('手动复制')
+    expect(errorMessage).toHaveBeenCalled()
     wrapper.unmount()
   })
 
