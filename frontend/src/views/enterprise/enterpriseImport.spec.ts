@@ -23,12 +23,14 @@ describe('enterprise developer tool import', () => {
 
   it('keeps CCSwitch provider transport compatible with the regular Key page', () => {
     const address = enterpriseImportBaseUrls('https://tenant.example.test/v1')
-    const openai = new URL(buildEnterpriseCcsImportUri({ address, key: 'sk-test-FAKE-389', platform: 'openai' }))
+    const openai = new URL(buildEnterpriseCcsImportUri({ address, key: 'sk-test-FAKE-389', platform: 'openai', model: 'gpt-5' }))
     expect(openai.searchParams.get('app')).toBe('codex')
     expect(openai.searchParams.get('endpoint')).toBe(address.openai)
-    const anthropic = new URL(buildEnterpriseCcsImportUri({ address, key: 'sk-test-FAKE-389', platform: 'anthropic' }))
+    expect(openai.searchParams.get('model')).toBe('gpt-5')
+    const anthropic = new URL(buildEnterpriseCcsImportUri({ address, key: 'sk-test-FAKE-389', platform: 'anthropic', model: 'claude-sonnet-4' }))
     expect(anthropic.searchParams.get('app')).toBe('claude')
     expect(anthropic.searchParams.get('endpoint')).toBe(address.root)
+    expect(anthropic.searchParams.get('model')).toBe('claude-sonnet-4')
   })
 
   it('refuses invalid deployment endpoints and masked or missing keys', () => {

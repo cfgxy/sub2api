@@ -60,12 +60,14 @@ export function buildEnterpriseCcsImportUri(input: EnterpriseImportInput): strin
       return { isValid: response?.is_active ?? response?.isValid ?? true, remaining, unit };
     }
   })`
-  return buildCcSwitchImportDeeplink({
+  const uri = new URL(buildCcSwitchImportDeeplink({
     baseUrl: input.address.root,
     platform: input.platform,
     clientType: 'claude',
     providerName: input.name || 'Sub2API enterprise',
     apiKey: requireFullKey(input.key),
     usageScript,
-  })
+  }))
+  if (input.model?.trim()) uri.searchParams.set('model', input.model.trim())
+  return uri.toString()
 }
