@@ -950,8 +950,16 @@ func TestEnterpriseEmployeeKeyHTTPProtocolUsesAuthenticatedEmployeeAndHost(t *te
 
 	current := perform(http.MethodGet, "/api/v1/enterprise/keys/current", "", employeeSession.AccessToken, strings.ToUpper(host)+":443", "")
 	require.Equal(t, http.StatusOK, current.Code)
+	require.Equal(t, "no-store", current.Header().Get("Cache-Control"))
 	require.Contains(t, current.Body.String(), enterprise.MaskEmployeeKey(originalKey))
-	require.NotContains(t, current.Body.String(), originalKey)
+	require.Contains(t, current.Body.String(), `"key":"`+originalKey+`"`)
+
+	otherEmployee := perform(http.MethodGet, "/api/v1/enterprise/keys/current", "", secondEmployeeSession.AccessToken, host, "")
+	require.Equal(t, http.StatusOK, otherEmployee.Code)
+	require.NotContains(t, otherEmployee.Body.String(), originalKey)
+	adminEmployee := perform(http.MethodGet, fmt.Sprintf("/api/v1/enterprise/admin/employees/%d", fixture.employeeID), "", adminSession.AccessToken, host, "")
+	require.Equal(t, http.StatusOK, adminEmployee.Code)
+	require.NotContains(t, adminEmployee.Body.String(), originalKey)
 	_, err = integrationDB.ExecContext(ctx, `
 		UPDATE api_keys SET expires_at = NOW() - INTERVAL '1 second',
 			usage_5h = 1.25, usage_1d = 2.5, usage_7d = 6.75,
@@ -1018,6 +1026,15 @@ func TestEnterpriseEmployeeKeyRejectsCrossEmployeeAndCrossEnterpriseScope(t *tes
 	first := seedEnterpriseFixture(t, ctx)
 	second := seedEnterpriseFixture(t, ctx)
 	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+	firstOwner, err := repo.GetEmployeeCurrentKeyForOwner(ctx, first.enterpriseID, first.employeeID)
+	require.NoError(t, err)
+	require.NotEmpty(t, firstOwner.Key)
+	otherEmployee, err := repo.GetEmployeeCurrentKeyForOwner(ctx, first.enterpriseID, first.secondEmployee)
+	require.NoError(t, err)
+	require.Nil(t, otherEmployee)
+	otherEnterprise, err := repo.GetEmployeeCurrentKeyForOwner(ctx, second.enterpriseID, first.employeeID)
+	require.NoError(t, err)
+	require.Nil(t, otherEnterprise)
 
 	for _, params := range []enterprise.EmployeeKeyMutationParams{
 		{

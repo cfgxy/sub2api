@@ -267,6 +267,35 @@ async function withEnterpriseKeyMutation<T>(
 
 const idempotencyHeaders = (idempotencyKey: string) => ({ headers: { 'Idempotency-Key': idempotencyKey } })
 
+export interface EnterpriseGuideModel {
+  id: string
+  platform: string
+  display_name?: string
+  owned_by?: string
+  description?: string
+}
+
+export async function fetchEnterpriseGuideModels(signal?: AbortSignal): Promise<EnterpriseGuideModel[]> {
+  const payload: unknown = await data<unknown>(enterpriseClient.get('/enterprise/guide/models', {
+    signal,
+    enterpriseSuppressUnavailableRedirect: true,
+  }))
+  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+    throw { status: 502, reason: 'ENTERPRISE_GUIDE_MODEL_RESPONSE_INVALID', message: 'Model response is invalid' }
+  }
+
+  return payload.data.filter((item): item is EnterpriseGuideModel => {
+    if (!isRecord(item) || typeof item.id !== 'string' || !item.id.trim() || typeof item.platform !== 'string') return false
+    return true
+  }).map((item) => ({
+    id: item.id.trim(),
+    platform: item.platform.trim(),
+    ...(typeof item.display_name === 'string' ? { display_name: item.display_name } : {}),
+    ...(typeof item.owned_by === 'string' ? { owned_by: item.owned_by } : {}),
+    ...(typeof item.description === 'string' ? { description: item.description } : {}),
+  }))
+}
+
 export const enterpriseAPI = {
   getBrand: () => data<EnterpriseBrand>(enterpriseClient.get('/enterprise/brand')),
   login: (input: { email: string; password: string }) => data<EnterpriseTokenPair>(enterpriseClient.post('/enterprise/auth/login', input)),

@@ -48,6 +48,7 @@ func TestRegisterRoutesIncludesEnterpriseAuthSessionsAndAdminAPIs(t *testing.T) 
 		"DELETE /api/v1/enterprise/sessions/:id",
 		"DELETE /api/v1/enterprise/sessions",
 		"GET /api/v1/enterprise/keys/current",
+		"GET /api/v1/enterprise/guide/models",
 		"POST /api/v1/enterprise/keys",
 		"POST /api/v1/enterprise/keys/disable",
 		"POST /api/v1/enterprise/keys/rotate",
@@ -79,6 +80,10 @@ type employeeKeyStoreStub struct {
 func (s *employeeKeyStoreStub) GetEmployeeCurrentKey(_ context.Context, enterpriseID, employeeID int64) (*enterprise.EmployeeKey, error) {
 	s.currentParams = [2]int64{enterpriseID, employeeID}
 	return s.current, nil
+}
+
+func (s *employeeKeyStoreStub) GetEmployeeCurrentKeyForOwner(ctx context.Context, enterpriseID, employeeID int64) (*enterprise.EmployeeKey, error) {
+	return s.GetEmployeeCurrentKey(ctx, enterpriseID, employeeID)
 }
 
 func (s *employeeKeyStoreStub) CreateEmployeeKey(_ context.Context, params enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error) {
