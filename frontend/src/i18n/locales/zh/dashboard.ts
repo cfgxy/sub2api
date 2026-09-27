@@ -111,6 +111,14 @@ export default {
     copyToClipboard: '复制到剪贴板',
     copied: '已复制！',
     importToCcSwitch: '导入到 CCS',
+    developerTools: {
+      title: '开发工具',
+      download: '下载工具',
+      import: '导入密钥配置',
+      importToCodex: '导入到 Codex++',
+      pending: 'Codex++ 导入待协议联调后开放',
+      codexUnavailable: '此密钥当前不可自动导入，Codex++ 接口尚未开放'
+    },
     enable: '启用',
     disable: '禁用',
     nameLabel: '名称',

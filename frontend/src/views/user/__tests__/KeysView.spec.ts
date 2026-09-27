@@ -238,6 +238,12 @@ const mountView = async () => {
         SearchInput: SearchInputStub,
         Icon: IconStub,
         UseKeyModal: true,
+        DeveloperToolsModal: {
+          name: 'DeveloperToolsModal',
+          props: ['show', 'canImportCcs', 'codexCandidate'],
+          emits: ['close', 'importCcs'],
+          template: '<div />',
+        },
         BulkEditKeysModal: true,
         EndpointPopover: true,
         GroupBadge: true,
@@ -640,5 +646,26 @@ describe('user KeysView column settings', () => {
       expect(wrapper.find('[data-tour="key-form-provider"]').exists()).toBe(false)
       expect(optionIds(wrapper)).toHaveLength(11)
     })
+  })
+
+  it('opens development tools for the selected key and preserves the CCSwitch import', async () => {
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'keys.developerTools.title').trigger('click')
+    const modal = wrapper.getComponent({ name: 'DeveloperToolsModal' })
+    expect(modal.props('show')).toBe(true)
+    expect(modal.props('canImportCcs')).toBe(true)
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    modal.vm.$emit('importCcs')
+    await nextTick()
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('ccswitch://v1/import?'), '_self')
+    expect(modal.props('show')).toBe(false)
+    open.mockRestore()
+  })
+
+  it('keeps the existing CCSwitch visibility setting in the new tools dialog', async () => {
+    getPublicSettings.mockResolvedValue({ hide_ccs_import_button: true })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'keys.developerTools.title').trigger('click')
+    expect(wrapper.getComponent({ name: 'DeveloperToolsModal' }).props('canImportCcs')).toBe(false)
   })
 })

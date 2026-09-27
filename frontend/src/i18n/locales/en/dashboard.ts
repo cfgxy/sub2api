@@ -111,6 +111,14 @@ export default {
     copyToClipboard: 'Copy to clipboard',
     copied: 'Copied!',
     importToCcSwitch: 'Import to CCS',
+    developerTools: {
+      title: 'Developer Tools',
+      download: 'Download the tool',
+      import: 'Import key configuration',
+      importToCodex: 'Import to Codex++',
+      pending: 'Codex++ import will be available after protocol integration',
+      codexUnavailable: 'This key is not eligible for automatic import; the Codex++ connection is unavailable'
+    },
     enable: 'Enable',
     disable: 'Disable',
     nameLabel: 'Name',
