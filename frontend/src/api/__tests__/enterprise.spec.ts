@@ -47,6 +47,27 @@ describe('enterprise API password handling', () => {
     expect(JSON.stringify(localStorage)).not.toContain('one-time-password')
   })
 
+  it('sends the first password change without a current-password field', async () => {
+    const post = vi.spyOn(enterpriseClient, 'post').mockResolvedValue({ data: { success: true } })
+
+    await enterpriseAPI.changeInitialPassword('brand-new-pass')
+
+    expect(post).toHaveBeenCalledWith('/enterprise/password/first-change', { new_password: 'brand-new-pass' })
+  })
+
+  it('fetches the admin password reset deliverable and never persists the initial password', async () => {
+    const post = vi.spyOn(enterpriseClient, 'post').mockResolvedValue({
+      data: { initial_password: 'one-time-password', must_change_password: true },
+    })
+
+    const result = await enterpriseAPI.resetEmployeePassword(7)
+
+    expect(post).toHaveBeenCalledWith('/enterprise/admin/employees/7/reset-password')
+    expect(result.initial_password).toBe('one-time-password')
+    expect(result.must_change_password).toBe(true)
+    expect(JSON.stringify(localStorage)).not.toContain('one-time-password')
+  })
+
   it('uploads brand background bytes with multipart form data', async () => {
     const post = vi.spyOn(enterpriseClient, 'post').mockResolvedValue({
       data: {

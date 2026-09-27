@@ -48,7 +48,10 @@ var (
 	ErrInvitationCodeInvalid   = infraerrors.BadRequest("INVITATION_CODE_INVALID", "invalid or used invitation code")
 	ErrOAuthInvitationRequired = infraerrors.Forbidden("OAUTH_INVITATION_REQUIRED", "invitation code required to complete oauth registration")
 	ErrCaptchaProviderConflict = infraerrors.ServiceUnavailable("CAPTCHA_PROVIDER_CONFLICT", "multiple captcha providers are enabled")
+	ErrPasswordTooShort        = infraerrors.BadRequest("PASSWORD_TOO_SHORT", "密码至少需要 8 位")
 )
+
+const platformPasswordMinLength = 8
 
 // MaxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
 const MaxTokenLength = 8192
@@ -164,6 +167,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	// 检查是否开放注册（默认关闭：settingService 未配置时不允许注册）
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
+	}
+	if len(password) < platformPasswordMinLength {
+		return "", nil, ErrPasswordTooShort
 	}
 
 	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。
@@ -1620,6 +1626,9 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPasswo
 
 	if s.emailService == nil {
 		return ErrServiceUnavailable
+	}
+	if len(newPassword) < platformPasswordMinLength {
+		return ErrPasswordTooShort
 	}
 
 	// Verify and consume the reset token (one-time use)

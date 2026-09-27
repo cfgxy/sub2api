@@ -63,9 +63,13 @@ export const useEnterpriseAuthStore = defineStore('enterprise-auth', () => {
     }
   }
 
-  async function changeInitialPassword(currentPassword: string, newPassword: string) {
-    await enterpriseAPI.changeInitialPassword(currentPassword, newPassword)
-    clear()
+  async function changeInitialPassword(newPassword: string) {
+    await enterpriseAPI.changeInitialPassword(newPassword)
+    // 首改成功后当前会话保留（后端仅撤销其他会话），本地同步状态以解除首改门槛并放行进入首页。
+    if (principal.value) {
+      principal.value = { ...principal.value, force_password_change: false }
+      localStorage.setItem(PRINCIPAL_KEY, JSON.stringify(principal.value))
+    }
   }
 
   return { accessToken, principal, initialized, isAuthenticated, isAdmin, mustChangePassword, restore, login, logout, clear, changeInitialPassword }

@@ -42,6 +42,9 @@ const (
 	accessTokenTTL                          = 15 * time.Minute
 	refreshTokenTTL                         = 30 * 24 * time.Hour
 	passwordResetTTL                        = time.Hour
+	minPasswordLength                       = 8
+	initialPasswordLength                   = 12
+	initialPasswordCharset                  = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
 	defaultBrandEnterpriseName              = "Sub2API"
 	defaultBrandTitle                       = "企业工作台"
 	defaultBrandBody                        = "使用企业管理员或员工账号安全访问组织资源。"
@@ -1082,20 +1085,14 @@ func revokeRefreshFamily(ctx context.Context, tx *sql.Tx, enterpriseID int64, fa
 	return err
 }
 
-func (s *Service) ChangeInitialPassword(ctx context.Context, claims *Claims, current, next string) error {
-	if claims.PrincipalType != "employee" {
+// ChangeInitialPassword 首次登录改密：不重验初始密码；不提升 auth_version，
+// 只撤销该员工除当前会话外的其他会话，保证改密后当前 token 仍可直接进入首页。
+func (s *Service) ChangeInitialPassword(ctx context.Context, claims *Claims, next string) error {
+	if claims == nil || claims.PrincipalType != "employee" {
 		return infraerrors.BadRequest("EMPLOYEE_PASSWORD_ONLY", "enterprise administrator uses the platform password")
 	}
-	if len(next) < 12 {
-		return infraerrors.BadRequest("WEAK_PASSWORD", "password must be at least 12 characters")
-	}
-	var hash string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT password_hash FROM enterprise_employees
-		WHERE enterprise_id = $1 AND id = $2 AND status = 'active'
-	`, claims.EnterpriseID, claims.PrincipalID).Scan(&hash)
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(current)) != nil {
-		return errInvalidCredentials
+	if len(next) < minPasswordLength {
+		return infraerrors.BadRequest("WEAK_PASSWORD", fmt.Sprintf("password must be at least %d characters", minPasswordLength))
 	}
 	nextHash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
 	if err != nil {
@@ -1106,17 +1103,20 @@ func (s *Service) ChangeInitialPassword(ctx context.Context, claims *Claims, cur
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees
 		SET password_hash = $1, must_change_password = FALSE, initial_password_expires_at = NULL,
-		    password_changed_at = NOW(), auth_version = auth_version + 1, updated_at = NOW()
+		    password_changed_at = NOW(), updated_at = NOW()
 		WHERE enterprise_id = $2 AND id = $3 AND status = 'active'
 	`, string(nextHash), claims.EnterpriseID, claims.PrincipalID)
-	if err == nil {
-		_, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = NOW(), updated_at = NOW()
-			WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2 AND revoked_at IS NULL`, claims.EnterpriseID, claims.PrincipalID)
-	}
 	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return errInactive
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = NOW(), updated_at = NOW()
+		WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2 AND revoked_at IS NULL AND id <> $3`, claims.EnterpriseID, claims.PrincipalID, claims.SessionID); err != nil {
 		return err
 	}
 	if err := writeAuditEvent(ctx, tx, claims.EnterpriseID, "employee.password_changed", "employee", &claims.PrincipalID, map[string]any{"result": "success", "initial": true}); err != nil {
@@ -1129,8 +1129,8 @@ func (s *Service) ChangePassword(ctx context.Context, claims *Claims, current, n
 	if claims == nil || claims.PrincipalType != "employee" {
 		return infraerrors.BadRequest("EMPLOYEE_PASSWORD_ONLY", "enterprise administrator uses the platform password")
 	}
-	if len(next) < 12 {
-		return infraerrors.BadRequest("WEAK_PASSWORD", "password must be at least 12 characters")
+	if len(next) < minPasswordLength {
+		return infraerrors.BadRequest("WEAK_PASSWORD", fmt.Sprintf("password must be at least %d characters", minPasswordLength))
 	}
 	var currentHash string
 	if err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2 AND status = 'active'`, claims.EnterpriseID, claims.PrincipalID).Scan(&currentHash); err != nil || bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(current)) != nil {
@@ -1206,9 +1206,9 @@ func (s *Service) ResetPassword(ctx context.Context, host, token, next string) e
 	if err != nil {
 		return errResetInvalid
 	}
-	if len(next) < 12 {
+	if len(next) < minPasswordLength {
 		_ = s.RecordRejectedAuditEvent(ctx, e.ID, "password.reset", "employee", nil, "weak_password")
-		return infraerrors.BadRequest("WEAK_PASSWORD", "password must be at least 12 characters")
+		return infraerrors.BadRequest("WEAK_PASSWORD", fmt.Sprintf("password must be at least %d characters", minPasswordLength))
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
 	if err != nil {
@@ -1751,7 +1751,7 @@ func decimalMaxDifference(left, right string) string {
 
 func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email, password string, departmentID *int64) (*Employee, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
-	if email == "" || len(password) < 12 {
+	if email == "" || len(password) < minPasswordLength {
 		return nil, infraerrors.BadRequest("INVALID_EMPLOYEE", "employee email or password is invalid")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -1794,6 +1794,73 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 		item.DepartmentID = &dept.Int64
 	}
 	return item, nil
+}
+
+// generateInitialPassword 生成无易混淆字符的随机初始密码，仅供管理员一次性交付。
+func generateInitialPassword() (string, error) {
+	n := len(initialPasswordCharset)
+	limit := (256 / n) * n
+	out := make([]byte, 0, initialPasswordLength)
+	buf := make([]byte, initialPasswordLength)
+	for len(out) < initialPasswordLength {
+		if _, err := rand.Read(buf); err != nil {
+			return "", err
+		}
+		for _, b := range buf {
+			if len(out) == initialPasswordLength {
+				break
+			}
+			if int(b) >= limit {
+				continue
+			}
+			out = append(out, initialPasswordCharset[int(b)%n])
+		}
+	}
+	return string(out), nil
+}
+
+// ResetEmployeePassword 管理员重置员工密码：生成新初始密码并强制下次登录改密，
+// 吊销该员工全部会话；审计事件不记录明文密码，明文仅经响应返回一次。
+func (s *Service) ResetEmployeePassword(ctx context.Context, claims *Claims, employeeID int64) (string, error) {
+	if claims == nil || claims.PrincipalType != "admin" {
+		return "", infraerrors.Forbidden("ADMIN_ONLY", "only enterprise administrators may reset employee passwords")
+	}
+	password, err := generateInitialPassword()
+	if err != nil {
+		return "", err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE enterprise_employees
+		SET password_hash = $1, must_change_password = TRUE, initial_password_expires_at = NOW() + INTERVAL '24 hours',
+		    auth_version = auth_version + 1, updated_at = NOW()
+		WHERE enterprise_id = $2 AND id = $3 AND status <> 'terminated'
+	`, string(hash), claims.EnterpriseID, employeeID)
+	if err != nil {
+		return "", err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return "", errNotFound
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_sessions SET revoked_at = NOW(), updated_at = NOW()
+		WHERE enterprise_id = $1 AND principal_type = 'employee' AND principal_id = $2 AND revoked_at IS NULL`, claims.EnterpriseID, employeeID); err != nil {
+		return "", err
+	}
+	if err := writeAuditEvent(ctx, tx, claims.EnterpriseID, "employee.password_reset_by_admin", "employee", &employeeID, map[string]any{"result": "success"}); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return password, nil
 }
 
 // UpdateEmployee applies an admin edit using optimistic concurrency: the

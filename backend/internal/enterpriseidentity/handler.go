@@ -106,6 +106,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.GET("/employees", h.listEmployees)
 	admin.GET("/employees/:id", h.getEmployee)
 	admin.POST("/employees", h.createEmployee)
+	admin.POST("/employees/:id/reset-password", h.resetEmployeePassword)
 	admin.PATCH("/employees/:id", h.updateEmployee)
 	admin.DELETE("/employees/:id", h.terminateEmployee)
 	admin.GET("/brand", h.getBrand)
@@ -182,13 +183,14 @@ func (h *Handler) authenticate() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		claims, _, err := h.service.Authenticate(c.Request.Context(), requestHost(c.Request), auth[1])
+		claims, principal, err := h.service.Authenticate(c.Request.Context(), requestHost(c.Request), auth[1])
 		if err != nil {
 			response.ErrorFrom(c, err)
 			c.Abort()
 			return
 		}
-		if claims.ForceChange && !strings.HasSuffix(c.Request.URL.Path, "/password/first-change") {
+		// 以数据库现值判定强制改密：JWT 内的 claim 在首改完成后即过期，继续采信会迫使用户重新登录。
+		if principal.ForceChange && !strings.HasSuffix(c.Request.URL.Path, "/password/first-change") {
 			response.ErrorFrom(c, errForceChange)
 			c.Abort()
 			return
@@ -288,6 +290,9 @@ type forgotRequest struct {
 type changePasswordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
 	NewPassword     string `json:"new_password" binding:"required"`
+}
+type firstChangePasswordRequest struct {
+	NewPassword string `json:"new_password" binding:"required"`
 }
 type departmentRequest struct {
 	Name string `json:"name" binding:"required"`
@@ -480,16 +485,31 @@ func (h *Handler) resetPassword(c *gin.Context) {
 }
 
 func (h *Handler) changeInitialPassword(c *gin.Context) {
-	var req changePasswordRequest
+	var req firstChangePasswordRequest
 	if !bind(c, &req) {
 		return
 	}
 	claims := mustClaims(c)
 	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
-	if response.ErrorFrom(c, h.service.ChangeInitialPassword(ctx, claims, req.CurrentPassword, req.NewPassword)) {
+	if response.ErrorFrom(c, h.service.ChangeInitialPassword(ctx, claims, req.NewPassword)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
+}
+
+func (h *Handler) resetEmployeePassword(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	claims := mustClaims(c)
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	password, err := h.service.ResetEmployeePassword(ctx, claims, id)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, gin.H{"initial_password": password, "must_change_password": true})
 }
 
 func (h *Handler) changePassword(c *gin.Context) {

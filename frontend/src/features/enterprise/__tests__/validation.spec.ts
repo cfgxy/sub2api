@@ -3,9 +3,10 @@ import { validateBrand, validateDepartmentName, validateImageFile, validatePassw
 
 describe('enterprise form validation', () => {
   it('matches backend text and password limits', () => {
-    expect(validatePassword('short')).toBe('密码至少需要 12 个字符')
-    expect(validatePassword('Ab1' + 'c'.repeat(8))).toBe('密码至少需要 12 个字符') // 11 位：旧 8 位口径会放行的长度
-    expect(validatePassword('Ab1' + 'c'.repeat(5))).toBe('密码至少需要 12 个字符') // 8 位
+    expect(validatePassword('short')).toBe('密码至少需要 8 个字符')
+    expect(validatePassword('1234567')).toBe('密码至少需要 8 个字符') // 7 位：下界拒绝
+    expect(validatePassword('12345678')).toBe('') // 8 位：无组成复杂度要求
+    expect(validatePassword('Ab1' + 'c'.repeat(8))).toBe('') // 11 位：旧 12 位口径会拒绝的长度
     expect(validatePassword('123456789012')).toBe('')
     expect(validateDepartmentName('部'.repeat(101))).toBeTruthy()
     expect(validateBrand({ enterprise_name: 'Acme', title: '企'.repeat(41), body: '', slogan: '', background_url: '', background_content_type: '', background_sha256: '', background_size_bytes: 0 })).toBeTruthy()

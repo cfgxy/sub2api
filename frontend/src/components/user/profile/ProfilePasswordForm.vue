@@ -98,7 +98,7 @@ const handleChangePassword = async () => {
     return
   }
 
-  if (form.value.new_password.length < 12) {
+  if (form.value.new_password.length < 8) {
     appStore.showError(t('profile.passwordTooShort'))
     return
   }

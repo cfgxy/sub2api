@@ -54,7 +54,7 @@ This document provides practical examples of how to use the authentication views
 // - Form validation runs (client-side)
 //   - Username: 3-50 chars, alphanumeric + _ -
 //   - Email: Valid format
-//   - Password: 8+ chars, letters + numbers
+//   - Password: 8+ chars
 //   - Passwords match
 // - If valid, authStore.register() is called
 // - API request to POST /api/auth/register
@@ -204,16 +204,15 @@ async function register() {
 // Valid inputs
 ✅ Username: "jane_smith" (3-50 chars, alphanumeric + _ -)
 ✅ Email: "jane@example.com" (valid format)
-✅ Password: "SecurePass123" (8+ chars, letters + numbers)
+✅ Password: "SecurePass123" (8+ chars)
 ✅ Confirm: "SecurePass123" (matches password)
 
 // Invalid inputs
 ❌ Username: "ja" → Error: "Username must be at least 3 characters"
 ❌ Username: "jane@smith" → Error: "Username can only contain letters, numbers, underscores, and hyphens"
 ❌ Email: "invalid-email" → Error: "Please enter a valid email address"
-❌ Password: "short" → Error: "Password must be at least 8 characters with letters and numbers"
-❌ Password: "12345678" → Error: "Password must be at least 8 characters with letters and numbers" (no letters)
-❌ Password: "password" → Error: "Password must be at least 8 characters with letters and numbers" (no numbers)
+❌ Password: "short" → Error: "Password must be at least 8 characters"
+❌ Password: "1234567" → Error: "Password must be at least 8 characters"
 ❌ Confirm: "DifferentPass" → Error: "Passwords do not match"
 ```
 
@@ -261,7 +260,7 @@ async function register() {
 errors = {
   username: 'Username must be at least 3 characters',
   email: 'Please enter a valid email address',
-  password: 'Password must be at least 8 characters with letters and numbers',
+  password: 'Password must be at least 8 characters',
   confirmPassword: 'Passwords do not match'
 }
 
@@ -413,21 +412,15 @@ async function handleLogin(): Promise<void> {
 ### Custom Validation Rules
 
 ```typescript
-// Custom password strength validation
-function validatePasswordStrength(password: string): boolean {
-  const hasMinLength = password.length >= 12
-  const hasUpperCase = /[A-Z]/.test(password)
-  const hasLowerCase = /[a-z]/.test(password)
-  const hasNumber = /[0-9]/.test(password)
-  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password)
-
-  return hasMinLength && hasUpperCase && hasLowerCase && hasNumber && hasSpecialChar
+// Custom password length validation (no composition requirement)
+function validatePasswordLength(password: string): boolean {
+  return password.length >= 8
 }
 
 // Use in validation
-if (!validatePasswordStrength(formData.password)) {
+if (!validatePasswordLength(formData.password)) {
   errors.password =
-    'Password must be at least 12 characters with uppercase, lowercase, numbers, and special characters'
+    'Password must be at least 8 characters'
   isValid = false
 }
 ```

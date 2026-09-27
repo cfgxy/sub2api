@@ -57,7 +57,7 @@ Registration page for new users to create accounts.
 
 - Username, email, password, and confirm password inputs
 - Comprehensive form validation
-- Password strength requirements (8+ characters, letters + numbers)
+- Password requirements (8+ characters, no composition complexity)
 - Email format validation with regex
 - Password match validation
 - Loading state during registration
@@ -253,7 +253,7 @@ await handleRegister()
 // Validation errors
 errors.username = 'Username must be at least 3 characters'
 errors.email = 'Please enter a valid email address'
-errors.password = 'Password must be at least 8 characters with letters and numbers'
+errors.password = 'Password must be at least 8 characters'
 errors.confirmPassword = 'Passwords do not match'
 ```
 

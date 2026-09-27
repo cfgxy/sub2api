@@ -49,7 +49,7 @@ func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userSe
 // RegisterRequest represents the registration request payload
 type RegisterRequest struct {
 	Email                 string `json:"email" binding:"required,email"`
-	Password              string `json:"password" binding:"required,min=6"`
+	Password              string `json:"password" binding:"required,min=8"`
 	VerifyCode            string `json:"verify_code"`
 	TurnstileToken        string `json:"turnstile_token"`
 	TencentCaptchaTicket  string `json:"tencent_captcha_ticket"`
@@ -637,7 +637,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 type ResetPasswordRequest struct {
 	Email       string `json:"email" binding:"required,email"`
 	Token       string `json:"token" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
 }
 
 // ResetPasswordResponse 重置密码响应

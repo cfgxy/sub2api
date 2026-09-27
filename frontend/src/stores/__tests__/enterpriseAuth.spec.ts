@@ -11,6 +11,7 @@ vi.mock('@/api/enterprise', async (importOriginal) => {
       login: vi.fn(),
       refresh: vi.fn(),
       logout: vi.fn(),
+      changeInitialPassword: vi.fn(),
     },
   }
 })
@@ -98,6 +99,31 @@ describe('enterprise auth store isolation', () => {
     expect(post).toHaveBeenCalledWith('/enterprise/auth/refresh', { refresh_token: 'refresh-r0' })
     await store.logout()
     expect(enterpriseAPI.logout).toHaveBeenCalledWith('refresh-r1')
+  })
+
+  it('keeps the current session after the first password change and clears the force-change flag locally', async () => {
+    const principal = {
+      enterprise_id: 12,
+      principal_type: 'employee' as const,
+      principal_id: 33,
+      email: 'employee@example.com',
+      role: 'enterprise_employee' as const,
+      force_password_change: true,
+    }
+    localStorage.setItem('enterprise_access_token', 'access-keep')
+    localStorage.setItem('enterprise_refresh_token', 'refresh-keep')
+    localStorage.setItem('enterprise_principal', JSON.stringify(principal))
+    const store = useEnterpriseAuthStore()
+    store.restore()
+
+    vi.mocked(enterpriseAPI.changeInitialPassword).mockResolvedValue({ success: true })
+    await store.changeInitialPassword('brand-new-pass')
+
+    expect(vi.mocked(enterpriseAPI.changeInitialPassword)).toHaveBeenCalledWith('brand-new-pass')
+    expect(store.accessToken).toBe('access-keep')
+    expect(localStorage.getItem('enterprise_refresh_token')).toBe('refresh-keep')
+    expect(store.mustChangePassword).toBe(false)
+    expect(JSON.parse(localStorage.getItem('enterprise_principal') as string).force_password_change).toBe(false)
   })
 
   it('clears only enterprise key mutation retries when the session is cleared', () => {
