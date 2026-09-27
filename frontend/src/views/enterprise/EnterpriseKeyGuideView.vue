@@ -259,7 +259,7 @@ async function loadGuide() {
   try {
     const settings = await getPublicSettings()
     if (requestId !== baseRequestId) return
-    baseUrl.value = enterpriseImportBaseUrls(settings.api_base_url).openai
+    baseUrl.value = enterpriseImportBaseUrls(settings.api_base_url?.trim() || window.location.origin).openai
     baseState.value = 'ready'
     await loadModels()
   } catch {

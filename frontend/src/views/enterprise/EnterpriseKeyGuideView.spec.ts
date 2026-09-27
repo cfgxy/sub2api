@@ -47,9 +47,9 @@ describe('EnterpriseKeyGuideView', () => {
     wrapper.unmount()
   })
 
-  it('refreshes the configured URL and model list without using a browser-origin fallback', async () => {
+  it('refreshes an invalid configured URL without silently using a browser-origin fallback', async () => {
     getPublicSettings
-      .mockResolvedValueOnce({ api_base_url: '' })
+      .mockResolvedValueOnce({ api_base_url: 'javascript:invalid' })
       .mockResolvedValueOnce({ api_base_url: 'https://api.second.example/v1' })
     const wrapper = mount(EnterpriseKeyGuideView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
@@ -73,6 +73,15 @@ describe('EnterpriseKeyGuideView', () => {
     expect(second.get('[data-testid="models-list"]').text()).toContain('enterprise-model-a')
     expect(fetchEnterpriseGuideModels).toHaveBeenCalledTimes(2)
     second.unmount()
+  })
+
+  it('uses the current deployment origin when no API base URL is configured', async () => {
+    getPublicSettings.mockResolvedValueOnce({ api_base_url: '' })
+    const wrapper = mount(EnterpriseKeyGuideView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="base-url-value"]').text()).toContain(`${window.location.origin}/v1`)
+    expect(wrapper.get('[data-testid="examples-section"]').text()).toContain(`${window.location.origin}/v1/chat/completions`)
+    wrapper.unmount()
   })
 
   it('distinguishes an empty subscription catalogue from a failed gateway request', async () => {

@@ -208,7 +208,7 @@ async function loadTools() {
   try {
     const [settings, models] = await Promise.all([getPublicSettings(), fetchEnterpriseGuideModels()])
     if (request !== toolRequest) return
-    toolAddress.value = enterpriseImportBaseUrls(settings.api_base_url)
+    toolAddress.value = enterpriseImportBaseUrls(settings.api_base_url?.trim() || window.location.origin)
     showCcsTool.value = !settings.hide_ccs_import_button
     toolModels.value = models.filter((model) => model.platform === 'openai' || model.platform === 'anthropic')
     selectedToolModel.value = toolModels.value[0]?.id || ''

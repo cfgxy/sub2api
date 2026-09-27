@@ -402,4 +402,20 @@ describe('EnterpriseKeysView key lifecycle', () => {
     wrapper.unmount()
     open.mockRestore()
   })
+
+  it('uses the current deployment address for tool imports when the public base URL is empty', async () => {
+    getPublicSettings.mockResolvedValueOnce({ api_base_url: '' })
+    getCurrentKey.mockResolvedValue({ id: 41, key: 'sk-test-FAKE-41', masked_key: 'sk-tes...E-41', status: 'active',
+      quota: 10, quota_used: 0, rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0,
+      usage_5h: 0, usage_1d: 0, usage_7d: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await wrapper.get('[data-testid="developer-tools"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="codex-import"]').trigger('click')
+    expect(new URL(open.mock.lastCall?.[0] as string).searchParams.get('baseUrl')).toBe(`${window.location.origin}/v1`)
+    wrapper.unmount()
+    open.mockRestore()
+  })
 })
