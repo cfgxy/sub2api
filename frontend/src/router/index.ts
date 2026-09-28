@@ -433,19 +433,19 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/enterprises',
     name: 'AdminEnterprises',
     component: () => import('@/views/admin/EnterprisesView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Enterprise Tenants' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Enterprise Tenants', titleKey: 'admin.enterprise.list.title' }
   },
   {
     path: '/admin/enterprises/new',
     name: 'AdminEnterpriseCreate',
     component: () => import('@/views/admin/EnterpriseCreateView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Create Enterprise' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Create Enterprise', titleKey: 'admin.enterprise.create.title' }
   },
   {
     path: '/admin/enterprises/:id',
     name: 'AdminEnterpriseDetail',
     component: () => import('@/views/admin/EnterpriseDetailView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Enterprise Detail' }
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Enterprise Detail', titleKey: 'admin.enterprise.detail.title' }
   },
   {
     path: '/admin/ops',

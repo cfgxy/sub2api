@@ -5,6 +5,12 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 
 import PlatformEnterpriseShell from '../PlatformEnterpriseShell.vue'
 import { useAppStore } from '@/stores/app'
+import { enterpriseTestLocale } from '@/views/admin/__tests__/enterpriseTestI18n'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const Empty = { template: '<div />' }
 
@@ -24,6 +30,7 @@ function mountShell() {
 }
 
 beforeEach(() => {
+  enterpriseTestLocale.value = 'zh'
   localStorage.clear()
   document.documentElement.classList.remove('dark')
   // setup.ts 的 matchMedia polyfill 对一切查询返回 matches: true；
@@ -42,6 +49,17 @@ beforeEach(() => {
 })
 
 describe('PlatformEnterpriseShell（L1 外壳重制）', () => {
+  it('语言切换后侧栏、页面标题与健康提示保持同一语言', async () => {
+    const { wrapper } = mountShell()
+    enterpriseTestLocale.value = 'en'
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('nav').text()).toContain('Enterprises')
+    expect(wrapper.find('nav').text()).toContain('Platform audit')
+    expect(wrapper.find('header').text()).toContain('Platform administration / Enterprises')
+    expect(wrapper.find('header').text()).toContain('Platform service is healthy')
+    expect(wrapper.text()).not.toContain('平台管理')
+  })
   it('侧边栏渲染平台管理两项导航', () => {
     const { wrapper } = mountShell()
     const links = wrapper.findAll('nav a')

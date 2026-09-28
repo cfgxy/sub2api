@@ -18,7 +18,7 @@
         </div>
         <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
           <span class="sidebar-brand-title text-lg font-bold text-gray-900 dark:text-white">Sub2API</span>
-          <span class="sidebar-brand-title text-[10px] font-medium text-gray-400 dark:text-dark-500">平台管理</span>
+          <span class="sidebar-brand-title text-[10px] font-medium text-gray-400 dark:text-dark-500">{{ t('admin.enterprise.create.platform') }}</span>
         </div>
       </div>
 
@@ -26,7 +26,7 @@
       <nav class="sidebar-nav scrollbar-hide">
         <div class="sidebar-section">
           <div class="sidebar-section-title" :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-            <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">平台管理</span>
+            <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">{{ t('admin.enterprise.create.platform') }}</span>
           </div>
 
           <RouterLink
@@ -52,10 +52,10 @@
           @click="toggleTheme"
           class="sidebar-link mb-2 w-full"
           :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-          :title="sidebarCollapsed ? (isDark ? '切换为亮色' : '切换为暗色') : undefined"
+          :title="sidebarCollapsed ? t(isDark ? 'admin.enterprise.shell.switchLight' : 'admin.enterprise.shell.switchDark') : undefined"
         >
           <component :is="isDark ? SunIcon : MoonIcon" class="h-5 w-5 flex-shrink-0" :class="isDark ? 'text-amber-500' : ''" />
-          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ isDark ? '亮色模式' : '暗色模式' }}</span>
+          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t(isDark ? 'admin.enterprise.shell.lightMode' : 'admin.enterprise.shell.darkMode') }}</span>
         </button>
 
         <!-- Collapse Button -->
@@ -64,10 +64,10 @@
           @click="toggleSidebar"
           class="sidebar-link w-full"
           :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :title="sidebarCollapsed ? t('admin.enterprise.shell.expandSidebar') : t('admin.enterprise.shell.collapseSidebar')"
         >
           <component :is="sidebarCollapsed ? ChevronDoubleRightIcon : ChevronDoubleLeftIcon" class="h-5 w-5 flex-shrink-0" />
-          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">收起侧边栏</span>
+          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('admin.enterprise.shell.collapseSidebar') }}</span>
         </button>
       </div>
     </aside>
@@ -97,20 +97,20 @@
               data-testid="mobile-menu-toggle"
               @click="toggleMobileSidebar"
               class="btn-ghost btn-icon lg:hidden"
-              aria-label="切换菜单"
+              :aria-label="t('admin.enterprise.shell.toggleMenu')"
             >
               <Icon name="menu" size="md" />
             </button>
 
             <div class="hidden lg:block">
-              <h1 class="text-lg font-semibold text-gray-900 dark:text-white">平台管理 / {{ pageTitle }}</h1>
+              <h1 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.platform') }} / {{ pageTitle }}</h1>
             </div>
           </div>
 
           <!-- Right: Health Indicator -->
           <div class="hidden items-center gap-2 text-xs text-gray-500 dark:text-dark-400 sm:flex">
             <span class="h-2 w-2 rounded-full bg-green-600"></span>
-            平台服务正常
+            {{ t('admin.enterprise.create.healthy') }}
           </div>
         </div>
       </header>
@@ -126,21 +126,23 @@
 <script setup lang="ts">
 import { computed, h, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
+const { t } = useI18n({ useScope: 'global' })
 const appStore = useAppStore()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 
-const pageTitle = computed(() => (route.meta.title as string) || '企业管理')
+const pageTitle = computed(() => t(route.name === 'AdminEnterpriseDetail' ? 'admin.enterprise.detail.title' : 'admin.enterprise.common.management'))
 
-const navigation = [
-  { path: '/admin/enterprises', label: '企业管理', icon: 'grid' as const },
-  { path: '/admin/audit-logs', label: '平台审计', icon: 'clipboard' as const },
-]
+const navigation = computed(() => [
+  { path: '/admin/enterprises', label: t('admin.enterprise.common.management'), icon: 'grid' as const },
+  { path: '/admin/audit-logs', label: t('admin.enterprise.create.audit'), icon: 'clipboard' as const },
+])
 
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')

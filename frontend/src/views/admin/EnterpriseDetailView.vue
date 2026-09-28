@@ -1,19 +1,47 @@
-<template><PlatformEnterpriseShell><section><div class="heading"><div><span class="eyebrow">企业管理 / 企业详情</span><h1>{{item?.name || '企业详情'}}</h1><p>查看企业入口、订阅和停用影响范围。</p></div><div class="actions"><el-button @click="router.back()">返回</el-button><el-button v-if="item?.status==='active'" type="danger" @click="disable">停用</el-button></div></div><el-skeleton v-if="loading" :rows="5" animated/><el-alert v-else-if="sourceUnavailable" title="企业详情来源不可用" description="当前未取得平台实时数据，停用操作已禁用，请刷新后重试。" type="error" show-icon/><template v-else-if="item"><el-tabs v-model="activeTab"><el-tab-pane label="概览" name="overview"><el-descriptions :column="2" border><el-descriptions-item label="企业名称">{{item.name}}</el-descriptions-item><el-descriptions-item label="状态">{{item.status}}</el-descriptions-item><el-descriptions-item label="入口域名">{{item.portal_host}}</el-descriptions-item><el-descriptions-item label="创建时间">{{item.created_at}}</el-descriptions-item></el-descriptions><div class="impact"><h2>停用影响范围</h2><el-descriptions :column="2" border><el-descriptions-item label="员工总数">{{item.employee_count}}</el-descriptions-item><el-descriptions-item label="在职员工">{{item.active_employee_count}}</el-descriptions-item><el-descriptions-item label="活动会话">{{item.active_session_count}}</el-descriptions-item><el-descriptions-item label="活动 Key">{{item.active_key_count}}</el-descriptions-item><el-descriptions-item label="关联订阅" :span="2"><div v-if="item.subscriptions.length" class="subscriptions"><div v-for="subscription in item.subscriptions" :key="subscription.id">{{subscriptionLabel(subscription)}}</div></div><span v-else>无活动或待生效订阅</span></el-descriptions-item></el-descriptions></div></el-tab-pane><el-tab-pane label="访问与账号" name="access"><el-descriptions :column="1" border><el-descriptions-item label="管理员邮箱">{{item.admin_email || '未配置'}}</el-descriptions-item><el-descriptions-item label="专用上游用户 ID">{{item.dedicated_upstream_user_id}}</el-descriptions-item><el-descriptions-item label="活动会话">{{item.active_session_count}}</el-descriptions-item><el-descriptions-item label="活动 Key">{{item.active_key_count}}</el-descriptions-item></el-descriptions></el-tab-pane></el-tabs></template></section></PlatformEnterpriseShell></template>
+<template><PlatformEnterpriseShell><section>
+  <div class="heading"><div><span class="eyebrow">{{ t('admin.enterprise.detail.breadcrumb') }}</span><h1>{{ item?.name || t('admin.enterprise.detail.title') }}</h1><p>{{ t('admin.enterprise.detail.description') }}</p></div><div class="actions"><el-button @click="router.back()">{{ t('admin.enterprise.common.back') }}</el-button><el-button v-if="item?.status==='active'" type="danger" @click="disable">{{ t('admin.enterprise.common.disable') }}</el-button></div></div>
+  <el-skeleton v-if="loading" :rows="5" animated/>
+  <el-alert v-else-if="sourceUnavailable" :title="t('admin.enterprise.detail.unavailableTitle')" :description="t('admin.enterprise.detail.unavailableDescription')" type="error" show-icon/>
+  <template v-else-if="item"><el-tabs v-model="activeTab">
+    <el-tab-pane :label="t('admin.enterprise.detail.overview')" name="overview"><el-descriptions :column="2" border>
+      <el-descriptions-item :label="t('admin.enterprise.common.name')">{{ item.name }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.status')">{{ enterpriseStatusLabel(item.status, t) }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.portalHost')">{{ item.portal_host }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.createdAt')">{{ formatDate(item.created_at) }}</el-descriptions-item>
+    </el-descriptions><div class="impact"><h2>{{ t('admin.enterprise.detail.impact') }}</h2><el-descriptions :column="2" border>
+      <el-descriptions-item :label="t('admin.enterprise.common.employeeCount')">{{ item.employee_count }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.activeEmployees')">{{ item.active_employee_count }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.activeSessions')">{{ item.active_session_count }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.activeKeys')">{{ item.active_key_count }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.subscriptions')" :span="2"><div v-if="item.subscriptions.length" class="subscriptions"><div v-for="subscription in item.subscriptions" :key="subscription.id">{{ subscriptionLabel(subscription) }}</div></div><span v-else>{{ t('admin.enterprise.common.noActiveSubscriptions') }}</span></el-descriptions-item>
+    </el-descriptions></div></el-tab-pane>
+    <el-tab-pane :label="t('admin.enterprise.detail.access')" name="access"><el-descriptions :column="1" border>
+      <el-descriptions-item :label="t('admin.enterprise.detail.adminEmail')">{{ item.admin_email || t('admin.enterprise.common.notConfigured') }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.upstreamUserId')">{{ item.dedicated_upstream_user_id }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.activeSessions')">{{ item.active_session_count }}</el-descriptions-item>
+      <el-descriptions-item :label="t('admin.enterprise.common.activeKeys')">{{ item.active_key_count }}</el-descriptions-item>
+    </el-descriptions></el-tab-pane>
+  </el-tabs></template>
+</section></PlatformEnterpriseShell></template>
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { enterprisePlatformAPI, type PlatformEnterprise } from '@/api/enterprisePlatform'
 import PlatformEnterpriseShell from '@/components/admin/PlatformEnterpriseShell.vue'
+import { formatDate } from '@/utils/format'
+import { enterpriseStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n({ useScope: 'global' })
 const item = ref<PlatformEnterprise>()
 const loading = ref(false)
 const sourceUnavailable = ref(false)
 const activeTab = ref('overview')
 function subscriptionLabel(subscription: PlatformEnterprise['subscriptions'][number]) {
-  return `${subscription.plan}（${subscription.status}，weekly 上限 ${subscription.weekly_limit || '未配置'}，有效期至 ${subscription.expires_at}）`
+  return t('admin.enterprise.detail.subscriptionValue', { plan: subscription.plan, status: subscriptionStatusLabel(subscription.status, t), limit: subscription.weekly_limit || t('admin.enterprise.common.notConfigured'), expiresAt: formatDate(subscription.expires_at) })
 }
 
 async function load() {
@@ -24,7 +52,7 @@ async function load() {
 		item.value = await enterprisePlatformAPI.get(Number(route.params.id))
 	} catch {
 		sourceUnavailable.value = true
-		ElMessage.error('企业详情暂时不可用')
+			ElMessage.error(t('admin.enterprise.detail.unavailableMessage'))
 	} finally {
 		loading.value = false
 	}
@@ -37,25 +65,25 @@ async function disable() {
 	} catch {
 		item.value = undefined
 		sourceUnavailable.value = true
-		ElMessage.error('企业详情暂时不可用')
+			ElMessage.error(t('admin.enterprise.detail.unavailableMessage'))
 		return
 	}
 	item.value = current
 	if (current.status !== 'active') return
 	const subscriptionLabelText = current.subscriptions.length
 		? current.subscriptions.map(subscriptionLabel).join('；')
-		: '无活动或待生效订阅'
+			: t('admin.enterprise.common.noActiveSubscriptions')
 	try {
 		await ElMessageBox.confirm(
-			`确认停用 ${current.name}？关联订阅：${subscriptionLabelText}；员工 ${current.employee_count} 人（在职 ${current.active_employee_count} 人）；活动会话 ${current.active_session_count} 个；活动 Key ${current.active_key_count} 个。停用会拒绝新登录、撤销活动会话并禁用活动 Key，保留历史记录。`,
-			'停用企业',
+				t('admin.enterprise.list.disableConfirm', { name: current.name, subscriptions: subscriptionLabelText, employees: current.employee_count, activeEmployees: current.active_employee_count, sessions: current.active_session_count, keys: current.active_key_count }),
+				t('admin.enterprise.list.disableTitle'),
 			{ type: 'warning' },
 		)
-		await enterprisePlatformAPI.disable(current.id, '平台运营确认停用')
-		ElMessage.success('企业已停用')
+			await enterprisePlatformAPI.disable(current.id, t('admin.enterprise.list.disableReason'))
+			ElMessage.success(t('admin.enterprise.list.disableSuccess'))
 		await load()
 	} catch (error) {
-		if (error !== 'cancel') ElMessage.error('企业停用失败')
+			if (error !== 'cancel') ElMessage.error(t('admin.enterprise.list.disableFailed'))
 	}
 }
 

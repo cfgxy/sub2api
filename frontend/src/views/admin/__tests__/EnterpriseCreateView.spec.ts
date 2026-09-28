@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { i18n, loadLocaleMessages } from '@/i18n'
+import { enterpriseTestLocale } from './enterpriseTestI18n'
 
 import EnterpriseCreateView from '../EnterpriseCreateView.vue'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
+  useI18n: (await import('./enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const { create, listUsers, listEnterprises } = vi.hoisted(() => ({
   create: vi.fn(),
@@ -39,8 +46,13 @@ function fillForm(form: { name: string; portal_host: string; dedicated_upstream_
 }
 
 describe('EnterpriseCreateView 搜索选人', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    vi.stubGlobal('scrollTo', vi.fn())
+    await loadLocaleMessages('zh')
+    await loadLocaleMessages('en')
+    i18n.global.locale.value = 'zh'
+    enterpriseTestLocale.value = 'zh'
     listEnterprises.mockResolvedValue([])
     listUsers.mockResolvedValue({ items: [eligible], total: 1, page: 1, page_size: 20, pages: 1 })
   })
@@ -60,7 +72,7 @@ describe('EnterpriseCreateView 搜索选人', () => {
       active_key_count: 0,
       subscriptions: [],
     })
-    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
     await flushPromises()
     await wrapper.vm.searchUsers('测试成员')
     await flushPromises()
@@ -81,6 +93,11 @@ describe('EnterpriseCreateView 搜索选人', () => {
     await wrapper.get('[data-testid="enterprise-create-success"] .el-button').trigger('click')
     expect(push).toHaveBeenCalledWith('/admin/enterprises/7')
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ dedicated_upstream_user_id: 9 }))
+    i18n.global.locale.value = 'en'
+    enterpriseTestLocale.value = 'en'
+    await flushPromises()
+    expect(wrapper.text()).toContain('Create enterprise')
+    expect(wrapper.text()).not.toContain('企业基础信息')
   })
 
   it.each([
@@ -88,7 +105,7 @@ describe('EnterpriseCreateView 搜索选人', () => {
     ['无可用订阅', { ...eligible, subscriptions: [] }, '没有当前可用的周订阅'],
   ])('%s不可提交并展示原因', async (_label, candidate, reason) => {
     listUsers.mockResolvedValueOnce({ items: [candidate], total: 1, page: 1, page_size: 20, pages: 1 })
-    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
     await flushPromises()
     await wrapper.vm.searchUsers('member')
     await flushPromises()
@@ -101,7 +118,7 @@ describe('EnterpriseCreateView 搜索选人', () => {
 
   it('已有企业主账号不可复用', async () => {
     listEnterprises.mockResolvedValueOnce([{ dedicated_upstream_user_id: 9 }])
-    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
     await flushPromises()
     await wrapper.vm.searchUsers('member')
     await flushPromises()
@@ -114,7 +131,7 @@ describe('EnterpriseCreateView 搜索选人', () => {
 
   it('企业列表加载失败时禁用搜索并拒绝提交', async () => {
     listEnterprises.mockRejectedValueOnce(new Error('service unavailable'))
-    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
     await flushPromises()
     expect(wrapper.text()).toContain('企业列表加载失败')
     await wrapper.vm.searchUsers('member')
@@ -126,7 +143,7 @@ describe('EnterpriseCreateView 搜索选人', () => {
 
   it('用户搜索失败时展示提示且无候选用户', async () => {
     listUsers.mockRejectedValueOnce(new Error('service unavailable'))
-    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
     await flushPromises()
     await wrapper.vm.searchUsers('member')
     await flushPromises()
