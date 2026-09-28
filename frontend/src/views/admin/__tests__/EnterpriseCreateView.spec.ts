@@ -38,7 +38,7 @@ const eligible = {
   subscriptions: [{ status: 'active', starts_at: '2025-01-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z', group: { status: 'active', weekly_limit_usd: 10 } }],
 }
 
-function fillForm(form: { name: string; portal_host: string; dedicated_upstream_user_id: number; reason: string }) {
+function fillForm(form: { name: string; portal_host: string; dedicated_upstream_user_id: number | ''; reason: string }) {
   form.name = '测试企业'
   form.portal_host = 'company.example.test'
   form.dedicated_upstream_user_id = 9
@@ -48,6 +48,7 @@ function fillForm(form: { name: string; portal_host: string; dedicated_upstream_
 describe('EnterpriseCreateView 搜索选人', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
+    create.mockReset()
     vi.stubGlobal('scrollTo', vi.fn())
     await loadLocaleMessages('zh')
     await loadLocaleMessages('en')
@@ -55,6 +56,53 @@ describe('EnterpriseCreateView 搜索选人', () => {
     enterpriseTestLocale.value = 'zh'
     listEnterprises.mockResolvedValue([])
     listUsers.mockResolvedValue({ items: [eligible], total: 1, page: 1, page_size: 20, pages: 1 })
+  })
+
+  it('初始空态搜索、选人、清空和重新选择均只提交真实用户 ID', async () => {
+    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
+    await flushPromises()
+    const select = wrapper.findComponent({ name: 'ElSelect' })
+    expect(select.props('modelValue')).toBe('')
+    expect(wrapper.find('.el-select__placeholder').text()).toBe('按邮箱或昵称搜索')
+    expect(wrapper.vm.selectedUser).toBeUndefined()
+
+    await wrapper.vm.searchUsers('member')
+    await flushPromises()
+    expect(wrapper.vm.userOptions.map((option: { user: { id: number } }) => option.user.id)).toEqual([9])
+    select.vm.$emit('update:modelValue', 9)
+    select.vm.$emit('change', 9)
+    await flushPromises()
+    expect(wrapper.vm.selectedUser?.id).toBe(9)
+
+    select.vm.$emit('update:modelValue', '')
+    select.vm.$emit('change', '')
+    await flushPromises()
+    expect(wrapper.vm.form.dedicated_upstream_user_id).toBe('')
+    expect(wrapper.vm.selectedUser).toBeUndefined()
+    fillForm(wrapper.vm.form)
+    await wrapper.vm.submit()
+    expect(create).not.toHaveBeenCalled()
+
+    await wrapper.vm.searchUsers('member')
+    select.vm.$emit('update:modelValue', 9)
+    select.vm.$emit('change', 9)
+    await flushPromises()
+    create.mockResolvedValueOnce({ id: 7, dedicated_upstream_user_id: 9 })
+    await wrapper.vm.submit()
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ dedicated_upstream_user_id: 9 }))
+  })
+
+  it('无效的 0 不成为候选或提交值', async () => {
+    listUsers.mockResolvedValueOnce({ items: [{ ...eligible, id: 0 }, eligible], total: 2, page: 1, page_size: 20, pages: 1 })
+    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
+    await flushPromises()
+    await wrapper.vm.searchUsers('member')
+    expect(wrapper.vm.userOptions.map((option: { user: { id: number } }) => option.user.id)).toEqual([9])
+    fillForm(wrapper.vm.form)
+    wrapper.vm.form.dedicated_upstream_user_id = 0
+    wrapper.vm.selectUser(0)
+    await wrapper.vm.submit()
+    expect(create).not.toHaveBeenCalled()
   })
 
   it('创建成功后展示真实返回的企业名称、域名、主账号及查看详情入口', async () => {
