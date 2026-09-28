@@ -13,11 +13,12 @@ const stubs = {
 }
 
 describe('开发工具弹窗', () => {
-  it('显示 Codex++ 下载和关闭的无凭据导入入口', () => {
+  it('显示 Codex++ 下载和关闭的无凭据导入入口', async () => {
     const wrapper = mount(DeveloperToolsModal, {
       props: { show: true, canImportCcs: true, codexCandidate: null },
       global: { stubs }
     })
+    await wrapper.get('[data-testid="codex-tab"]').trigger('click')
     expect(wrapper.get('a[href="https://github.com/cfgxy/CodexPlusPlus"]').attributes('target')).toBe('_blank')
     expect(wrapper.get('[data-testid="codex-import"]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('keys.developerTools.codexUnavailable')
@@ -64,14 +65,33 @@ describe('开发工具弹窗', () => {
     expect(wrapper.find('[data-testid="ccs-import"]').exists()).toBe(false)
   })
 
-  it('重新打开时复位为 Codex++ TAB，不复用上次状态', async () => {
+  it('ChatGPT 组密钥重新打开时复位为 Codex++ TAB，不复用上次状态', async () => {
     const wrapper = mount(DeveloperToolsModal, {
-      props: { show: true, canImportCcs: true, codexCandidate: null },
+      props: {
+        show: true,
+        canImportCcs: true,
+        codexCandidate: {
+          name: 'Sub2API / OpenAI / key #42',
+          baseUrl: 'https://api.example.test/v1',
+          wireApi: 'responses',
+          relayMode: 'pureApi'
+        }
+      },
       global: { stubs }
     })
     await wrapper.get('[data-testid="ccs-tab"]').trigger('click')
     await wrapper.setProps({ show: false })
     await wrapper.setProps({ show: true })
     expect(wrapper.get('[data-testid="codex-tab"]').attributes('aria-selected')).toBe('true')
+  })
+
+  it('Claude 组密钥打开即落在 CCSwitch TAB，不停在禁用的 Codex++ 入口', () => {
+    const wrapper = mount(DeveloperToolsModal, {
+      props: { show: true, canImportCcs: true, codexCandidate: null },
+      global: { stubs }
+    })
+    expect(wrapper.get('[data-testid="ccs-tab"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[data-testid="codex-tab"]').attributes('aria-selected')).toBe('false')
+    expect(wrapper.get('[data-testid="ccs-import"]').attributes('disabled')).toBeUndefined()
   })
 })

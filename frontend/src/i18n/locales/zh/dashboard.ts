@@ -117,7 +117,7 @@ export default {
       import: '导入密钥配置',
       importToCodex: '导入到 Codex++',
       confirmInApp: '点击后请在 Codex++ 中确认。协议链接可能被浏览器或系统记录，请仅在可信设备上操作。',
-      codexUnavailable: '仅支持有效且可读取的 OpenAI 密钥；Claude 接口暂未支持'
+      codexUnavailable: 'Codex++ 仅支持有效且可读取的 ChatGPT（OpenAI）密钥；Claude 密钥请在 CCSwitch 标签页导入'
     },
     enable: '启用',
     disable: '禁用',
