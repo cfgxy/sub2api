@@ -73,13 +73,12 @@ describe('EnterpriseEmployeeDetailView', () => {
     listWorkbenchAuditEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
   })
 
-  it('masks employee_id and email in the header and info list, and shows the masked API key', async () => {
+  it('masks employee_id but shows the unique email and masked API key', async () => {
     const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('••••••••••')
-    expect(wrapper.text()).toContain('e***@example.com')
-    expect(wrapper.text()).not.toContain('employee-a@example.com')
+    expect(wrapper.text()).toContain('employee-a@example.com')
 
     await clickText(wrapper, 'API Key')
     expect(wrapper.text()).toContain('sk-****abcd')
@@ -90,9 +89,24 @@ describe('EnterpriseEmployeeDetailView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    // D5：员工身份键只有邮箱，页面不得展示由邮箱本地部分拼出的伪姓名
-    expect(wrapper.text()).not.toContain('employee-a')
-    expect(wrapper.get('h2').text()).toBe('e***@example.com')
+    expect(wrapper.get('h2').text()).toBe('employee-a@example.com')
+    wrapper.unmount()
+
+    getEmployee.mockResolvedValueOnce({ ...baseDetail, email: 'ella@example.com' })
+    const other = mountView()
+    await flushPromises()
+    expect(other.get('h2').text()).toBe('ella@example.com')
+    expect(other.get('h2').text()).not.toBe('emma@example.com')
+    expect(other.text()).toContain('ella@example.com')
+    other.unmount()
+  })
+
+  it('keeps same-initial employee emails distinct in title and profile', async () => {
+    getEmployee.mockResolvedValueOnce({ ...baseDetail, email: 'emma@example.com' })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('h2').text()).toBe('emma@example.com')
+    expect(wrapper.text()).toContain('emma@example.com')
     wrapper.unmount()
   })
 

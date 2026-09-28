@@ -54,8 +54,22 @@ describe('EnterpriseWorkbenchView', () => {
     const summaryParams = getWorkbenchSummary.mock.calls[0]?.[0] as Record<string, unknown>
     expect(summaryParams).not.toHaveProperty('window_type')
     expect(wrapper.text()).toContain('employee@example.com')
-    expect(wrapper.text()).toContain('allocation.update')
+    expect(wrapper.text()).toContain('调整额度')
+    expect(wrapper.text()).not.toContain('allocation.update')
     expect(wrapper.text()).toContain('admin@example.com')
+    wrapper.unmount()
+  })
+
+  it('shows unknown audit types as localized labels with inspectable technical identifiers', async () => {
+    listWorkbenchAuditEvents.mockResolvedValueOnce({
+      items: [{ id: 2, event_type: 'custom.future', entity_type: 'custom_entity', result: 'success', payload: {}, actor_ref: 'admin@example.com', created_at: new Date().toISOString() }],
+      total: 1, page: 1, page_size: 5, pages: 1,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.text()).toContain('未知事件')
+    expect(wrapper.text()).toContain('未知对象')
+    expect(wrapper.get('[title="custom.future · custom_entity"]').exists()).toBe(true)
     wrapper.unmount()
   })
 

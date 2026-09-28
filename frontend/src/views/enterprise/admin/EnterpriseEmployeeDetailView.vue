@@ -34,7 +34,7 @@
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <h2 class="truncate text-lg font-bold text-gray-900 dark:text-white">
-                {{ maskEmail(detail.email) }}
+                {{ detail.email }}
               </h2>
               <StatusBadge :status="detail.status" :label="employeeStatusText(detail.status)" />
             </div>
@@ -196,7 +196,7 @@
                   aria-hidden="true"
                 ></span>
                 <p class="text-sm font-semibold text-gray-900 dark:text-white">
-                  {{ eventLabel(event.event_type) }}
+                  <span :title="event.event_type">{{ auditEventLabel(event.event_type, t) }}</span>
                 </p>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                   {{ formatDate(event.created_at) }} · {{ event.actor_ref }}
@@ -267,7 +267,7 @@ import {
   isEnterpriseEmployeeDepartmentInvalid,
   isEnterpriseEmployeeVersionConflict
 } from '@/api/enterprise'
-import { employeeStatusLabel, keyStatusLabel } from '@/utils/enterpriseDisplay'
+import { auditEventLabel, employeeStatusLabel, keyStatusLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type {
   EnterpriseDepartment,
@@ -342,18 +342,6 @@ const employeeConfiguredCredit = computed(
       ?.configured_credit ?? '0'
 )
 const avatarLetter = computed(() => detail.value?.email?.[0]?.toUpperCase() || '?')
-const maskEmail = (email: string) => {
-  const at = email.indexOf('@')
-  if (at <= 0) return '***'
-  return `${email[0]}***${email.slice(at)}`
-}
-const eventLabel = (value: string) =>
-  ({
-    'employee.created': '创建员工',
-    'employee.updated': '资料更新',
-    'employee.terminated': '标记离职',
-    'employee.update_rejected': '更新被拒绝（版本冲突）'
-  })[value] || value
 const formatDate = (value?: string) =>
   value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '-'
 
@@ -365,7 +353,7 @@ const profileRows = computed(() => {
   if (!detail.value) return []
   const rows = [
     { label: '员工 ID', value: maskDots },
-    { label: '企业邮箱', value: maskEmail(detail.value.email) },
+    { label: '企业邮箱', value: detail.value.email },
     { label: '部门归属', value: detail.value.department_name || '未分配' },
     { label: '状态', value: employeeStatusText(detail.value.status) },
     { label: '首次改密', value: detail.value.must_change_password ? '待完成' : '已完成' },

@@ -251,11 +251,10 @@
               class="absolute -left-[23px] top-1.5 h-2 w-2 rounded-full bg-primary-500 ring-2 ring-white dark:ring-dark-900"
               aria-hidden="true"
             ></span>
-            <!-- 审计事件类型是后端开放的技术标识（如 allocation.update），不是固定枚举，按原样展示以保证可追溯 -->
-            <p class="text-xs font-semibold text-gray-900 dark:text-white">
-              {{ event.event_type }}
+            <p class="text-xs font-semibold text-gray-900 dark:text-white" :title="`${event.event_type} · ${event.entity_type}`">
+              {{ auditEventLabel(event.event_type, t) }}
               <span v-if="event.entity_type" class="font-normal text-gray-500 dark:text-dark-400">
-                · {{ event.entity_type }}
+                · {{ auditEntityLabel(event.entity_type, t) }}
               </span>
             </p>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
@@ -307,7 +306,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import EnterpriseUsageTrendChart from '@/components/charts/EnterpriseUsageTrendChart.vue'
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
-import { sourceStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
+import { auditEntityLabel, auditEventLabel, sourceStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type {
   EnterpriseDepartment,

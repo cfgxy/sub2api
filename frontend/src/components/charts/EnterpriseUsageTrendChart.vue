@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -28,7 +28,15 @@ const props = defineProps<{
 }>()
 
 // 图表实例化色值只能是字面量，沿用原版 components/charts/* 的取色约定，不引入新调色板
-const isDarkMode = computed(() => document.documentElement.classList.contains('dark'))
+const isDarkMode = ref(document.documentElement.classList.contains('dark'))
+let themeObserver: MutationObserver | undefined
+onMounted(() => {
+  themeObserver = new MutationObserver(() => {
+    isDarkMode.value = document.documentElement.classList.contains('dark')
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+})
+onUnmounted(() => themeObserver?.disconnect())
 const chartColors = computed(() => ({
   text: isDarkMode.value ? '#e5e7eb' : '#374151',
   grid: isDarkMode.value ? '#374151' : '#e5e7eb',
