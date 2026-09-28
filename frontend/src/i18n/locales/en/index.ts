@@ -4,6 +4,7 @@ import dashboard from './dashboard'
 import channelMonitorV2 from './channelMonitorV2'
 import batchImage from './batchImage'
 import admin from './admin'
+import enterprise from './enterprise'
 import misc from './misc'
 
 export default {
@@ -13,5 +14,6 @@ export default {
   ...channelMonitorV2,
   ...batchImage,
   admin,
+  ...enterprise,
   ...misc,
 }

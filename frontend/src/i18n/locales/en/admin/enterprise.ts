@@ -31,7 +31,7 @@ export default {
       enableConfirm: 'Enable {name}? Portal sign-in will resume. Revoked sessions and disabled Key allocations will not be restored automatically; an administrator must reassign them if needed.',
       enableTitle: 'Enable enterprise', enableReason: 'Platform operator confirmed enable', enableSuccess: 'Enterprise enabled', enableFailed: 'Failed to enable enterprise',
       hostConfirm: 'Change the portal domain for {name} (currently {host})? Access and Tokens tied to the old Host will no longer work; use the new domain.',
-      hostTitle: 'Change portal domain', hostInvalid: 'Use lowercase letters, numbers, dots, and hyphens only',
+      hostTitle: 'Change portal domain', hostLabel: 'New portal domain', hostInvalid: 'Use lowercase letters, numbers, dots, and hyphens only',
       hostReason: 'Platform operator changed portal domain', hostSuccess: 'Portal domain updated', hostFailed: 'Failed to update portal domain',
     },
     detail: {

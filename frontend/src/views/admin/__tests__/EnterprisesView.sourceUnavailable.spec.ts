@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { i18n, loadLocaleMessages } from '@/i18n'
 import { enterpriseTestLocale } from './enterpriseTestI18n'
 
@@ -20,7 +20,9 @@ vi.mock('@/api/enterprisePlatform', () => ({
     list,
     get: vi.fn(),
     create: vi.fn(),
-    disable: vi.fn()
+    disable: vi.fn(),
+    enable: vi.fn(),
+    updateHost: vi.fn()
   }
 }))
 
@@ -28,26 +30,26 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() })
 }))
 
-vi.mock('element-plus', async () => {
-  const actual = await vi.importActual<typeof import('element-plus')>('element-plus')
-  return {
-    ...actual,
-    ElMessage: { error: vi.fn(), success: vi.fn() }
-  }
-})
+function mountView() {
+  return mount(EnterprisesView, {
+    global: {
+      plugins: [i18n],
+      stubs: { teleport: true, PlatformEnterpriseShell: { template: '<div><slot /></div>' } }
+    }
+  })
+}
 
 describe('EnterprisesView 来源失败态', () => {
-  it('列表加载失败时展示持久的来源不可用提示，且不渲染「暂无企业租户」空态', async () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia())
     await loadLocaleMessages('zh')
     i18n.global.locale.value = 'zh'
     enterpriseTestLocale.value = 'zh'
+  })
+
+  it('列表加载失败时展示持久的来源不可用提示，且不渲染「暂无企业租户」空态', async () => {
     list.mockRejectedValueOnce(new Error('network down'))
-    const wrapper = mount(EnterprisesView, {
-      global: {
-        plugins: [ElementPlus, i18n],
-        stubs: { PlatformEnterpriseShell: { template: '<div><slot /></div>' } }
-      }
-    })
+    const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.find('[data-testid="enterprises-source-unavailable"]').exists()).toBe(true)
@@ -55,16 +57,8 @@ describe('EnterprisesView 来源失败态', () => {
   })
 
   it('列表加载成功且为空时展示「暂无企业租户」空态，不展示来源不可用提示', async () => {
-    await loadLocaleMessages('zh')
-    i18n.global.locale.value = 'zh'
-    enterpriseTestLocale.value = 'zh'
     list.mockResolvedValueOnce([])
-    const wrapper = mount(EnterprisesView, {
-      global: {
-        plugins: [ElementPlus, i18n],
-        stubs: { PlatformEnterpriseShell: { template: '<div><slot /></div>' } }
-      }
-    })
+    const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.find('[data-testid="enterprises-source-unavailable"]').exists()).toBe(false)

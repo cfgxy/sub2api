@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { i18n, loadLocaleMessages } from '@/i18n'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { enterpriseTestLocale } from './enterpriseTestI18n'
 
 import EnterprisesView from '../EnterprisesView.vue'
@@ -30,32 +31,21 @@ vi.mock('@/api/enterprisePlatform', () => ({
   },
 }))
 
-const { confirmBox, promptBox } = vi.hoisted(() => ({
-  confirmBox: vi.fn().mockResolvedValue('confirm'),
-  promptBox: vi.fn().mockResolvedValue({ value: 'renamed.example.com' }),
-}))
-
-vi.mock('element-plus', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('element-plus')>()
-  return {
-    default: actual.default,
-    ElMessage: actual.ElMessage,
-    ElMessageBox: { confirm: confirmBox, prompt: promptBox },
-  }
-})
-
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 
+// BaseDialog / Select 的浮层走 Teleport 渲染到 body，就地展开后断言才能落在 wrapper 内
 function mountView() {
   return mount(EnterprisesView, {
     global: {
-      plugins: [ElementPlus, i18n],
-      stubs: { PlatformEnterpriseShell: { template: '<div><slot /></div>' } },
+      plugins: [i18n],
+      stubs: { teleport: true, PlatformEnterpriseShell: { template: '<div><slot /></div>' } },
     },
   })
 }
+
+const confirmDialog = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(ConfirmDialog)
 
 function enterpriseFixture(overrides: Record<string, unknown> = {}) {
   return {
@@ -77,6 +67,7 @@ function enterpriseFixture(overrides: Record<string, unknown> = {}) {
 
 describe('EnterprisesView 信息结构补齐', () => {
   beforeEach(async () => {
+    setActivePinia(createPinia())
     vi.clearAllMocks()
     await loadLocaleMessages('zh')
     await loadLocaleMessages('en')
@@ -115,7 +106,7 @@ describe('EnterprisesView 信息结构补齐', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="enterprise-enable"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('停用')
+    expect(wrapper.find('[data-testid="enterprise-disable"]').exists()).toBe(true)
   })
 
   it('停用企业展示启用入口，确认后调用启用接口并刷新列表', async () => {
@@ -129,23 +120,66 @@ describe('EnterprisesView 信息结构补齐', () => {
     await enableButton.trigger('click')
     await flushPromises()
 
-    expect(confirmBox).toHaveBeenCalledWith(expect.stringContaining('启用 云川数据'), '启用企业', expect.anything())
+    expect(confirmDialog(wrapper).props('show')).toBe(true)
+    expect(confirmDialog(wrapper).props('title')).toBe('启用企业')
+    expect(confirmDialog(wrapper).props('message')).toContain('启用 云川数据')
+    expect(enable).not.toHaveBeenCalled()
+
+    confirmDialog(wrapper).vm.$emit('confirm')
+    await flushPromises()
+
     expect(enable).toHaveBeenCalledWith(1, '平台运营确认启用')
     expect(list).toHaveBeenCalledTimes(2)
   })
 
-  it('改域名入口经确认弹窗输入新域名后调用修改接口', async () => {
-    list.mockResolvedValueOnce([enterpriseFixture()])
+  it('停用前先拉取实时影响面，取消确认时不调用停用接口', async () => {
+    list.mockResolvedValue([enterpriseFixture()])
+    get.mockResolvedValueOnce(enterpriseFixture())
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="enterprise-disable"]').trigger('click')
+    await flushPromises()
+
+    expect(get).toHaveBeenCalledWith(1)
+    expect(confirmDialog(wrapper).props('title')).toBe('停用企业')
+    expect(confirmDialog(wrapper).props('message')).toContain('停用 云川数据')
+
+    confirmDialog(wrapper).vm.$emit('cancel')
+    await flushPromises()
+    expect(confirmDialog(wrapper).props('show')).toBe(false)
+    expect(disable).not.toHaveBeenCalled()
+  })
+
+  it('改域名弹窗输入新域名后调用修改接口', async () => {
+    list.mockResolvedValue([enterpriseFixture()])
     updateHost.mockResolvedValueOnce({ success: true })
     const wrapper = mountView()
     await flushPromises()
 
-    const hostButton = wrapper.find('[data-testid="enterprise-update-host"]')
-    expect(hostButton.exists()).toBe(true)
-    await hostButton.trigger('click')
+    await wrapper.get('[data-testid="enterprise-update-host"]').trigger('click')
     await flushPromises()
 
-    expect(promptBox).toHaveBeenCalledWith(expect.stringContaining('yunchuan.example.com'), '修改入口域名', expect.anything())
+    expect(wrapper.text()).toContain('yunchuan.example.com')
+    await wrapper.get('[data-testid="enterprise-host-input"] input').setValue('Renamed.Example.COM')
+    await wrapper.get('[data-testid="enterprise-host-submit"]').trigger('click')
+    await flushPromises()
+
     expect(updateHost).toHaveBeenCalledWith(1, 'renamed.example.com', '平台运营修改入口域名')
+  })
+
+  it('改域名弹窗对非法域名就地报错且不调用接口', async () => {
+    list.mockResolvedValue([enterpriseFixture()])
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="enterprise-update-host"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="enterprise-host-input"] input').setValue('bad host!')
+    await wrapper.get('[data-testid="enterprise-host-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(updateHost).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('域名格式不正确')
   })
 })

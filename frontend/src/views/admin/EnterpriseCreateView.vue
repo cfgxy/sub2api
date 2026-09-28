@@ -1,70 +1,184 @@
 <template>
-  <div class="platform-page">
-    <aside class="side">
-      <div class="logo"><span class="logo-mark">S</span><div><strong>Sub2API</strong><small>{{ t('admin.enterprise.create.platform') }}</small></div></div>
-      <div class="nav-label">{{ t('admin.enterprise.create.platform') }}</div>
-      <RouterLink class="nav active" to="/admin/enterprises">{{ t('admin.enterprise.common.management') }}</RouterLink>
-      <RouterLink class="nav" to="/admin/audit-logs">{{ t('admin.enterprise.create.audit') }}</RouterLink>
-      <div class="side-help">{{ t('admin.enterprise.create.help') }}</div>
-    </aside>
-    <div class="content">
-      <header class="topbar"><div class="crumb">{{ t('admin.enterprise.create.breadcrumb') }}</div><div class="health"><i></i>{{ t('admin.enterprise.create.healthy') }}</div></header>
-      <main>
-        <RouterLink class="back" to="/admin/enterprises">‹ {{ t('admin.enterprise.create.backToList') }}</RouterLink>
-        <div class="titlebar"><div><h1>{{ t('admin.enterprise.create.title') }}</h1><p>{{ t('admin.enterprise.create.description') }}</p></div></div>
-        <el-alert v-if="success && created" type="success" :title="t('admin.enterprise.create.successTitle')" :closable="false" show-icon class="result" data-testid="enterprise-create-success">
-          <template #default>
-            <div class="result-grid">
-              <div><span>{{ t('admin.enterprise.common.name') }}</span><strong>{{ created.name }}</strong></div>
-              <div><span>{{ t('admin.enterprise.common.portalHost') }}</span><strong>{{ created.portal_host }}</strong></div>
-              <div><span>{{ t('admin.enterprise.create.dedicatedAccount') }}</span><strong>{{ created.admin_email || t('admin.enterprise.create.configured') }}</strong></div>
-              <div><span>{{ t('admin.enterprise.common.upstreamUserId') }}</span><strong>{{ created.dedicated_upstream_user_id }}</strong></div>
+  <PlatformEnterpriseShell>
+    <div class="mx-auto max-w-5xl space-y-6">
+      <div>
+        <RouterLink class="text-sm text-gray-500 hover:text-primary-600 dark:text-dark-400 dark:hover:text-primary-400" to="/admin/enterprises">
+          ‹ {{ t('admin.enterprise.create.backToList') }}
+        </RouterLink>
+        <h1 class="mt-3 text-2xl font-bold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.description') }}</p>
+      </div>
+
+      <div v-if="success && created" class="card border-green-200 dark:border-green-900" data-testid="enterprise-create-success">
+        <div class="card-body space-y-4">
+          <h2 class="text-base font-semibold text-green-700 dark:text-green-400">{{ t('admin.enterprise.create.successTitle') }}</h2>
+          <dl class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.name') }}</dt>
+              <dd class="text-sm font-semibold text-gray-900 dark:text-white">{{ created.name }}</dd>
             </div>
-            <p class="result-note">{{ t('admin.enterprise.create.successNote') }}</p>
-            <el-button text type="primary" @click="router.push(`/admin/enterprises/${created.id}`)">{{ t('admin.enterprise.create.viewDetail') }} ›</el-button>
-          </template>
-        </el-alert>
-        <div class="layout">
-          <el-form ref="formRef" class="form-panel" :model="form" :rules="rules" label-position="top" @submit.prevent="submit">
-            <section class="section"><div class="section-head"><span>1</span><div><h2>{{ t('admin.enterprise.create.basicTitle') }}</h2><p>{{ t('admin.enterprise.create.basicDescription') }}</p></div></div>
-              <el-form-item :label="t('admin.enterprise.common.name')" prop="name"><el-input v-model="form.name" maxlength="255" :placeholder="t('admin.enterprise.create.namePlaceholder')" /></el-form-item>
-              <el-form-item :label="t('admin.enterprise.create.portalLabel')" prop="portal_host"><el-input v-model="form.portal_host" placeholder="enterprise.example.com" /></el-form-item>
-            </section>
-            <section class="section"><div class="section-head"><span>2</span><div><h2>{{ t('admin.enterprise.create.accountTitle') }}</h2><p>{{ t('admin.enterprise.create.accountDescription') }}</p></div></div>
-              <el-form-item :label="t('admin.enterprise.create.dedicatedAccount')" prop="dedicated_upstream_user_id">
-                <el-select v-model="form.dedicated_upstream_user_id" filterable remote clearable :remote-method="searchUsers" :loading="searching" :disabled="!enterprisesLoaded" :placeholder="t('admin.enterprise.create.searchAccount')" style="width:100%" @change="selectUser">
-                  <el-option v-for="option in userOptions" :key="option.user.id" :value="option.user.id" :label="optionLabel(option)" :disabled="!!option.reason" />
-                </el-select>
-              </el-form-item>
-              <el-alert v-if="sourceError" type="error" :title="sourceError" :closable="false" show-icon class="source-error" />
-              <p v-else-if="selectedReason" class="source-error">{{ selectedReason }}</p>
-              <el-alert type="info" :closable="false" :title="t('admin.enterprise.create.sourceTitle')" :description="t('admin.enterprise.create.sourceDescription')" />
-            </section>
-            <section class="section"><div class="section-head"><span>3</span><div><h2>{{ t('admin.enterprise.create.reasonTitle') }}</h2><p>{{ t('admin.enterprise.create.reasonDescription') }}</p></div></div>
-              <el-form-item :label="t('admin.enterprise.create.reasonLabel')" prop="reason"><el-input v-model="form.reason" type="textarea" maxlength="500" show-word-limit :rows="3" :placeholder="t('admin.enterprise.create.reasonPlaceholder')" /></el-form-item>
-            </section>
-            <div class="actions"><el-button @click="router.push('/admin/enterprises')">{{ t('admin.enterprise.common.cancel') }}</el-button><el-button type="primary" native-type="submit" :loading="saving">{{ t('admin.enterprise.create.title') }}</el-button></div>
-          </el-form>
-          <aside class="check-panel"><h3>{{ t('admin.enterprise.create.checksTitle') }}</h3><ul><li>{{ t('admin.enterprise.create.checksName') }}</li><li>{{ t('admin.enterprise.create.checksActive') }}</li><li>{{ t('admin.enterprise.create.checksSubscription') }}</li><li>{{ t('admin.enterprise.create.checksPrivacy') }}</li></ul><div class="note">{{ t('admin.enterprise.create.note') }}</div></aside>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.portalHost') }}</dt>
+              <dd class="text-sm font-semibold text-gray-900 dark:text-white">{{ created.portal_host }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.dedicatedAccount') }}</dt>
+              <dd class="text-sm font-semibold text-gray-900 dark:text-white">{{ created.admin_email || t('admin.enterprise.create.configured') }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.upstreamUserId') }}</dt>
+              <dd class="text-sm font-semibold text-gray-900 dark:text-white">{{ created.dedicated_upstream_user_id }}</dd>
+            </div>
+          </dl>
+          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.successNote') }}</p>
+          <button class="btn btn-secondary btn-sm" data-testid="enterprise-create-view-detail" @click="router.push(`/admin/enterprises/${created.id}`)">
+            {{ t('admin.enterprise.create.viewDetail') }} ›
+          </button>
         </div>
-      </main>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+        <form class="card" @submit.prevent="submit">
+          <section class="card-body space-y-4 border-b border-gray-200 dark:border-dark-700">
+            <div class="flex gap-3">
+              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">1</span>
+              <div>
+                <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.basicTitle') }}</h2>
+                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.basicDescription') }}</p>
+              </div>
+            </div>
+            <div data-testid="enterprise-create-name">
+              <Input
+                v-model="form.name"
+                :label="t('admin.enterprise.common.name')"
+                :placeholder="t('admin.enterprise.create.namePlaceholder')"
+                :error="errors.name"
+                required
+              />
+            </div>
+            <div data-testid="enterprise-create-host">
+              <Input
+                v-model="form.portal_host"
+                :label="t('admin.enterprise.create.portalLabel')"
+                placeholder="enterprise.example.com"
+                :error="errors.portal_host"
+                required
+              />
+            </div>
+          </section>
+
+          <section class="card-body space-y-4 border-b border-gray-200 dark:border-dark-700">
+            <div class="flex gap-3">
+              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">2</span>
+              <div>
+                <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.accountTitle') }}</h2>
+                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.accountDescription') }}</p>
+              </div>
+            </div>
+            <div data-testid="enterprise-create-account">
+              <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-dark-200">
+                {{ t('admin.enterprise.create.dedicatedAccount') }}
+              </label>
+              <Select
+                :model-value="form.dedicated_upstream_user_id || null"
+                :options="accountOptions"
+                remote
+                clearable
+                :loading="searching"
+                :disabled="!enterprisesLoaded"
+                :placeholder="t('admin.enterprise.create.searchAccount')"
+                :search-placeholder="t('admin.enterprise.create.searchAccount')"
+                :error="!!errors.dedicated_upstream_user_id"
+                @search="searchUsers"
+                @update:model-value="selectUser"
+              />
+            </div>
+            <p v-if="sourceError" class="text-xs text-red-600 dark:text-red-400" role="alert" data-testid="enterprise-create-source-error">
+              {{ sourceError }}
+            </p>
+            <p v-else-if="selectedReason" class="text-xs text-red-600 dark:text-red-400" data-testid="enterprise-create-account-reason">
+              {{ selectedReason }}
+            </p>
+            <!-- Select 的 error 只驱动样式，校验文案在此单独渲染 -->
+            <p
+              v-else-if="errors.dedicated_upstream_user_id"
+              class="text-xs text-red-600 dark:text-red-400"
+              role="alert"
+              data-testid="enterprise-create-account-error"
+            >
+              {{ errors.dedicated_upstream_user_id }}
+            </p>
+            <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
+              <p class="text-xs font-semibold text-gray-700 dark:text-dark-200">{{ t('admin.enterprise.create.sourceTitle') }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.sourceDescription') }}</p>
+            </div>
+          </section>
+
+          <section class="card-body space-y-4">
+            <div class="flex gap-3">
+              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">3</span>
+              <div>
+                <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.reasonTitle') }}</h2>
+                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.reasonDescription') }}</p>
+              </div>
+            </div>
+            <div data-testid="enterprise-create-reason">
+              <TextArea
+                v-model="form.reason"
+                :label="t('admin.enterprise.create.reasonLabel')"
+                :placeholder="t('admin.enterprise.create.reasonPlaceholder')"
+                :error="errors.reason"
+                :rows="3"
+                required
+              />
+            </div>
+          </section>
+
+          <div class="flex justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-dark-700">
+            <button type="button" class="btn btn-secondary btn-md" @click="router.push('/admin/enterprises')">
+              {{ t('admin.enterprise.common.cancel') }}
+            </button>
+            <button type="submit" class="btn btn-primary btn-md" :disabled="saving" data-testid="enterprise-create-submit">
+              {{ t('admin.enterprise.create.title') }}
+            </button>
+          </div>
+        </form>
+
+        <aside class="card">
+          <div class="card-body">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.checksTitle') }}</h3>
+            <ul class="mt-4 list-disc space-y-3 pl-5 text-xs leading-5 text-gray-500 dark:text-dark-400">
+              <li>{{ t('admin.enterprise.create.checksName') }}</li>
+              <li>{{ t('admin.enterprise.create.checksActive') }}</li>
+              <li>{{ t('admin.enterprise.create.checksSubscription') }}</li>
+              <li>{{ t('admin.enterprise.create.checksPrivacy') }}</li>
+            </ul>
+            <p class="mt-5 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+              {{ t('admin.enterprise.create.note') }}
+            </p>
+          </div>
+        </aside>
+      </div>
     </div>
-  </div>
+  </PlatformEnterpriseShell>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import type { FormInstance, FormRules } from 'element-plus'
-import { ElMessage } from 'element-plus'
+import Input from '@/components/common/Input.vue'
+import Select, { type SelectOption } from '@/components/common/Select.vue'
+import TextArea from '@/components/common/TextArea.vue'
+import PlatformEnterpriseShell from '@/components/admin/PlatformEnterpriseShell.vue'
 import { enterprisePlatformAPI, type PlatformEnterprise } from '@/api/enterprisePlatform'
 import { list as listUsers } from '@/api/admin/users'
+import { useAppStore } from '@/stores/app'
 import type { AdminUser } from '@/types'
 
 const router = useRouter()
 const { t, locale } = useI18n({ useScope: 'global' })
-const formRef = ref<FormInstance>()
+const appStore = useAppStore()
 const saving = ref(false)
 const success = ref(false)
 const created = ref<PlatformEnterprise>()
@@ -76,7 +190,13 @@ const candidates = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser>()
 let searchSequence = 0
 const form = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: 0, reason: '' })
+const errors = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: '', reason: '' })
 const userOptions = computed(() => candidates.value.map((user) => ({ user, reason: ineligibleReason(user) })))
+const accountOptions = computed<SelectOption[]>(() => userOptions.value.map((option) => ({
+  value: option.user.id,
+  label: optionLabel(option),
+  disabled: !!option.reason,
+})))
 const selectedReason = computed(() => selectedUser.value ? ineligibleReason(selectedUser.value) : '')
 
 function optionLabel(option: { user: AdminUser; reason: string }) {
@@ -123,40 +243,40 @@ async function searchUsers(query: string) {
   }
 }
 
-function selectUser(id: number | '') {
-  selectedUser.value = candidates.value.find((user) => user.id === id)
+function selectUser(value: SelectOption['value']) {
+  const id = typeof value === 'number' ? value : Number(value)
+  form.dedicated_upstream_user_id = Number.isFinite(id) && id > 0 ? id : 0
+  selectedUser.value = candidates.value.find((user) => user.id === form.dedicated_upstream_user_id)
 }
 
-const rules = computed<FormRules>(() => ({
-  name: [{ required: true, message: t('admin.enterprise.create.nameRequired'), trigger: 'blur' }],
-  portal_host: [{ required: true, message: t('admin.enterprise.create.hostRequired'), trigger: 'blur' }, { pattern: /^[a-z0-9.-]+$/, message: t('admin.enterprise.create.hostInvalid'), trigger: 'blur' }],
-  dedicated_upstream_user_id: [{ type: 'number', min: 1, message: t('admin.enterprise.create.accountRequired'), trigger: 'change' }],
-  reason: [{ required: true, message: t('admin.enterprise.create.reasonRequired'), trigger: 'blur' }],
-}))
+function validate() {
+  errors.name = form.name.trim() ? '' : t('admin.enterprise.create.nameRequired')
+  errors.portal_host = !form.portal_host.trim()
+    ? t('admin.enterprise.create.hostRequired')
+    : /^[a-z0-9.-]+$/.test(form.portal_host.trim()) ? '' : t('admin.enterprise.create.hostInvalid')
+  errors.dedicated_upstream_user_id = form.dedicated_upstream_user_id >= 1 ? '' : t('admin.enterprise.create.accountRequired')
+  errors.reason = form.reason.trim() ? '' : t('admin.enterprise.create.reasonRequired')
+  return !Object.values(errors).some(Boolean)
+}
 
 async function submit() {
-  if (!await formRef.value?.validate().catch(() => false)) return
+  if (!validate()) return
+  // 二次校验：下拉选中值必须与已核验的候选账号一致，且该账号无不合格理由
   if (!enterprisesLoaded.value || !selectedUser.value || form.dedicated_upstream_user_id !== selectedUser.value.id || selectedReason.value) {
-    ElMessage.error(selectedReason.value || sourceError.value || t('admin.enterprise.create.accountRequired'))
+    appStore.showError(selectedReason.value || sourceError.value || t('admin.enterprise.create.accountRequired'))
     return
   }
   saving.value = true
   success.value = false
   try {
-    created.value = await enterprisePlatformAPI.create(form)
+    created.value = await enterprisePlatformAPI.create({ ...form })
     success.value = true
-    ElMessage.success(t('admin.enterprise.create.createSuccess'))
+    appStore.showSuccess(t('admin.enterprise.create.createSuccess'))
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  } catch (error) {
-    const message = (error as { message?: string }).message
-    ElMessage.error(message || t('admin.enterprise.create.createFailed'))
+  } catch {
+    appStore.showError(t('admin.enterprise.create.createFailed'))
   } finally {
     saving.value = false
   }
 }
 </script>
-
-<style scoped>
-.platform-page{min-height:100vh;background:#f0f2f5;color:#111827}.side{position:fixed;inset:0 auto 0 0;width:232px;padding:20px 12px;background:#fff;border-right:1px solid #e5e7eb}.logo{display:flex;align-items:center;gap:10px;padding:0 10px;margin-bottom:26px}.logo-mark{display:grid;width:30px;height:30px;place-items:center;border-radius:7px;background:#2563eb;color:#fff;font-weight:800}.logo strong,.logo small{display:block}.logo small{margin-top:2px;color:#6b7280;font-size:10px}.nav-label{margin:16px 10px 7px;color:#9ca3af;font-size:11px;font-weight:700}.nav{display:block;padding:11px;border-radius:6px;color:#4b5563;text-decoration:none}.nav.active{background:#eff6ff;color:#2563eb;font-weight:700}.side-help{position:absolute;right:22px;bottom:20px;left:22px;padding-top:14px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px}.content{margin-left:232px}.topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;height:64px;padding:0 28px;background:#fff;border-bottom:1px solid #e5e7eb}.crumb{font-weight:650}.crumb span{margin-left:8px;color:#9ca3af;font-weight:400}.health{display:flex;align-items:center;gap:7px;margin-left:auto;color:#4b5563;font-size:12px}.health i{width:7px;height:7px;border-radius:50%;background:#15803d}main{max-width:1120px;margin:0 auto;padding:28px}.back{display:inline-block;margin-bottom:12px;color:#64748b;font-size:13px;text-decoration:none}.titlebar{margin-bottom:18px}.titlebar h1{margin:0 0 6px;font-size:24px}.titlebar p{margin:0;color:#526078}.result{margin-bottom:16px}.result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 20px;margin-bottom:8px}.result-grid span{display:block;color:#6b7280;font-size:12px}.result-grid strong{font-weight:600;overflow-wrap:anywhere}.result-note{margin:4px 0 8px;color:#6b7280;font-size:12px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}.form-panel,.check-panel{background:#fff;border:1px solid #e5e7eb;border-radius:8px}.section{padding:20px 22px;border-bottom:1px solid #e5e7eb}.section-head{display:flex;gap:11px;margin-bottom:16px}.section-head>span{display:grid;width:24px;height:24px;place-items:center;border-radius:50%;background:#eff6ff;color:#2563eb;font-weight:700}.section-head h2{margin:2px 0 4px;font-size:15px}.section-head p{margin:0;color:#6b7280;font-size:12px}.actions{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px}.check-panel{padding:20px}.check-panel h3{margin:0 0 14px;font-size:14px}.check-panel ul{display:grid;gap:12px;margin:0;padding:0 0 0 18px;color:#526078;font-size:12px;line-height:18px}.note{margin-top:18px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:12px;line-height:18px}@media(max-width:760px){.side{display:none}.content{margin-left:0}.topbar{padding:0 16px}.crumb span,.health{display:none}main{padding:18px 14px}.layout{grid-template-columns:1fr}.check-panel{order:-1}.actions{padding:16px}.actions .el-button{flex:1}}
-.source-error{margin:0 0 12px;color:#b42318;font-size:12px}
-</style>

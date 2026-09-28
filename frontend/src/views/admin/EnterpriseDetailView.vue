@@ -1,92 +1,247 @@
-<template><PlatformEnterpriseShell><section>
-  <div class="heading"><div><span class="eyebrow">{{ t('admin.enterprise.detail.breadcrumb') }}</span><h1>{{ item?.name || t('admin.enterprise.detail.title') }}</h1><p>{{ t('admin.enterprise.detail.description') }}</p></div><div class="actions"><el-button @click="router.back()">{{ t('admin.enterprise.common.back') }}</el-button><el-button v-if="item?.status==='active'" type="danger" @click="disable">{{ t('admin.enterprise.common.disable') }}</el-button></div></div>
-  <el-skeleton v-if="loading" :rows="5" animated/>
-  <el-alert v-else-if="sourceUnavailable" :title="t('admin.enterprise.detail.unavailableTitle')" :description="t('admin.enterprise.detail.unavailableDescription')" type="error" show-icon/>
-  <template v-else-if="item"><el-tabs v-model="activeTab">
-    <el-tab-pane :label="t('admin.enterprise.detail.overview')" name="overview"><el-descriptions :column="2" border>
-      <el-descriptions-item :label="t('admin.enterprise.common.name')">{{ item.name }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.status')">{{ enterpriseStatusLabel(item.status, t) }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.portalHost')">{{ item.portal_host }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.createdAt')">{{ formatDate(item.created_at) }}</el-descriptions-item>
-    </el-descriptions><div class="impact"><h2>{{ t('admin.enterprise.detail.impact') }}</h2><el-descriptions :column="2" border>
-      <el-descriptions-item :label="t('admin.enterprise.common.employeeCount')">{{ item.employee_count }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.activeEmployees')">{{ item.active_employee_count }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.activeSessions')">{{ item.active_session_count }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.activeKeys')">{{ item.active_key_count }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.subscriptions')" :span="2"><div v-if="item.subscriptions.length" class="subscriptions"><div v-for="subscription in item.subscriptions" :key="subscription.id">{{ subscriptionLabel(subscription) }}</div></div><span v-else>{{ t('admin.enterprise.common.noActiveSubscriptions') }}</span></el-descriptions-item>
-    </el-descriptions></div></el-tab-pane>
-    <el-tab-pane :label="t('admin.enterprise.detail.access')" name="access"><el-descriptions :column="1" border>
-      <el-descriptions-item :label="t('admin.enterprise.detail.adminEmail')">{{ item.admin_email || t('admin.enterprise.common.notConfigured') }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.upstreamUserId')">{{ item.dedicated_upstream_user_id }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.activeSessions')">{{ item.active_session_count }}</el-descriptions-item>
-      <el-descriptions-item :label="t('admin.enterprise.common.activeKeys')">{{ item.active_key_count }}</el-descriptions-item>
-    </el-descriptions></el-tab-pane>
-  </el-tabs></template>
-</section></PlatformEnterpriseShell></template>
+<template>
+  <PlatformEnterpriseShell>
+    <section class="space-y-6">
+      <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <span class="block text-xs text-gray-400 dark:text-dark-500">{{ t('admin.enterprise.detail.breadcrumb') }}</span>
+          <h1 class="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{{ item?.name || t('admin.enterprise.detail.title') }}</h1>
+          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.detail.description') }}</p>
+        </div>
+        <div class="flex gap-3">
+          <button class="btn btn-secondary btn-md" data-testid="enterprise-detail-back" @click="router.back()">
+            {{ t('admin.enterprise.common.back') }}
+          </button>
+          <button
+            v-if="item?.status === 'active'"
+            class="btn btn-danger btn-md"
+            data-testid="enterprise-detail-disable"
+            @click="askDisable"
+          >
+            {{ t('admin.enterprise.common.disable') }}
+          </button>
+        </div>
+      </header>
+
+      <div v-if="loading" class="card" data-testid="enterprise-detail-loading">
+        <div class="card-body space-y-3">
+          <Skeleton v-for="row in 5" :key="row" height="1.25rem" />
+        </div>
+      </div>
+
+      <div v-else-if="sourceUnavailable" class="card" role="alert" data-testid="enterprise-detail-unavailable">
+        <div class="card-body text-sm text-red-600 dark:text-red-400">
+          <strong class="block text-base font-semibold">{{ t('admin.enterprise.detail.unavailableTitle') }}</strong>
+          <p class="mt-1">{{ t('admin.enterprise.detail.unavailableDescription') }}</p>
+          <button class="btn btn-secondary btn-sm mt-4" data-testid="enterprise-detail-retry" @click="load">
+            {{ t('admin.enterprise.list.refresh') }}
+          </button>
+        </div>
+      </div>
+
+      <template v-else-if="item">
+        <div class="border-b border-gray-200 dark:border-dark-700" role="tablist">
+          <button
+            v-for="tab in tabs"
+            :key="tab.name"
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === tab.name"
+            :data-testid="`enterprise-detail-tab-${tab.name}`"
+            :class="[
+              '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+              activeTab === tab.name
+                ? 'border-primary-600 text-primary-600 dark:border-primary-400 dark:text-primary-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-dark-400 dark:hover:text-dark-200',
+            ]"
+            @click="activeTab = tab.name"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+
+        <div v-if="activeTab === 'overview'" class="space-y-6" data-testid="enterprise-detail-overview">
+          <div class="card">
+            <dl class="card-body grid gap-4 sm:grid-cols-2">
+              <div>
+                <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.name') }}</dt>
+                <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.name }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.status') }}</dt>
+                <dd class="mt-1">
+                  <StatusBadge :status="item.status" :label="enterpriseStatusLabel(item.status, t)" />
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.portalHost') }}</dt>
+                <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.portal_host }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.createdAt') }}</dt>
+                <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ formatDate(item.created_at) }}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="card">
+            <div class="card-body">
+              <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.detail.impact') }}</h2>
+              <dl class="mt-4 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.employeeCount') }}</dt>
+                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.employee_count }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.activeEmployees') }}</dt>
+                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.active_employee_count }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.activeSessions') }}</dt>
+                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.active_session_count }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.activeKeys') }}</dt>
+                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.active_key_count }}</dd>
+                </div>
+                <div class="sm:col-span-2">
+                  <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.subscriptions') }}</dt>
+                  <dd class="mt-1 grid gap-1.5 text-sm font-medium text-gray-900 dark:text-white">
+                    <template v-if="item.subscriptions.length">
+                      <span v-for="subscription in item.subscriptions" :key="subscription.id">{{ subscriptionLabel(subscription) }}</span>
+                    </template>
+                    <span v-else data-testid="enterprise-detail-no-subscriptions">{{ t('admin.enterprise.common.noActiveSubscriptions') }}</span>
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="card" data-testid="enterprise-detail-access">
+          <dl class="card-body grid gap-4">
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.detail.adminEmail') }}</dt>
+              <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.admin_email || t('admin.enterprise.common.notConfigured') }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.upstreamUserId') }}</dt>
+              <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.dedicated_upstream_user_id }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.activeSessions') }}</dt>
+              <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.active_session_count }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.activeKeys') }}</dt>
+              <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.active_key_count }}</dd>
+            </div>
+          </dl>
+        </div>
+      </template>
+
+      <ConfirmDialog
+        :show="confirmVisible"
+        :title="t('admin.enterprise.list.disableTitle')"
+        :message="confirmMessage"
+        danger
+        @confirm="confirmDisable"
+        @cancel="confirmVisible = false"
+      />
+    </section>
+  </PlatformEnterpriseShell>
+</template>
+
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { enterprisePlatformAPI, type PlatformEnterprise } from '@/api/enterprisePlatform'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import Skeleton from '@/components/common/Skeleton.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
 import PlatformEnterpriseShell from '@/components/admin/PlatformEnterpriseShell.vue'
+import { enterprisePlatformAPI, type PlatformEnterprise } from '@/api/enterprisePlatform'
+import { useAppStore } from '@/stores/app'
 import { formatDate } from '@/utils/format'
 import { enterpriseStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n({ useScope: 'global' })
+const appStore = useAppStore()
 const item = ref<PlatformEnterprise>()
 const loading = ref(false)
 const sourceUnavailable = ref(false)
 const activeTab = ref('overview')
+const confirmVisible = ref(false)
+const confirmMessage = ref('')
+
+const tabs = computed(() => [
+  { name: 'overview', label: t('admin.enterprise.detail.overview') },
+  { name: 'access', label: t('admin.enterprise.detail.access') },
+])
+
 function subscriptionLabel(subscription: PlatformEnterprise['subscriptions'][number]) {
-  return t('admin.enterprise.detail.subscriptionValue', { plan: subscription.plan, status: subscriptionStatusLabel(subscription.status, t), limit: subscription.weekly_limit || t('admin.enterprise.common.notConfigured'), expiresAt: formatDate(subscription.expires_at) })
+  return t('admin.enterprise.detail.subscriptionValue', {
+    plan: subscription.plan,
+    status: subscriptionStatusLabel(subscription.status, t),
+    limit: subscription.weekly_limit || t('admin.enterprise.common.notConfigured'),
+    expiresAt: formatDate(subscription.expires_at),
+  })
 }
 
 async function load() {
-	loading.value = true
-	item.value = undefined
-	sourceUnavailable.value = false
-	try {
-		item.value = await enterprisePlatformAPI.get(Number(route.params.id))
-	} catch {
-		sourceUnavailable.value = true
-			ElMessage.error(t('admin.enterprise.detail.unavailableMessage'))
-	} finally {
-		loading.value = false
-	}
+  loading.value = true
+  item.value = undefined
+  sourceUnavailable.value = false
+  try {
+    item.value = await enterprisePlatformAPI.get(Number(route.params.id))
+  } catch {
+    sourceUnavailable.value = true
+    appStore.showError(t('admin.enterprise.detail.unavailableMessage'))
+  } finally {
+    loading.value = false
+  }
 }
 
-async function disable() {
-	let current: PlatformEnterprise
-	try {
-		current = await enterprisePlatformAPI.get(Number(route.params.id))
-	} catch {
-		item.value = undefined
-		sourceUnavailable.value = true
-			ElMessage.error(t('admin.enterprise.detail.unavailableMessage'))
-		return
-	}
-	item.value = current
-	if (current.status !== 'active') return
-	const subscriptionLabelText = current.subscriptions.length
-		? current.subscriptions.map(subscriptionLabel).join('；')
-			: t('admin.enterprise.common.noActiveSubscriptions')
-	try {
-		await ElMessageBox.confirm(
-				t('admin.enterprise.list.disableConfirm', { name: current.name, subscriptions: subscriptionLabelText, employees: current.employee_count, activeEmployees: current.active_employee_count, sessions: current.active_session_count, keys: current.active_key_count }),
-				t('admin.enterprise.list.disableTitle'),
-			{ type: 'warning' },
-		)
-			await enterprisePlatformAPI.disable(current.id, t('admin.enterprise.list.disableReason'))
-			ElMessage.success(t('admin.enterprise.list.disableSuccess'))
-		await load()
-	} catch (error) {
-			if (error !== 'cancel') ElMessage.error(t('admin.enterprise.list.disableFailed'))
-	}
+// 停用前重新拉取当前影响面，确保确认框展示的是实时数据而非页面旧值
+async function askDisable() {
+  let current: PlatformEnterprise
+  try {
+    current = await enterprisePlatformAPI.get(Number(route.params.id))
+  } catch {
+    item.value = undefined
+    sourceUnavailable.value = true
+    appStore.showError(t('admin.enterprise.detail.unavailableMessage'))
+    return
+  }
+  item.value = current
+  if (current.status !== 'active') return
+  const subscriptionLabelText = current.subscriptions.length
+    ? current.subscriptions.map(subscriptionLabel).join('；')
+    : t('admin.enterprise.common.noActiveSubscriptions')
+  confirmMessage.value = t('admin.enterprise.list.disableConfirm', {
+    name: current.name,
+    subscriptions: subscriptionLabelText,
+    employees: current.employee_count,
+    activeEmployees: current.active_employee_count,
+    sessions: current.active_session_count,
+    keys: current.active_key_count,
+  })
+  confirmVisible.value = true
+}
+
+async function confirmDisable() {
+  const current = item.value
+  confirmVisible.value = false
+  if (!current) return
+  try {
+    await enterprisePlatformAPI.disable(current.id, t('admin.enterprise.list.disableReason'))
+    appStore.showSuccess(t('admin.enterprise.list.disableSuccess'))
+    await load()
+  } catch {
+    appStore.showError(t('admin.enterprise.list.disableFailed'))
+  }
 }
 
 onMounted(load)
 </script>
-<style scoped>.heading{display:flex;justify-content:space-between;gap:20px;margin-bottom:20px}.heading .eyebrow{display:block;margin-bottom:4px;color:#94a3b8;font-size:12px}.heading h1{margin:0 0 6px;font-size:26px}.heading p{color:#64748b}.actions{display:flex;gap:12px}.impact{margin-top:20px}.impact h2{margin:0 0 12px;font-size:18px}.subscriptions{display:grid;gap:6px}@media(max-width:640px){.heading{align-items:flex-start;flex-direction:column}.actions{width:100%}}</style>

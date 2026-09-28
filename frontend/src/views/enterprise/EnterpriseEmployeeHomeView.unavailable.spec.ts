@@ -1,10 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
 import type { AxiosRequestConfig } from 'axios'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { enterpriseClient } from '@/api/enterprise'
 import EnterpriseEmployeeHomeView from './EnterpriseEmployeeHomeView.vue'
+
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 // 不 mock '@/api/enterprise'：Review 结论指出「最近调用」面板的降级用例此前只在
 // listEmployeeUsage 的 mock 层验证，拦截器从未被真实触达，导致 5xx 时整页跳转到
@@ -84,7 +88,7 @@ describe('EnterpriseEmployeeHomeView — 真实 axios 拦截器路径下的「�
       '/enterprise/home': () => ({ status: 200, data: homePayload }),
       '/enterprise/usage/me/details': () => ({ status: 500 }),
     })
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(window.location.href).not.toContain('/enterprise/session-states')
@@ -98,7 +102,7 @@ describe('EnterpriseEmployeeHomeView — 真实 axios 拦截器路径下的「�
       '/enterprise/home': () => ({ status: 200, data: homePayload }),
       '/enterprise/usage/me/details': () => ({ status: 401, data: {} }),
     })
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(window.location.href).toContain('/enterprise/session-states?state=session-expired')

@@ -31,7 +31,7 @@ export default {
       enableConfirm: '确认启用 {name}？启用后恢复门户登录；停用期间被撤销的会话、已禁用的 Key 分配不会自动恢复，需管理员按需重新分配。',
       enableTitle: '启用企业', enableReason: '平台运营确认启用', enableSuccess: '企业已启用', enableFailed: '企业启用失败',
       hostConfirm: '修改 {name} 的入口域名（当前 {host}）。修改后旧域名上的企业访问与 Token 会因 Host 绑定失效，请以新域名访问门户。',
-      hostTitle: '修改入口域名', hostInvalid: '域名格式不正确（仅允许小写字母、数字、点与连字符）',
+      hostTitle: '修改入口域名', hostLabel: '新入口域名', hostInvalid: '域名格式不正确（仅允许小写字母、数字、点与连字符）',
       hostReason: '平台运营修改入口域名', hostSuccess: '入口域名已修改', hostFailed: '入口域名修改失败',
     },
     detail: {

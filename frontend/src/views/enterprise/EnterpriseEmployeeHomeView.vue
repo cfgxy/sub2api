@@ -1,93 +1,271 @@
 <template>
-  <section class="workspace">
-    <div class="page-heading"><div><h1>个人概览</h1><p>查看本人 weekly allocation、企业总池状态和近期调用趋势。</p></div><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button></div>
-    <el-alert v-if="usage?.source_status === 'unavailable'" type="warning" :closable="false" title="当前订阅来源不可用，页面未使用缓存值填充。" />
-    <div class="metrics" v-if="usage">
-      <article><span>allocation</span><strong>{{ usage.allocation }}</strong><small>当前 weekly 窗口</small></article>
-      <article><span>actual cost</span><strong>{{ usage.actual_cost }}</strong><small>{{ usage.requests }} 次请求</small></article>
-      <article><span>remaining</span><strong>{{ usage.remaining }}</strong><small>不会显示为负数</small></article>
-      <article :class="{ danger: usage.overage !== '0' && usage.overage !== '0.00000000' }"><span>overage</span><strong>{{ usage.overage }}</strong><small>个人超用不改变企业总池判断</small></article>
+  <section class="space-y-6">
+    <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('enterprise.home.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.home.description') }}</p>
+      </div>
+      <button class="btn btn-secondary btn-md" :disabled="loading" data-testid="home-refresh" @click="load">
+        <Icon name="refresh" size="sm" :class="loading && 'animate-spin'" />
+        {{ t('enterprise.common.refresh') }}
+      </button>
+    </header>
+
+    <div
+      v-if="loadError"
+      class="card card-body flex flex-col gap-3 border-red-200 text-sm text-red-600 dark:border-red-900/50 dark:text-red-400 sm:flex-row sm:items-center sm:justify-between"
+      role="alert"
+      data-testid="home-load-error"
+    >
+      <span>{{ t('enterprise.home.loadFailed') }}</span>
+      <button class="btn btn-secondary btn-sm self-start" data-testid="home-load-retry" @click="load">
+        {{ t('enterprise.common.retry') }}
+      </button>
     </div>
 
-    <div class="panel">
-      <h2>企业总池</h2>
-      <p v-if="pool?.source_status === 'unavailable'" class="pool-note">企业总池来源暂不可用，未显示伪造余额。</p>
-      <template v-else-if="pool">
-        <div class="pool-grid">
-          <div class="ring" :style="{ background: `conic-gradient(#008f86 0 ${poolUsedPercentage}%, #e4e7ec ${poolUsedPercentage}%)` }"><span>{{ poolUsedPercentage }}%</span></div>
-          <div class="pool-text">
-            <strong>{{ pool.pool_used }} / {{ pool.pool_limit }}</strong>
-            <p class="pool-note" :class="{ danger: pool.pool_exhausted }">{{ pool.pool_exhausted ? '企业总池已耗尽：与个人 overage 分开处理，请联系企业管理员' : `企业总池可用，本周期已使用 ${poolUsedPercentage}%，由企业总池统一承载` }}</p>
-            <small :class="{ danger: pool.pool_exhausted }">企业池剩余 {{ pool.pool_remaining }}</small>
+    <div v-else-if="loading" class="flex justify-center py-16" data-testid="home-loading">
+      <LoadingSpinner size="lg" />
+    </div>
+
+    <template v-else>
+      <div
+        v-if="usage?.source_status === 'unavailable'"
+        class="card card-body border-yellow-200 text-sm text-yellow-700 dark:border-yellow-900/50 dark:text-yellow-500"
+        role="status"
+        data-testid="home-source-unavailable"
+      >
+        {{ t('enterprise.home.sourceUnavailable') }}
+      </div>
+
+      <div v-if="usage" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          :title="t('admin.enterprise.terms.allocation')"
+          :value="usage.allocation"
+          :icon="icons.allocation"
+          icon-variant="primary"
+        />
+        <StatCard
+          :title="t('admin.enterprise.terms.actualCost')"
+          :value="usage.actual_cost"
+          :icon="icons.cost"
+          icon-variant="success"
+        />
+        <StatCard
+          :title="t('admin.enterprise.terms.remaining')"
+          :value="usage.remaining"
+          :icon="icons.remaining"
+          icon-variant="warning"
+        />
+        <StatCard
+          :title="t('admin.enterprise.terms.overage')"
+          :value="usage.overage"
+          :icon="icons.overage"
+          :icon-variant="hasOverage ? 'danger' : 'primary'"
+        />
+      </div>
+      <EmptyState v-else :title="t('enterprise.home.usageUnavailable')" description="" data-testid="home-usage-empty" />
+
+      <div class="card card-body">
+        <h2 class="mb-4 text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.poolTitle') }}</h2>
+        <p
+          v-if="pool?.source_status === 'unavailable'"
+          class="text-sm text-gray-500 dark:text-dark-400"
+          data-testid="home-pool-unavailable"
+        >
+          {{ t('enterprise.home.poolUnavailable') }}
+        </p>
+        <div v-else-if="pool" class="flex flex-col gap-6 sm:flex-row sm:items-center">
+          <div class="relative grid h-24 w-24 flex-none place-items-center rounded-full bg-gray-100 dark:bg-dark-800">
+            <svg class="h-24 w-24 -rotate-90" viewBox="0 0 96 96" aria-hidden="true">
+              <circle class="text-gray-200 dark:text-dark-700" cx="48" cy="48" r="42" fill="none" stroke="currentColor" stroke-width="8" />
+              <circle
+                class="text-primary-500"
+                cx="48"
+                cy="48"
+                r="42"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="8"
+                stroke-linecap="round"
+                :stroke-dasharray="poolCircumference"
+                :stroke-dashoffset="poolDashOffset"
+              />
+            </svg>
+            <span class="absolute text-base font-bold text-gray-900 dark:text-white">{{ poolUsedPercentage }}%</span>
+          </div>
+          <div class="min-w-0 flex-1">
+            <strong class="block text-lg text-gray-900 dark:text-white">{{ pool.pool_used }} / {{ pool.pool_limit }}</strong>
+            <p
+              class="mt-1 text-sm"
+              :class="pool.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
+            >
+              {{ pool.pool_exhausted
+                ? t('enterprise.home.poolExhausted')
+                : t('enterprise.home.poolHealthy', { percentage: poolUsedPercentage }) }}
+            </p>
+            <small
+              class="mt-1 block text-xs"
+              :class="pool.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
+            >
+              {{ t('enterprise.home.poolRemaining', { value: pool.pool_remaining }) }}
+            </small>
           </div>
         </div>
-      </template>
-    </div>
+      </div>
 
-    <div class="panel">
-      <div class="panel-heading"><h2>近 7 天调用趋势</h2><span>真实每日聚合，无记录不补零</span></div>
-      <div v-if="!loading && !recentTrend.length" class="empty-chart">近 7 天暂无调用记录</div>
-      <div v-else class="trend-chart" aria-label="近期调用趋势图">
-        <div v-for="point in recentTrend" :key="point.at" class="trend-column">
-          <span class="trend-bar" :style="{ height: `${trendHeight(point.requests)}%` }" :title="`${formatDate(point.at)}：${point.requests} 次`" />
-          <small>{{ trendLabel(point.at) }}</small>
+      <div class="card card-body">
+        <div class="mb-4 flex items-start justify-between gap-4">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.trendTitle') }}</h2>
+          <span class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.trendNote') }}</span>
+        </div>
+        <div
+          v-if="!recentTrend.length"
+          class="grid h-32 place-items-center text-sm text-gray-500 dark:text-dark-400"
+          data-testid="home-trend-empty"
+        >
+          {{ t('enterprise.home.trendEmpty') }}
+        </div>
+        <div
+          v-else
+          class="flex h-40 items-end gap-4 border-b border-l border-gray-200 px-3 pb-6 pt-4 dark:border-dark-700"
+          :aria-label="t('enterprise.home.trendTitle')"
+        >
+          <div v-for="point in recentTrend" :key="point.at" class="flex h-full min-w-[18px] flex-1 flex-col items-center justify-end gap-2">
+            <span
+              class="w-full max-w-[36px] rounded-t bg-primary-500"
+              :style="{ height: `${trendHeight(point.requests)}%` }"
+              :title="t('enterprise.home.trendTooltip', { date: formatDate(point.at), count: point.requests })"
+            />
+            <small class="whitespace-nowrap text-[10px] text-gray-500 dark:text-dark-400">{{ trendLabel(point.at) }}</small>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="split-panels">
-      <div class="panel table-panel">
-        <div class="panel-heading"><h2>最近调用</h2><RouterLink to="/enterprise/usage" class="panel-link">查看全部用量</RouterLink></div>
-        <div v-if="recentCallsState === 'unavailable'" class="empty-chart">调用明细来源暂时不可用</div>
-        <div v-else-if="!recentCalls.length" class="empty-chart">暂无调用记录</div>
-        <table v-else class="calls-table">
-          <thead><tr><th>时间</th><th>Key</th><th>消耗额度</th></tr></thead>
-          <tbody>
-            <tr v-for="record in recentCalls" :key="`${record.request_at}-${record.api_key_masked}-${record.generation}`">
-              <td>{{ formatDate(record.request_at) }}</td>
-              <td>{{ record.api_key_masked }}</td>
-              <td>{{ record.actual_cost }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="panel">
-        <div class="panel-heading"><h2>我的用量提醒</h2><span class="chip" :class="reminderTone">{{ reminderLabel }}</span></div>
-        <template v-if="usage">
-          <b class="reminder-headline">个人 allocation 使用 {{ usagePercentage }}%</b>
-          <p class="reminder-desc">尚余 {{ usage.remaining }} 次调用。{{ usage.overage !== '0' ? `当前个人超用 ${usage.overage}` : '当前无个人超用记录' }}</p>
-          <div class="progress"><i :style="{ width: `${usagePercentage}%` }" /></div>
-          <div class="scale"><span>0</span><span>{{ usage.allocation }} allocation</span></div>
-        </template>
-        <p v-else class="pool-note">个人用量数据暂不可用</p>
-      </div>
-    </div>
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.3fr_1fr]">
+        <div class="card card-body">
+          <div class="mb-4 flex items-start justify-between gap-4">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.recentTitle') }}</h2>
+            <RouterLink to="/enterprise/usage" class="whitespace-nowrap text-xs font-semibold text-primary-600 hover:underline dark:text-primary-400">
+              {{ t('enterprise.common.viewAll') }}
+            </RouterLink>
+          </div>
+          <div
+            v-if="recentCallsState === 'unavailable'"
+            class="grid h-32 place-items-center text-sm text-gray-500 dark:text-dark-400"
+            data-testid="home-recent-unavailable"
+          >
+            {{ t('enterprise.home.recentUnavailable') }}
+          </div>
+          <DataTable
+            v-else
+            :columns="recentColumns"
+            :data="recentCalls"
+            :loading="recentCallsState === 'loading'"
+            :row-key="recentRowKey"
+          >
+            <template #cell-request_at="{ row }">{{ formatDate(row.request_at) }}</template>
+            <template #empty>
+              <p class="text-sm text-gray-500 dark:text-dark-400" data-testid="home-recent-empty">
+                {{ t('enterprise.home.recentEmpty') }}
+              </p>
+            </template>
+          </DataTable>
+        </div>
 
-    <div class="panel"><h2>访问状态</h2><p>{{ home?.key ? `当前 Key 状态：${statusLabel(home.key.status)}` : '尚未创建当前 API Key' }}</p><RouterLink to="/enterprise/keys">管理 API Key</RouterLink></div>
+        <div class="card card-body">
+          <div class="mb-4 flex items-start justify-between gap-4">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.reminderTitle') }}</h2>
+            <span class="badge" :class="reminderBadgeClass">{{ reminderLabel }}</span>
+          </div>
+          <template v-if="usage">
+            <b class="block text-base text-gray-900 dark:text-white">
+              {{ t('enterprise.home.reminderHeadline', { percentage: usagePercentage }) }}
+            </b>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('enterprise.home.reminderRemaining', { value: usage.remaining }) }}
+              {{ hasOverage ? t('enterprise.home.reminderOverage', { value: usage.overage }) : t('enterprise.home.reminderNoOverage') }}
+            </p>
+            <div class="mt-3 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
+              <i class="block h-full rounded-full bg-primary-500" :style="{ width: `${usagePercentage}%` }" />
+            </div>
+            <div class="mt-1.5 flex justify-between text-[11px] text-gray-500 dark:text-dark-400">
+              <span>0</span>
+              <span>{{ usage.allocation }} {{ t('admin.enterprise.terms.allocation') }}</span>
+            </div>
+          </template>
+          <p v-else class="text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.home.usageUnavailable') }}</p>
+        </div>
+      </div>
+
+      <div class="card card-body">
+        <h2 class="mb-2 text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.accessTitle') }}</h2>
+        <p class="text-sm text-gray-500 dark:text-dark-400">
+          {{ home?.key
+            ? t('enterprise.home.accessKeyStatus', { status: keyStatusLabel(home.key.status, t) })
+            : t('enterprise.home.accessNoKey') }}
+        </p>
+        <RouterLink to="/enterprise/keys" class="mt-3 inline-block text-sm font-semibold text-primary-600 hover:underline dark:text-primary-400">
+          {{ t('enterprise.home.manageKey') }}
+        </RouterLink>
+      </div>
+    </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { computed, h, markRaw, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
+import Icon from '@/components/icons/Icon.vue'
+import DataTable from '@/components/common/DataTable.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import StatCard from '@/components/common/StatCard.vue'
+import type { Column } from '@/components/common/types'
 import { enterpriseAPI } from '@/api/enterprise'
+import { keyStatusLabel } from '@/utils/enterpriseDisplay'
+import { formatDate } from '@/utils/format'
 import type { EnterpriseEmployeeHome, EnterpriseEmployeeUsageSummary, EnterpriseEnterprisePoolStatus, EnterpriseEmployeeUsageTrendPoint, EnterpriseEmployeeUsageRecord } from '@/types/enterprise'
 
 type SourceState = 'loading' | 'ready' | 'unavailable'
 
+const { t, locale } = useI18n()
+
 const loading = ref(false)
+const loadError = ref(false)
 const home = ref<EnterpriseEmployeeHome>()
 const usage = ref<EnterpriseEmployeeUsageSummary>()
 const pool = ref<EnterpriseEnterprisePoolStatus>()
 const recentTrend = ref<EnterpriseEmployeeUsageTrendPoint[]>([])
 const recentCalls = ref<EnterpriseEmployeeUsageRecord[]>([])
 const recentCallsState = ref<SourceState>('loading')
-const statusLabel = (status: string) => ({ active: '有效', disabled: '已停用', quota_exhausted: '额度用尽', expired: '已过期' }[status] || status)
-const formatDate = (value: string | Date) => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-const trendLabel = (value: string) => new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(value))
-const trendHeight = (value: number) => Math.max(8, Math.round((value / Math.max(...recentTrend.value.map((point) => point.requests), 1)) * 100))
+
+// 指标卡图标：与 EnterpriseLayout 同一套 h() 包装惯例，避免在页面内自建图标组件
+type IconName = InstanceType<typeof Icon>['$props']['name']
+const iconOf = (name: IconName) => markRaw({ render: () => h(Icon, { name, size: 'md' }) })
+const icons = {
+  allocation: iconOf('bolt'),
+  cost: iconOf('dollar'),
+  remaining: iconOf('chartBar'),
+  overage: iconOf('exclamationTriangle'),
+}
+
+const recentColumns = computed<Column[]>(() => [
+  { key: 'request_at', label: t('enterprise.common.time') },
+  { key: 'api_key_masked', label: t('enterprise.common.key') },
+  { key: 'actual_cost', label: t('admin.enterprise.terms.actualCost') },
+])
+const recentRowKey = (row: EnterpriseEmployeeUsageRecord) => `${row.request_at}-${row.api_key_masked}-${row.generation}`
+
+const trendLabel = (value: string) =>
+  new Intl.DateTimeFormat(locale.value === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(value))
+const trendHeight = (value: number) =>
+  Math.max(8, Math.round((value / Math.max(...recentTrend.value.map((point) => point.requests), 1)) * 100))
+
+const hasOverage = computed(() => {
+  const value = usage.value?.overage
+  return value !== undefined && Number(value) > 0
+})
 
 const poolUsedPercentage = computed(() => {
   if (!pool.value) return 0
@@ -96,6 +274,9 @@ const poolUsedPercentage = computed(() => {
   if (!limit) return 0
   return Math.min(100, Math.round((used / limit) * 100))
 })
+const poolCircumference = 2 * Math.PI * 42
+const poolDashOffset = computed(() => poolCircumference * (1 - poolUsedPercentage.value / 100))
+
 const usagePercentage = computed(() => {
   if (!usage.value) return 0
   const allocation = Number(usage.value.allocation)
@@ -103,22 +284,32 @@ const usagePercentage = computed(() => {
   if (!allocation) return 0
   return Math.min(100, Math.round((cost / allocation) * 100))
 })
-const reminderTone = computed(() => (usagePercentage.value >= 90 ? 'danger' : usagePercentage.value >= 70 ? 'warning' : 'normal'))
-const reminderLabel = computed(() => (usagePercentage.value >= 90 ? '临近额度上限' : usagePercentage.value >= 70 ? '使用偏高' : '使用正常'))
+const reminderBadgeClass = computed(() =>
+  usagePercentage.value >= 90 ? 'badge-danger' : usagePercentage.value >= 70 ? 'badge-warning' : 'badge-success',
+)
+const reminderLabel = computed(() =>
+  usagePercentage.value >= 90
+    ? t('enterprise.home.reminderCritical')
+    : usagePercentage.value >= 70
+      ? t('enterprise.home.reminderHigh')
+      : t('enterprise.home.reminderNormal'),
+)
 
 async function load() {
   loading.value = true
+  loadError.value = false
   try {
     home.value = await enterpriseAPI.getEmployeeHome()
     usage.value = home.value.usage
     pool.value = home.value.enterprise_pool
     recentTrend.value = home.value.recent_trend
   } catch {
-    ElMessage.error('个人概览暂时不可用')
+    loadError.value = true
   } finally {
     loading.value = false
   }
 }
+
 async function loadRecentCalls() {
   recentCallsState.value = 'loading'
   try {
@@ -130,54 +321,9 @@ async function loadRecentCalls() {
     recentCallsState.value = 'unavailable'
   }
 }
-onMounted(() => { load(); loadRecentCalls() })
-</script>
 
-<style scoped>
-.workspace{max-width:1100px}
-.page-heading{display:flex;justify-content:space-between;gap:20px;margin-bottom:20px}
-.page-heading h1{margin:0 0 6px;font-size:26px}
-.page-heading p,.metrics small,.panel p{color:#64748b}
-.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}
-.metrics article,.panel{padding:18px;border:1px solid #e5e7eb;border-radius:8px;background:#fff}
-.panel{margin-top:16px}
-.metrics span,.metrics small{display:block;font-size:12px}
-.metrics strong{display:block;margin:10px 0 6px;font-size:24px}
-.danger,.danger strong{color:#b91c1c!important}
-.panel h2{margin:0 0 10px;font-size:15px}
-.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
-.panel-heading h2{margin:0}
-.panel-heading span{color:#6b7280;font-size:11px}
-.panel a{color:#2563eb;text-decoration:none}
-.pool-note{margin:0 0 10px;font-size:13px}
-.pool-figures{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:#374151}
-.pool-grid{display:flex;align-items:center;gap:24px}
-.ring{position:relative;flex:none;display:grid;width:96px;height:96px;place-items:center;border-radius:50%}
-.ring:before{content:"";position:absolute;inset:8px;background:#fff;border-radius:50%}
-.ring span{position:relative;font-size:16px;font-weight:700}
-.pool-text{flex:1;min-width:0}
-.pool-text strong{display:block;margin-bottom:6px;font-size:18px}
-.pool-text small{color:#6b7280;font-size:12px}
-.trend-chart{display:flex;align-items:flex-end;gap:16px;height:160px;padding:16px 12px 26px;border-left:1px solid #d1d5db;border-bottom:1px solid #d1d5db;background:repeating-linear-gradient(to bottom,transparent 0,transparent 32px,#f0f1f3 33px)}
-.trend-column{display:flex;flex:1;min-width:18px;height:100%;flex-direction:column;align-items:center;justify-content:flex-end;gap:8px}
-.trend-bar{width:min(36px,100%);min-height:8%;border-radius:4px 4px 0 0;background:#2563eb}
-.trend-column small{color:#6b7280;font-size:10px;white-space:nowrap}
-.empty-chart{display:grid;place-items:center;height:120px;color:#6b7280}
-.split-panels{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:16px}
-.split-panels .panel{margin-top:0}
-.panel-link{color:#2563eb;font-size:12px;text-decoration:none;font-weight:600;white-space:nowrap}
-.calls-table{width:100%;border-collapse:collapse;font-size:13px}
-.calls-table th{padding:8px 6px;color:#6b7280;font-size:11px;text-align:left;border-bottom:1px solid #e5e7eb}
-.calls-table td{padding:8px 6px;border-bottom:1px solid #f1f5f9}
-.chip{padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600}
-.chip.normal{background:#ecfdf5;color:#059669}
-.chip.warning{background:#fffbeb;color:#b45309}
-.chip.danger{background:#fef2f2;color:#b91c1c}
-.reminder-headline{display:block;margin-bottom:6px;font-size:15px}
-.reminder-desc{margin:0 0 12px;color:#6b7280;font-size:12px}
-.progress{height:8px;border-radius:999px;background:#e4e7ec;overflow:hidden}
-.progress i{display:block;height:100%;background:#2563eb;border-radius:999px}
-.scale{display:flex;justify-content:space-between;margin-top:6px;color:#6b7280;font-size:11px}
-@media(max-width:760px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.split-panels{grid-template-columns:1fr}}
-@media(max-width:480px){.page-heading{flex-direction:column}.metrics{grid-template-columns:1fr}}
-</style>
+onMounted(() => {
+  load()
+  loadRecentCalls()
+})
+</script>

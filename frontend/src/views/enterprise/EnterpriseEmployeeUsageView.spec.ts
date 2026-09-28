@@ -1,7 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import EnterpriseEmployeeUsageView from './EnterpriseEmployeeUsageView.vue'
+
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const { getEmployeeUsage, listEmployeeUsage, getEmployeeUsageTrend } = vi.hoisted(() => ({
   getEmployeeUsage: vi.fn(),
@@ -41,6 +47,7 @@ const baseRecord = {
 
 describe('EnterpriseEmployeeUsageView', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.resetAllMocks()
     getEmployeeUsage.mockResolvedValue({ usage: baseUsage, enterprise_pool: basePool })
     listEmployeeUsage.mockResolvedValue({ items: [baseRecord], total: 1, page: 1, page_size: 20, pages: 1 })
@@ -48,7 +55,7 @@ describe('EnterpriseEmployeeUsageView', () => {
   })
 
   it('renders personal allocation next to enterprise pool figures without fabricating values', async () => {
-    const wrapper = mount(EnterpriseEmployeeUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
     await flushPromises()
 
     expect(wrapper.text()).toContain('12.50')
@@ -64,7 +71,7 @@ describe('EnterpriseEmployeeUsageView', () => {
       usage: { ...baseUsage, source_status: 'unavailable', allocation: '0', actual_cost: '0', remaining: '0', overage: '0', requests: 0 },
       enterprise_pool: basePool,
     })
-    const wrapper = mount(EnterpriseEmployeeUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
     await flushPromises()
 
     expect(wrapper.text()).toContain('当前没有可核验的订阅窗口')
@@ -74,7 +81,7 @@ describe('EnterpriseEmployeeUsageView', () => {
 
   it('shows an explicit empty state for the trend chart instead of a fabricated zero series', async () => {
     getEmployeeUsageTrend.mockResolvedValue([])
-    const wrapper = mount(EnterpriseEmployeeUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
     await flushPromises()
 
     expect(wrapper.text()).toContain('当前筛选范围暂无趋势数据')
@@ -82,13 +89,13 @@ describe('EnterpriseEmployeeUsageView', () => {
   })
 
   it('sends the selected time window to both the detail and trend queries on filter apply', async () => {
-    const wrapper = mount(EnterpriseEmployeeUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
     await flushPromises()
 
     const vm = wrapper.vm as unknown as { dateRange: string[] }
     vm.dateRange = ['2026-09-01T00:00:00Z', '2026-09-08T00:00:00Z']
     await wrapper.vm.$nextTick()
-    await wrapper.get('button.el-button--primary').trigger('click')
+    await wrapper.get('[data-testid="usage-filter-apply"]').trigger('click')
     await flushPromises()
 
     const detailParams = listEmployeeUsage.mock.calls.at(-1)?.[0] as Record<string, unknown>
@@ -102,7 +109,7 @@ describe('EnterpriseEmployeeUsageView', () => {
 
   it('paginates the detail table using the page and page_size params', async () => {
     listEmployeeUsage.mockResolvedValue({ items: [baseRecord], total: 45, page: 1, page_size: 20, pages: 3 })
-    const wrapper = mount(EnterpriseEmployeeUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
     await flushPromises()
 
     const vm = wrapper.vm as unknown as { page: number; loadDetail: () => Promise<void> }
@@ -116,18 +123,59 @@ describe('EnterpriseEmployeeUsageView', () => {
   })
 
   it('clears prior data and marks sources unavailable after a reload failure, without stale values lingering', async () => {
-    const wrapper = mount(EnterpriseEmployeeUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
     await flushPromises()
     expect(wrapper.text()).toContain('sk-abc...7890')
 
     getEmployeeUsage.mockRejectedValueOnce(new Error('source unavailable'))
     listEmployeeUsage.mockRejectedValueOnce(new Error('source unavailable'))
     getEmployeeUsageTrend.mockRejectedValueOnce(new Error('source unavailable'))
-    await wrapper.get('.page-heading button').trigger('click')
+    await wrapper.get('[data-testid="usage-refresh"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('部分数据源暂时不可用')
     expect(wrapper.text()).not.toContain('sk-abc...7890')
+    wrapper.unmount()
+  })
+
+  it('shows the trend loading state before the trend query resolves', async () => {
+    let resolveTrend: (value: unknown) => void = () => undefined
+    getEmployeeUsageTrend.mockReturnValue(new Promise((resolve) => { resolveTrend = resolve }))
+    const wrapper = mount(EnterpriseEmployeeUsageView)
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="usage-trend-loading"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="usage-trend-empty"]').exists()).toBe(false)
+
+    resolveTrend([])
+    await flushPromises()
+    expect(wrapper.find('[data-testid="usage-trend-loading"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="usage-trend-empty"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows an explicit empty state for the detail table instead of a fabricated row', async () => {
+    listEmployeeUsage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="usage-detail-empty"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('never renders platform-admin-only fields that leak into the detail payload', async () => {
+    const platformOnly = 'PLATFORM-ONLY-SENTINEL-7781'
+    listEmployeeUsage.mockResolvedValue({
+      // 后端若误带平台管理员专属字段，员工页面不得渲染
+      items: [{ ...baseRecord, employee_email: platformOnly, enterprise_name: platformOnly }],
+      total: 1, page: 1, page_size: 20, pages: 1,
+    })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
+    await flushPromises()
+
+    // 正向对照：同一断言方式确实能检出已渲染文本，证明下面的负向断言不是空断言
+    expect(wrapper.text()).toContain('sk-abc...7890')
+    expect(wrapper.text()).not.toContain(platformOnly)
     wrapper.unmount()
   })
 })
