@@ -1,106 +1,230 @@
 <template>
-  <section class="workspace">
-    <div class="page-heading">
-      <div>
-        <div class="eyebrow">企业管理 / 订阅与额度</div>
-        <h1>订阅与额度</h1>
-        <p>从企业总池向员工分配 allocation；部门不参与分配，只作组织归属展示。</p>
-      </div>
-      <el-button :icon="Refresh" :loading="loading" @click="load">刷新数据</el-button>
-    </div>
-
-    <div v-if="sourceState === 'unavailable'" class="source-notice" role="status">
-      <strong>数据来源暂时不可用</strong>
-      <span>无法获取权威额度或订阅信息，页面已清除本次查询前的数据，不以旧值伪装实时结果。</span>
-    </div>
-
-    <div v-else-if="!loading && !subscriptionId" class="source-notice" role="status">
-      <strong>暂无生效订阅</strong>
-      <span>企业当前没有 active 订阅，无法进行 allocation 分配。</span>
-    </div>
-
-    <template v-else>
-      <section class="kpis" aria-label="企业总池分配概览">
-        <article class="kpi-card">
-          <span class="kpi-label">企业总池</span>
-          <strong>{{ result?.authoritative_limit ?? '未获取' }}</strong>
-          <small>weekly 本周期 · {{ result?.pool_source_status === 'available' ? '来源正常' : '来源不可用' }}</small>
-        </article>
-        <article class="kpi-card">
-          <span class="kpi-label">员工 allocation 合计</span>
-          <strong>{{ result?.allocated_total || '0' }}</strong>
-          <small>{{ result?.items?.length || 0 }} 名员工已分配</small>
-        </article>
-        <article class="kpi-card">
-          <span class="kpi-label">企业池未分配额度</span>
-          <strong>{{ result?.unallocated_total || '0' }}</strong>
-          <small>最小为 0，不显示负数</small>
-        </article>
-        <article class="kpi-card">
-          <span class="kpi-label">独立 overage</span>
-          <strong :class="{ 'danger-value': hasOverallocation }">{{ result?.overallocated_by || '0' }}</strong>
-          <small>超用独立记录，不冲减员工个人 remaining</small>
-        </article>
-      </section>
-
-      <div v-if="result?.warning" class="source-notice" role="status">
-        <strong>企业池已超分配</strong>
-        <span>{{ result.warning }}：当前仅作提示，不代表请求级硬阻断，员工调用仍以上游硬额度为准。</span>
-      </div>
-
-      <div class="panel table-panel">
-        <div class="table-heading">
-          <div><h2>员工 allocation</h2><span>allocation 不代表请求级硬阻断；部门仅组织归属，不参与分配</span></div>
-          <el-button type="primary" :icon="Plus" :disabled="!subscriptionId" @click="openDialog()">调整员工额度</el-button>
+  <TablePageLayout>
+    <template #actions>
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div class="min-w-0">
+          <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-400">
+            企业管理 / 订阅与额度
+          </p>
+          <h2 class="mt-1 text-xl font-bold text-gray-900 dark:text-white">订阅与{{ terms.allocation }}</h2>
+          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+            从{{ terms.pool }}向员工分配{{ terms.allocation }}；部门不参与分配，只作组织归属展示。
+          </p>
         </div>
-        <div class="table-wrap">
-          <el-table v-loading="loading" :data="result?.items || []" stripe>
-            <el-table-column prop="email" label="员工" min-width="200" />
-            <el-table-column label="部门归属" width="140"><template #default="{ row }">{{ departmentName(row.department_id) }}</template></el-table-column>
-            <el-table-column prop="configured_credit" label="allocation" width="120" />
-            <el-table-column prop="usage_credit" label="已使用" width="120" />
-            <el-table-column prop="remaining_credit" label="remaining" width="120" />
-            <el-table-column label="overage" width="120"><template #default="{ row }"><span :class="isPositiveAmount(row.overage_credit) ? 'overage' : 'muted'">{{ row.overage_credit }}</span></template></el-table-column>
-            <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'overage' ? 'danger' : 'success'">{{ row.status === 'overage' ? '有超用' : '正常' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="90" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openDialog(row)">调整</el-button></template></el-table-column>
-          </el-table>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="btn btn-secondary" :disabled="loading" @click="load">
+            <Icon name="refresh" size="md" class="mr-2" :class="{ 'animate-spin': loading }" />
+            刷新数据
+          </button>
+          <button type="button" class="btn btn-primary" :disabled="!subscriptionId" @click="openDialog()">
+            <Icon name="plus" size="md" class="mr-2" />
+            调整员工{{ terms.allocation }}
+          </button>
         </div>
-        <el-empty v-if="!loading && !(result?.items?.length)" description="当前订阅暂无员工 allocation" />
       </div>
     </template>
 
-    <el-dialog v-model="dialogOpen" title="调整员工额度" width="440px">
-      <el-form :model="form" label-position="top">
-        <el-form-item label="员工">
-          <el-select v-model="form.employee_id" filterable placeholder="选择员工" :disabled="!!editingRow">
-            <el-option v-for="employee in employees" :key="employee.id" :label="employee.email" :value="employee.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="credit">
-          <el-input v-model="form.credit" placeholder="非负数值字符串" />
-        </el-form-item>
-        <el-form-item label="调整原因（必填）">
-          <el-input v-model="form.reason" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="不得包含密钥、Token、Cookie 或邮箱等敏感信息" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
-      </template>
-    </el-dialog>
-  </section>
+    <template #filters>
+      <div class="space-y-4">
+        <div
+          v-if="sourceState === 'unavailable'"
+          role="status"
+          class="card flex flex-col gap-1 border-l-4 border-l-amber-500 p-4"
+        >
+          <span class="text-sm font-semibold text-gray-900 dark:text-white">数据来源暂时不可用</span>
+          <span class="text-xs text-gray-500 dark:text-dark-400">
+            无法获取权威{{ terms.allocation }}或订阅信息，页面已清除本次查询前的数据，不以旧值伪装实时结果。
+          </span>
+          <div>
+            <button type="button" class="btn btn-secondary btn-sm mt-2" :disabled="loading" @click="load">
+              重试
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else-if="!loading && !subscriptionId"
+          role="status"
+          class="card flex flex-col gap-1 border-l-4 border-l-amber-500 p-4"
+        >
+          <span class="text-sm font-semibold text-gray-900 dark:text-white">暂无生效订阅</span>
+          <span class="text-xs text-gray-500 dark:text-dark-400">
+            企业当前没有生效订阅，无法进行{{ terms.allocation }}分配。
+          </span>
+        </div>
+
+        <template v-else>
+          <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="企业总池分配概览">
+            <div class="card p-4">
+              <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ terms.pool }}</p>
+              <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
+                {{ result?.authoritative_limit ?? '未获取' }}
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                本周期 · 来源{{ poolSourceText }}
+              </p>
+            </div>
+            <div class="card p-4">
+              <p class="text-xs font-medium text-gray-500 dark:text-dark-400">员工{{ terms.allocation }}合计</p>
+              <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
+                {{ result?.allocated_total || '0' }}
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                {{ result?.items?.length || 0 }} 名员工已分配
+              </p>
+            </div>
+            <div class="card p-4">
+              <p class="text-xs font-medium text-gray-500 dark:text-dark-400">企业池未分配{{ terms.allocation }}</p>
+              <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
+                {{ result?.unallocated_total || '0' }}
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">最小为 0，不显示负数</p>
+            </div>
+            <div class="card p-4">
+              <p class="text-xs font-medium text-gray-500 dark:text-dark-400">独立{{ terms.overage }}</p>
+              <p
+                class="mt-2 truncate text-xl font-bold"
+                :class="hasOverallocation ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
+              >
+                {{ result?.overallocated_by || '0' }}
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                超用独立记录，不冲减员工个人{{ terms.remaining }}
+              </p>
+            </div>
+          </section>
+
+          <div v-if="result?.warning" role="status" class="card flex flex-col gap-1 border-l-4 border-l-amber-500 p-4">
+            <span class="text-sm font-semibold text-gray-900 dark:text-white">企业池已超分配</span>
+            <span class="text-xs text-gray-500 dark:text-dark-400">
+              {{ result.warning }}：当前仅作提示，不代表请求级硬阻断，员工调用仍以上游硬{{ terms.quota }}为准。
+            </span>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <template #table>
+      <div v-if="sourceState === 'unavailable' || (!loading && !subscriptionId)" class="p-6">
+        <EmptyState
+          icon="inbox"
+          :title="sourceState === 'unavailable' ? '暂不展示历史数据' : '暂无可分配的订阅'"
+          description="恢复数据来源或激活订阅后，员工额度明细会在此展示。"
+        />
+      </div>
+      <DataTable
+        v-else
+        :columns="columns"
+        :data="result?.items || []"
+        :loading="loading"
+        row-key="employee_id"
+        :actions-count="1"
+      >
+        <template #cell-department_id="{ value }">{{ departmentName(value) }}</template>
+        <template #cell-overage_credit="{ value }">
+          <span
+            :class="isPositiveAmount(value) ? 'font-semibold text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
+          >
+            {{ value }}
+          </span>
+        </template>
+        <template #cell-status="{ value }">
+          <StatusBadge :status="value === 'overage' ? 'error' : 'active'" :label="allocationStatusText(value)" />
+        </template>
+        <template #cell-actions="{ row }">
+          <button type="button" class="btn btn-ghost btn-sm" @click="openDialog(row)">调整</button>
+        </template>
+        <template #empty>
+          <EmptyState
+            icon="users"
+            :title="`当前订阅暂无员工${terms.allocation}`"
+            :description="`从${terms.pool}为员工分配${terms.allocation}后，明细会在此展示。`"
+          />
+        </template>
+      </DataTable>
+    </template>
+  </TablePageLayout>
+
+  <BaseDialog
+    :show="dialogOpen"
+    :title="`调整员工${terms.allocation}`"
+    width="normal"
+    @close="dialogOpen = false"
+  >
+    <div class="space-y-4">
+      <div>
+        <label class="input-label" for="allocation-employee">员工</label>
+        <Select
+          id="allocation-employee"
+          v-model="form.employee_id"
+          :options="employeeOptions"
+          placeholder="选择员工"
+          searchable
+          :disabled="!!editingRow"
+        />
+      </div>
+      <Input
+        v-model="form.credit"
+        :label="terms.allocation"
+        placeholder="非负数值字符串"
+        required
+        hint="留空或负数无效；实际可用仍以上游硬额度为准"
+      />
+      <div>
+        <label class="input-label" for="allocation-reason">调整原因（必填）</label>
+        <textarea
+          id="allocation-reason"
+          v-model="form.reason"
+          class="input min-h-[72px] w-full resize-y"
+          maxlength="200"
+          placeholder="不得包含密钥、Token、Cookie 或邮箱等敏感信息"
+        ></textarea>
+        <p class="input-hint">{{ form.reason.length }} / 200</p>
+      </div>
+    </div>
+    <template #footer>
+      <button type="button" class="btn btn-secondary" @click="dialogOpen = false">取消</button>
+      <button type="button" class="btn btn-primary" :disabled="saving" @click="save">保存</button>
+    </template>
+  </BaseDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
+import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import DataTable from '@/components/common/DataTable.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import Select from '@/components/common/Select.vue'
+import Input from '@/components/common/Input.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import Icon from '@/components/icons/Icon.vue'
+import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
-import type { EnterpriseAllocationListResult, EnterpriseAllocationListItem, EnterpriseDepartment, EnterpriseEmployee } from '@/types/enterprise'
+import { allocationStatusLabel, sourceStatusLabel } from '@/utils/enterpriseDisplay'
+import type { Column } from '@/components/common/types'
+import type {
+  EnterpriseAllocationListResult,
+  EnterpriseAllocationListItem,
+  EnterpriseDepartment,
+  EnterpriseEmployee
+} from '@/types/enterprise'
 import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
 
 const auth = useEnterpriseAuthStore()
+const appStore = useAppStore()
+const { t } = useI18n()
 const enterpriseId = computed(() => auth.principal?.enterprise_id || 0)
+
+const terms = computed(() => ({
+  allocation: t('admin.enterprise.terms.allocation'),
+  remaining: t('admin.enterprise.terms.remaining'),
+  overage: t('admin.enterprise.terms.overage'),
+  quota: t('admin.enterprise.terms.quota'),
+  used: t('admin.enterprise.terms.used'),
+  pool: t('admin.enterprise.terms.pool')
+}))
 
 type SourceState = 'loading' | 'ready' | 'unavailable'
 const loading = ref(false)
@@ -118,13 +242,36 @@ const form = reactive({ employee_id: 0, credit: '0', reason: '' })
 // 后端以 NUMERIC(20,8) 定长字符串返回（零值为 "0.00000000"），必须按数值判断而非字符串字面量比较
 const isPositiveAmount = (value?: string | null) => Number(value ?? 0) > 0
 const hasOverallocation = computed(() => isPositiveAmount(result.value?.overallocated_by))
-const departmentName = (id?: number | null) => departments.value.find((department) => department.id === id)?.name || '未分配部门'
+const departmentName = (id?: number | null) =>
+  departments.value.find((department) => department.id === id)?.name || '未分配部门'
+const allocationStatusText = (value: string) => allocationStatusLabel(value, t)
+const poolSourceText = computed(() =>
+  sourceStatusLabel(result.value?.pool_source_status || 'unavailable', t)
+)
+
+const columns = computed<Column[]>(() => [
+  { key: 'email', label: '员工' },
+  { key: 'department_id', label: '部门归属' },
+  { key: 'configured_credit', label: terms.value.allocation },
+  { key: 'usage_credit', label: terms.value.used },
+  { key: 'remaining_credit', label: terms.value.remaining },
+  { key: 'overage_credit', label: terms.value.overage },
+  { key: 'status', label: '状态' },
+  { key: 'actions', label: '操作' }
+])
+
+const employeeOptions = computed(() =>
+  employees.value.map((employee) => ({ value: employee.id, label: employee.email }))
+)
 
 async function loadDirectories() {
   try {
-    [departments.value, employees.value] = await Promise.all([enterpriseAPI.listDepartments(), enterpriseAPI.listEmployees()])
+    ;[departments.value, employees.value] = await Promise.all([
+      enterpriseAPI.listDepartments(),
+      enterpriseAPI.listEmployees()
+    ])
   } catch {
-    // 组织目录仅用于展示部门名称，加载失败不阻断 allocation 主流程
+    // 组织目录仅用于展示部门名称，加载失败不阻断额度主流程
   }
 }
 
@@ -146,7 +293,7 @@ async function load() {
     sourceState.value = 'ready'
   } catch {
     sourceState.value = 'unavailable'
-    ElMessage.error('allocation 数据暂时不可用')
+    appStore.showError(`${terms.value.allocation}数据暂时不可用`)
   } finally {
     loading.value = false
   }
@@ -162,7 +309,7 @@ function openDialog(row?: EnterpriseAllocationListItem) {
 
 async function save() {
   if (!subscriptionId.value || !windowAnchor.value || !form.employee_id || !form.reason.trim()) {
-    ElMessage.warning('请完整填写员工、credit 与调整原因')
+    appStore.showWarning(`请完整填写员工、${terms.value.allocation}与调整原因`)
     return
   }
   saving.value = true
@@ -180,11 +327,11 @@ async function save() {
       expected_version: current?.allocation_version || 0,
       reason: form.reason.trim(),
     })
-    ElMessage.success('allocation 已保存')
+    appStore.showSuccess(`${terms.value.allocation}已保存`)
     dialogOpen.value = false
     await load()
   } catch {
-    ElMessage.error('allocation 保存失败，请核对 credit、版本号或企业订阅来源')
+    appStore.showError(`${terms.value.allocation}保存失败，请核对数值、版本号或企业订阅来源`)
   } finally {
     saving.value = false
   }
@@ -195,33 +342,3 @@ onMounted(async () => {
   await load()
 })
 </script>
-
-<style scoped>
-.workspace{min-width:0;color:#111827}
-.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}
-.eyebrow{margin-bottom:6px;color:#6b7280;font-size:11px;font-weight:700}
-.page-heading h1{margin:0 0 5px;font-size:24px;line-height:30px}
-.page-heading p{margin:0;color:#6b7280}
-.source-notice{display:flex;gap:10px;align-items:center;margin-bottom:16px;padding:11px 14px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb;color:#92400e}
-.source-notice span{font-size:12px}
-.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:16px}
-.kpi-card{min-height:100px;padding:16px;border:1px solid #e5e7eb;border-radius:8px;background:#fff}
-.kpi-label{display:block;color:#6b7280;font-size:12px}
-.kpi-card strong{display:block;margin:9px 0 5px;font-size:22px;line-height:26px}
-.kpi-card small{color:#6b7280;font-size:11px}
-.danger-value,.overage{color:#b91c1c!important}
-.muted{color:#6b7280}
-.panel{min-width:0;padding:18px;border:1px solid #e5e7eb;border-radius:8px;background:#fff}
-.table-panel{padding:0;overflow:hidden}
-.table-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px 18px 0;margin-bottom:14px}
-.table-heading h2{margin:0 0 4px;font-size:14px}
-.table-heading span{color:#6b7280;font-size:11px}
-.table-wrap{width:100%;overflow-x:auto}
-.table-wrap :deep(.el-table){min-width:820px}
-.table-wrap :deep(.el-table th.el-table__cell){background:#f9fafb;color:#6b7280;font-size:11px}
-.table-wrap :deep(.el-table td.el-table__cell),.table-wrap :deep(.el-table th.el-table__cell){height:48px}
-.el-empty{padding:20px}
-.el-select{width:100%}
-@media(max-width:1000px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:640px){.page-heading{flex-direction:column}.page-heading .el-button{width:100%}.kpis{grid-template-columns:1fr}.panel{padding:14px}.table-heading{padding:14px 14px 0;flex-direction:column;align-items:stretch}.table-heading .el-button{width:100%}}
-</style>
