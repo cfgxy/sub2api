@@ -391,10 +391,12 @@ async function loadDetail() {
   detailLoading.value = true
   detailError.value = ''
   try {
-    ;[detail.value, departments.value] = await Promise.all([
+    const [loadedDetail, loadedDepartments] = await Promise.all([
       enterpriseAPI.getEmployee(employeeId.value),
       enterpriseAPI.listDepartments()
     ])
+    detail.value = loadedDetail
+    departments.value = loadedDepartments
   } catch (error) {
     detailError.value = (error as { message?: string })?.message || '员工详情加载失败'
   } finally {

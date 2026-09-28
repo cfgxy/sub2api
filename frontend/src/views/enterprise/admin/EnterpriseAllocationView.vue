@@ -266,10 +266,12 @@ const employeeOptions = computed(() =>
 
 async function loadDirectories() {
   try {
-    ;[departments.value, employees.value] = await Promise.all([
+    const [loadedDepartments, loadedEmployees] = await Promise.all([
       enterpriseAPI.listDepartments(),
       enterpriseAPI.listEmployees()
     ])
+    departments.value = loadedDepartments
+    employees.value = loadedEmployees
   } catch {
     // 组织目录仅用于展示部门名称，加载失败不阻断额度主流程
   }

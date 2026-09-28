@@ -389,10 +389,12 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    ;[employees.value, departments.value] = await Promise.all([
+    const [loadedEmployees, loadedDepartments] = await Promise.all([
       enterpriseAPI.listEmployees({ suppressUnavailableRedirect: true }),
       enterpriseAPI.listDepartments({ suppressUnavailableRedirect: true })
     ])
+    employees.value = loadedEmployees
+    departments.value = loadedDepartments
   } catch (error) {
     loadError.value = (error as { message?: string })?.message || '员工列表加载失败'
   } finally {
