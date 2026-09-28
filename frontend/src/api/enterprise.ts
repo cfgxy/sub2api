@@ -4,6 +4,7 @@ declare module 'axios' {
   interface AxiosRequestConfig {
     // 显式声明「自行处理加载失败」的调用点：source-unavailable 状态豁免全局会话状态页跳转，默认 false/未设置时行为不变
     enterpriseSuppressUnavailableRedirect?: boolean
+    enterprisePublicBrandProbe?: boolean
   }
 }
 import { getAPIBaseURL } from './url'
@@ -106,6 +107,7 @@ export const enterpriseClient = axios.create({
 })
 
 enterpriseClient.interceptors.request.use((config) => {
+  if (config.enterprisePublicBrandProbe) return config
   const token = localStorage.getItem(ACCESS_KEY)
   if (token && config.headers) config.headers.Authorization = `Bearer ${token}`
   return config
@@ -121,6 +123,7 @@ enterpriseClient.interceptors.response.use(
   },
   async (error: AxiosError) => {
     const request = error.config as (InternalAxiosRequestConfig & { _enterpriseRetry?: boolean }) | undefined
+    if (request?.enterprisePublicBrandProbe) return Promise.reject(error)
     const refreshToken = localStorage.getItem(REFRESH_KEY)
     const isAuthRequest = request?.url?.includes('/enterprise/auth/')
     if (error.response?.status === 401 && request && !request._enterpriseRetry && refreshToken && !isAuthRequest) {
@@ -297,7 +300,7 @@ export async function fetchEnterpriseGuideModels(signal?: AbortSignal): Promise<
 }
 
 export const enterpriseAPI = {
-  getBrand: () => data<EnterpriseBrand>(enterpriseClient.get('/enterprise/brand')),
+  getBrand: () => data<EnterpriseBrand>(enterpriseClient.get('/enterprise/brand', { enterprisePublicBrandProbe: true })),
   login: (input: { email: string; password: string }) => data<EnterpriseTokenPair>(enterpriseClient.post('/enterprise/auth/login', input)),
   refresh: (refresh_token: string) => data<EnterpriseTokenPair>(enterpriseClient.post('/enterprise/auth/refresh', { refresh_token })),
   logout: (refresh_token: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/auth/logout', { refresh_token })),

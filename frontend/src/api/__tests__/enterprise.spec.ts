@@ -1,4 +1,4 @@
-import { AxiosError } from 'axios'
+import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearEnterpriseKeyMutationRetryState, enterpriseAPI, enterpriseClient, enterpriseSessionStateForError, isEnterpriseEmployeeDepartmentInvalid, isEnterpriseEmployeeVersionConflict, shouldRedirectForEnterpriseSessionState, syncEnterpriseAuthSession } from '@/api/enterprise'
 
@@ -25,6 +25,23 @@ describe('enterprise API password handling', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('公开品牌探测不带企业令牌，官方域响应不触发会话刷新', async () => {
+    localStorage.setItem('enterprise_access_token', 'local-test-session')
+    localStorage.setItem('enterprise_refresh_token', 'local-test-refresh')
+    let sentAuthorization: unknown
+    const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      sentAuthorization = config.headers.Authorization
+      throw new AxiosError('not an enterprise host', 'ERR_BAD_REQUEST', config, undefined, {
+        data: { reason: 'ENTERPRISE_HOST_MISMATCH' }, status: 401, statusText: 'Unauthorized', headers: {}, config,
+      })
+    })
+
+    await expect(enterpriseClient.get('/enterprise/brand', { enterprisePublicBrandProbe: true, adapter })).rejects.toBeInstanceOf(AxiosError)
+    expect(sentAuthorization).toBeUndefined()
+    expect(adapter).toHaveBeenCalledOnce()
+    expect(localStorage.getItem('enterprise_refresh_token')).toBe('local-test-refresh')
   })
 
   it('sends an initial password without persisting or returning it', async () => {
