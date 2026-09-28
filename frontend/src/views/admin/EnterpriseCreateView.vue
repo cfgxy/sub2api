@@ -1,51 +1,51 @@
 <template>
   <div class="platform-page">
     <aside class="side">
-      <div class="logo"><span class="logo-mark">S</span><div><strong>Sub2API</strong><small>平台管理</small></div></div>
-      <div class="nav-label">平台管理</div>
-      <RouterLink class="nav active" to="/admin/enterprises">企业管理</RouterLink>
-      <RouterLink class="nav" to="/admin/audit-logs">平台审计</RouterLink>
-      <div class="side-help">帮助与支持</div>
+      <div class="logo"><span class="logo-mark">S</span><div><strong>Sub2API</strong><small>{{ t('admin.enterprise.create.platform') }}</small></div></div>
+      <div class="nav-label">{{ t('admin.enterprise.create.platform') }}</div>
+      <RouterLink class="nav active" to="/admin/enterprises">{{ t('admin.enterprise.common.management') }}</RouterLink>
+      <RouterLink class="nav" to="/admin/audit-logs">{{ t('admin.enterprise.create.audit') }}</RouterLink>
+      <div class="side-help">{{ t('admin.enterprise.create.help') }}</div>
     </aside>
     <div class="content">
-      <header class="topbar"><div class="crumb">平台管理 <span>/ 企业管理 / 创建企业</span></div><div class="health"><i></i>平台服务正常</div></header>
+      <header class="topbar"><div class="crumb">{{ t('admin.enterprise.create.breadcrumb') }}</div><div class="health"><i></i>{{ t('admin.enterprise.create.healthy') }}</div></header>
       <main>
-        <RouterLink class="back" to="/admin/enterprises">‹ 返回企业列表</RouterLink>
-        <div class="titlebar"><div><h1>创建企业</h1><p>建立企业基础身份与独立访问入口，创建后关联唯一 Sub2API 主账号。</p></div></div>
-        <el-alert v-if="success && created" type="success" title="企业已开通" :closable="false" show-icon class="result" data-testid="enterprise-create-success">
+        <RouterLink class="back" to="/admin/enterprises">‹ {{ t('admin.enterprise.create.backToList') }}</RouterLink>
+        <div class="titlebar"><div><h1>{{ t('admin.enterprise.create.title') }}</h1><p>{{ t('admin.enterprise.create.description') }}</p></div></div>
+        <el-alert v-if="success && created" type="success" :title="t('admin.enterprise.create.successTitle')" :closable="false" show-icon class="result" data-testid="enterprise-create-success">
           <template #default>
             <div class="result-grid">
-              <div><span>企业名称</span><strong>{{ created.name }}</strong></div>
-              <div><span>入口域名</span><strong>{{ created.portal_host }}</strong></div>
-              <div><span>专用主账号</span><strong>{{ created.admin_email || '已配置' }}</strong></div>
-              <div><span>专用上游用户 ID</span><strong>{{ created.dedicated_upstream_user_id }}</strong></div>
+              <div><span>{{ t('admin.enterprise.common.name') }}</span><strong>{{ created.name }}</strong></div>
+              <div><span>{{ t('admin.enterprise.common.portalHost') }}</span><strong>{{ created.portal_host }}</strong></div>
+              <div><span>{{ t('admin.enterprise.create.dedicatedAccount') }}</span><strong>{{ created.admin_email || t('admin.enterprise.create.configured') }}</strong></div>
+              <div><span>{{ t('admin.enterprise.common.upstreamUserId') }}</span><strong>{{ created.dedicated_upstream_user_id }}</strong></div>
             </div>
-            <p class="result-note">账号密码、Token 等敏感凭据不在此展示；如需查看订阅与状态，请前往企业详情。</p>
-            <el-button text type="primary" @click="router.push(`/admin/enterprises/${created.id}`)">查看企业详情 ›</el-button>
+            <p class="result-note">{{ t('admin.enterprise.create.successNote') }}</p>
+            <el-button text type="primary" @click="router.push(`/admin/enterprises/${created.id}`)">{{ t('admin.enterprise.create.viewDetail') }} ›</el-button>
           </template>
         </el-alert>
         <div class="layout">
           <el-form ref="formRef" class="form-panel" :model="form" :rules="rules" label-position="top" @submit.prevent="submit">
-            <section class="section"><div class="section-head"><span>1</span><div><h2>企业基础信息</h2><p>用于平台识别与企业列表展示，不包含敏感凭据。</p></div></div>
-              <el-form-item label="企业名称" prop="name"><el-input v-model="form.name" maxlength="255" placeholder="例如：云川数据" /></el-form-item>
-              <el-form-item label="企业入口域名" prop="portal_host"><el-input v-model="form.portal_host" placeholder="enterprise.example.com" /></el-form-item>
+            <section class="section"><div class="section-head"><span>1</span><div><h2>{{ t('admin.enterprise.create.basicTitle') }}</h2><p>{{ t('admin.enterprise.create.basicDescription') }}</p></div></div>
+              <el-form-item :label="t('admin.enterprise.common.name')" prop="name"><el-input v-model="form.name" maxlength="255" :placeholder="t('admin.enterprise.create.namePlaceholder')" /></el-form-item>
+              <el-form-item :label="t('admin.enterprise.create.portalLabel')" prop="portal_host"><el-input v-model="form.portal_host" placeholder="enterprise.example.com" /></el-form-item>
             </section>
-            <section class="section"><div class="section-head"><span>2</span><div><h2>唯一主账号与订阅</h2><p>开通前会校验账号状态及当前可用周订阅。</p></div></div>
-              <el-form-item label="专用主账号" prop="dedicated_upstream_user_id">
-                <el-select v-model="form.dedicated_upstream_user_id" filterable remote clearable :remote-method="searchUsers" :loading="searching" :disabled="!enterprisesLoaded" placeholder="按邮箱或昵称搜索" style="width:100%" @change="selectUser">
-                  <el-option v-for="option in userOptions" :key="option.user.id" :value="option.user.id" :label="`${option.user.username} · ${option.user.email}${option.reason ? `（${option.reason}）` : ''}`" :disabled="!!option.reason" />
+            <section class="section"><div class="section-head"><span>2</span><div><h2>{{ t('admin.enterprise.create.accountTitle') }}</h2><p>{{ t('admin.enterprise.create.accountDescription') }}</p></div></div>
+              <el-form-item :label="t('admin.enterprise.create.dedicatedAccount')" prop="dedicated_upstream_user_id">
+                <el-select v-model="form.dedicated_upstream_user_id" filterable remote clearable :remote-method="searchUsers" :loading="searching" :disabled="!enterprisesLoaded" :placeholder="t('admin.enterprise.create.searchAccount')" style="width:100%" @change="selectUser">
+                  <el-option v-for="option in userOptions" :key="option.user.id" :value="option.user.id" :label="optionLabel(option)" :disabled="!!option.reason" />
                 </el-select>
               </el-form-item>
               <el-alert v-if="sourceError" type="error" :title="sourceError" :closable="false" show-icon class="source-error" />
               <p v-else-if="selectedReason" class="source-error">{{ selectedReason }}</p>
-              <el-alert type="info" :closable="false" title="平台只保存关联关系" description="主账号密码、Token 和 Key 不会显示在企业端或审计记录中；没有可用订阅时创建会被拒绝。" />
+              <el-alert type="info" :closable="false" :title="t('admin.enterprise.create.sourceTitle')" :description="t('admin.enterprise.create.sourceDescription')" />
             </section>
-            <section class="section"><div class="section-head"><span>3</span><div><h2>开通说明</h2><p>说明会进入平台审计，便于后续追溯。</p></div></div>
-              <el-form-item label="开通原因" prop="reason"><el-input v-model="form.reason" type="textarea" maxlength="500" show-word-limit :rows="3" placeholder="填写本次开通的业务原因" /></el-form-item>
+            <section class="section"><div class="section-head"><span>3</span><div><h2>{{ t('admin.enterprise.create.reasonTitle') }}</h2><p>{{ t('admin.enterprise.create.reasonDescription') }}</p></div></div>
+              <el-form-item :label="t('admin.enterprise.create.reasonLabel')" prop="reason"><el-input v-model="form.reason" type="textarea" maxlength="500" show-word-limit :rows="3" :placeholder="t('admin.enterprise.create.reasonPlaceholder')" /></el-form-item>
             </section>
-            <div class="actions"><el-button @click="router.push('/admin/enterprises')">取消</el-button><el-button type="primary" native-type="submit" :loading="saving">创建企业</el-button></div>
+            <div class="actions"><el-button @click="router.push('/admin/enterprises')">{{ t('admin.enterprise.common.cancel') }}</el-button><el-button type="primary" native-type="submit" :loading="saving">{{ t('admin.enterprise.create.title') }}</el-button></div>
           </el-form>
-          <aside class="check-panel"><h3>创建检查</h3><ul><li>企业名称和入口域名将执行格式与唯一性校验。</li><li>专用上游用户必须处于启用状态。</li><li>专用上游用户必须存在当前可用周订阅。</li><li>成功结果只展示脱敏主账号信息。</li></ul><div class="note">企业创建成功后，企业管理员从独立入口登录；员工账号不创建为 Sub2API 用户。</div></aside>
+          <aside class="check-panel"><h3>{{ t('admin.enterprise.create.checksTitle') }}</h3><ul><li>{{ t('admin.enterprise.create.checksName') }}</li><li>{{ t('admin.enterprise.create.checksActive') }}</li><li>{{ t('admin.enterprise.create.checksSubscription') }}</li><li>{{ t('admin.enterprise.create.checksPrivacy') }}</li></ul><div class="note">{{ t('admin.enterprise.create.note') }}</div></aside>
         </div>
       </main>
     </div>
@@ -55,6 +55,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { enterprisePlatformAPI, type PlatformEnterprise } from '@/api/enterprisePlatform'
@@ -62,6 +63,7 @@ import { list as listUsers } from '@/api/admin/users'
 import type { AdminUser } from '@/types'
 
 const router = useRouter()
+const { t, locale } = useI18n({ useScope: 'global' })
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const success = ref(false)
@@ -77,24 +79,30 @@ const form = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: 0
 const userOptions = computed(() => candidates.value.map((user) => ({ user, reason: ineligibleReason(user) })))
 const selectedReason = computed(() => selectedUser.value ? ineligibleReason(selectedUser.value) : '')
 
+function optionLabel(option: { user: AdminUser; reason: string }) {
+  const account = `${option.user.username} · ${option.user.email}`
+  if (!option.reason) return account
+  return locale.value === 'zh' ? `${account}（${option.reason}）` : `${account} (${option.reason})`
+}
+
 onMounted(async () => {
   try {
     existingEnterprises.value = await enterprisePlatformAPI.list()
     enterprisesLoaded.value = true
   } catch {
-    sourceError.value = '企业列表加载失败，无法核验主账号，请刷新重试'
+    sourceError.value = t('admin.enterprise.create.listFailed')
   }
 })
 
 function ineligibleReason(user: AdminUser): string {
-  if (!enterprisesLoaded.value) return '正在核验主账号'
-  if (user.status !== 'active') return '账号已停用'
-  if (existingEnterprises.value.some((item) => item.dedicated_upstream_user_id === user.id)) return '已关联其他企业'
+  if (!enterprisesLoaded.value) return t('admin.enterprise.create.loadingAccount')
+  if (user.status !== 'active') return t('admin.enterprise.create.disabledAccount')
+  if (existingEnterprises.value.some((item) => item.dedicated_upstream_user_id === user.id)) return t('admin.enterprise.create.linkedAccount')
   const now = Date.now()
   if (!user.subscriptions?.some((item) => item.status === 'active'
     && Date.parse(item.starts_at) <= now && Date.parse(item.expires_at || '') > now
     && item.group?.status === 'active' && Number(item.group.weekly_limit_usd) > 0)) {
-    return '没有当前可用的周订阅'
+    return t('admin.enterprise.create.noWeeklySubscription')
   }
   return ''
 }
@@ -109,7 +117,7 @@ async function searchUsers(query: string) {
     const response = await listUsers(1, 20, { search: query.trim(), include_subscriptions: true })
     if (sequence === searchSequence) candidates.value = response.items
   } catch {
-    if (sequence === searchSequence) sourceError.value = '用户搜索失败，请重试'
+    if (sequence === searchSequence) sourceError.value = t('admin.enterprise.create.searchFailed')
   } finally {
     if (sequence === searchSequence) searching.value = false
   }
@@ -119,17 +127,17 @@ function selectUser(id: number | '') {
   selectedUser.value = candidates.value.find((user) => user.id === id)
 }
 
-const rules: FormRules = {
-  name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
-  portal_host: [{ required: true, message: '请输入企业入口域名', trigger: 'blur' }, { pattern: /^[a-z0-9.-]+$/, message: '请输入有效域名', trigger: 'blur' }],
-  dedicated_upstream_user_id: [{ type: 'number', min: 1, message: '请搜索并选择专用主账号', trigger: 'change' }],
-  reason: [{ required: true, message: '请输入开通原因', trigger: 'blur' }],
-}
+const rules = computed<FormRules>(() => ({
+  name: [{ required: true, message: t('admin.enterprise.create.nameRequired'), trigger: 'blur' }],
+  portal_host: [{ required: true, message: t('admin.enterprise.create.hostRequired'), trigger: 'blur' }, { pattern: /^[a-z0-9.-]+$/, message: t('admin.enterprise.create.hostInvalid'), trigger: 'blur' }],
+  dedicated_upstream_user_id: [{ type: 'number', min: 1, message: t('admin.enterprise.create.accountRequired'), trigger: 'change' }],
+  reason: [{ required: true, message: t('admin.enterprise.create.reasonRequired'), trigger: 'blur' }],
+}))
 
 async function submit() {
   if (!await formRef.value?.validate().catch(() => false)) return
   if (!enterprisesLoaded.value || !selectedUser.value || form.dedicated_upstream_user_id !== selectedUser.value.id || selectedReason.value) {
-    ElMessage.error(selectedReason.value || sourceError.value || '请搜索并选择符合条件的主账号')
+    ElMessage.error(selectedReason.value || sourceError.value || t('admin.enterprise.create.accountRequired'))
     return
   }
   saving.value = true
@@ -137,11 +145,11 @@ async function submit() {
   try {
     created.value = await enterprisePlatformAPI.create(form)
     success.value = true
-    ElMessage.success('企业已开通')
+    ElMessage.success(t('admin.enterprise.create.createSuccess'))
     window.scrollTo({ top: 0, behavior: 'smooth' })
   } catch (error) {
     const message = (error as { message?: string }).message
-    ElMessage.error(message || '企业开通失败，请检查主账号和订阅状态')
+    ElMessage.error(message || t('admin.enterprise.create.createFailed'))
   } finally {
     saving.value = false
   }

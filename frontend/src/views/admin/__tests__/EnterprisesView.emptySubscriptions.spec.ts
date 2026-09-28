@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { i18n, loadLocaleMessages } from '@/i18n'
+import { enterpriseTestLocale } from './enterpriseTestI18n'
 
 import EnterprisesView from '../EnterprisesView.vue'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
+  useI18n: (await import('./enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const { list } = vi.hoisted(() => ({
   list: vi.fn(),
@@ -23,6 +30,9 @@ vi.mock('vue-router', () => ({
 
 describe('EnterprisesView 订阅摘要空态', () => {
   it('后端返回 subscriptions 为 null 时渲染「无订阅」且不抛错', async () => {
+    await loadLocaleMessages('zh')
+    i18n.global.locale.value = 'zh'
+    enterpriseTestLocale.value = 'zh'
     list.mockResolvedValueOnce([
       {
         id: 2,
@@ -37,7 +47,7 @@ describe('EnterprisesView 订阅摘要空态', () => {
     ])
     const wrapper = mount(EnterprisesView, {
       global: {
-        plugins: [ElementPlus],
+        plugins: [ElementPlus, i18n],
         stubs: { PlatformEnterpriseShell: { template: '<div><slot /></div>' } },
       },
     })
