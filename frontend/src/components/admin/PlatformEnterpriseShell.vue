@@ -137,9 +137,14 @@ const appStore = useAppStore()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 
-const pageTitle = computed(() => t(route.name === 'AdminEnterpriseDetail' ? 'admin.enterprise.detail.title' : 'admin.enterprise.common.management'))
+const pageTitle = computed(() => t(
+  route.path === '/admin/dashboard'
+    ? 'admin.dashboard.title'
+    : route.name === 'AdminEnterpriseDetail' ? 'admin.enterprise.detail.title' : 'admin.enterprise.common.management'
+))
 
 const navigation = computed(() => [
+  { path: '/admin/dashboard', label: t('admin.dashboard.title'), icon: 'chart' as const },
   { path: '/admin/enterprises', label: t('admin.enterprise.common.management'), icon: 'grid' as const },
   { path: '/admin/audit-logs', label: t('admin.enterprise.create.audit'), icon: 'clipboard' as const },
 ])

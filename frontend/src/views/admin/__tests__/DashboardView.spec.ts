@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -87,6 +88,22 @@ const createDashboardStats = (): DashboardStats => ({
 })
 
 describe('admin DashboardView', () => {
+  const render = () => mount(DashboardView, {
+    global: {
+      stubs: {
+        PlatformEnterpriseShell: { template: '<div data-testid="platform-shell"><slot /></div>' },
+        AppLayout: { template: '<div data-testid="old-shell"><slot /></div>' },
+        LoadingSpinner: true,
+        Icon: true,
+        DateRangePicker: true,
+        Select: true,
+        ModelDistributionChart: true,
+        TokenUsageTrend: true,
+        Line: true
+      }
+    }
+  })
+
   beforeEach(() => {
     setActivePinia(createPinia())
 
@@ -116,20 +133,7 @@ describe('admin DashboardView', () => {
   })
 
   it('uses last 24 hours as default dashboard range', async () => {
-    mount(DashboardView, {
-      global: {
-        stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
-          LoadingSpinner: true,
-          Icon: true,
-          DateRangePicker: true,
-          Select: true,
-          ModelDistributionChart: true,
-          TokenUsageTrend: true,
-          Line: true
-        }
-      }
-    })
+    render()
 
     await flushPromises()
 
@@ -142,5 +146,38 @@ describe('admin DashboardView', () => {
       end_date: formatLocalDate(now),
       granularity: 'hour'
     }))
+  })
+
+  it('uses the platform shell and distinguishes loading, empty and normal states', async () => {
+    let resolveSnapshot!: (value: unknown) => void
+    getSnapshotV2.mockReturnValueOnce(new Promise((resolve) => { resolveSnapshot = resolve }))
+    const wrapper = render()
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="platform-shell"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="old-shell"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="dashboard-loading"]').exists()).toBe(true)
+    resolveSnapshot({ stats: createDashboardStats(), trend: [], models: [] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dashboard-empty"]').exists()).toBe(true)
+
+    getSnapshotV2.mockResolvedValueOnce({ stats: { ...createDashboardStats(), total_users: 3 }, trend: [], models: [] })
+    await wrapper.find('[data-testid="dashboard-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dashboard-stats"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="dashboard-empty"]').exists()).toBe(false)
+  })
+
+  it('shows a retryable error when the initial statistics request fails', async () => {
+    getSnapshotV2.mockRejectedValueOnce(new Error('upstream unavailable'))
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dashboard-error"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('upstream unavailable')
+
+    await wrapper.find('[data-testid="dashboard-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dashboard-error"]').exists()).toBe(false)
+    expect(getSnapshotV2).toHaveBeenCalledTimes(2)
   })
 })
