@@ -226,36 +226,47 @@ func TestReadBrandBackgroundRejectsCrossEnterpriseObject(t *testing.T) {
 }
 
 func TestUploadAndReadBrandBackground(t *testing.T) {
-	svc, mock := newMockService(t)
-	storage := &memoryBrandStorage{}
-	svc.brandStorage = storage
-	payload := validPNG(t)
-	sum := sha256.Sum256(payload)
-	digest := hex.EncodeToString(sum[:])
-	mock.ExpectExec("INSERT INTO enterprise_branding").WithArgs(int64(7), sqlmock.AnyArg(), "image/png", digest, int64(len(payload))).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+	for _, tc := range []struct {
+		name        string
+		payload     func(*testing.T) []byte
+		contentType string
+	}{
+		{name: "png", payload: validPNG, contentType: "image/png"},
+		{name: "webp", payload: validWebP, contentType: "image/webp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, mock := newMockService(t)
+			storage := &memoryBrandStorage{}
+			svc.brandStorage = storage
+			payload := tc.payload(t)
+			sum := sha256.Sum256(payload)
+			digest := hex.EncodeToString(sum[:])
+			mock.ExpectExec("INSERT INTO enterprise_branding").WithArgs(int64(7), sqlmock.AnyArg(), tc.contentType, digest, int64(len(payload))).
+				WillReturnResult(sqlmock.NewResult(0, 1))
 
-	asset, err := svc.UploadBrandBackground(context.Background(), 7, digest, payload)
-	require.NoError(t, err)
-	require.Equal(t, "image/png", asset.ContentType)
-	require.Equal(t, digest, asset.SHA256)
-	require.Equal(t, int64(len(payload)), asset.Size)
-	require.Equal(t, publicBrandBackgroundURL, asset.URL)
+			asset, err := svc.UploadBrandBackground(context.Background(), 7, digest, payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.contentType, asset.ContentType)
+			require.Equal(t, digest, asset.SHA256)
+			require.Equal(t, int64(len(payload)), asset.Size)
+			require.Equal(t, publicBrandBackgroundURL, asset.URL)
 
-	var key string
-	for storedKey := range storage.objects {
-		key = storedKey
+			var key string
+			for storedKey := range storage.objects {
+				key = storedKey
+			}
+			require.True(t, strings.HasPrefix(key, "enterprises/7/branding/background-"))
+			mock.ExpectQuery("SELECT background_object_key").WithArgs(int64(7)).
+				WillReturnRows(sqlmock.NewRows([]string{"background_object_key", "background_content_type", "background_sha256", "background_size_bytes"}).
+					AddRow(key, tc.contentType, digest, int64(len(payload))))
+
+			got, contentType, err := svc.ReadBrandBackground(context.Background(), 7)
+			require.NoError(t, err)
+			require.Equal(t, tc.contentType, contentType)
+			require.Equal(t, payload, got)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
 	}
-	require.True(t, strings.HasPrefix(key, "enterprises/7/branding/background-"))
-	mock.ExpectQuery("SELECT background_object_key").WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"background_object_key", "background_content_type", "background_sha256", "background_size_bytes"}).
-			AddRow(key, "image/png", digest, int64(len(payload))))
-
-	got, contentType, err := svc.ReadBrandBackground(context.Background(), 7)
-	require.NoError(t, err)
-	require.Equal(t, "image/png", contentType)
-	require.Equal(t, payload, got)
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestReadBrandBackgroundFailsClosedOnIntegrityMismatch(t *testing.T) {
