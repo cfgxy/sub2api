@@ -1083,6 +1083,7 @@
       :codex-candidate="codexCandidate"
       @close="closeDeveloperTools"
       @import-ccs="importCcsFromDeveloperTools"
+      @import-codex="importCodexFromDeveloperTools"
     />
 
     <!-- CCS Client Selection Dialog for Antigravity -->
@@ -1234,7 +1235,7 @@ import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
-import { resolveCodexPlusPlusCandidate } from '@/utils/codexPlusPlusImport'
+import { buildCodexPlusPlusImportUri, resolveCodexPlusPlusCandidate } from '@/utils/codexPlusPlusImport'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import { KEY_GROUP_PROVIDERS, KEY_GROUP_PROVIDER_ICONS, getKeyGroupProvider, type KeyGroupProvider } from '@/utils/keyGroupProviders'
@@ -1696,6 +1697,15 @@ const importCcsFromDeveloperTools = () => {
   const key = selectedKey.value
   closeDeveloperTools()
   if (key) importToCcswitch(key)
+}
+
+const importCodexFromDeveloperTools = () => {
+  const key = selectedKey.value
+  const candidate = codexCandidate.value
+  if (!key || !candidate) return
+  const uri = buildCodexPlusPlusImportUri(candidate, key.key)
+  closeDeveloperTools()
+  window.open(uri, '_self')
 }
 
 const handlePageChange = (page: number) => {

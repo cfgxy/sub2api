@@ -241,7 +241,7 @@ const mountView = async () => {
         DeveloperToolsModal: {
           name: 'DeveloperToolsModal',
           props: ['show', 'canImportCcs', 'codexCandidate'],
-          emits: ['close', 'importCcs'],
+          emits: ['close', 'importCcs', 'importCodex'],
           template: '<div />',
         },
         BulkEditKeysModal: true,
@@ -667,5 +667,34 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
     await getButtonByText(wrapper, 'keys.developerTools.title').trigger('click')
     expect(wrapper.getComponent({ name: 'DeveloperToolsModal' }).props('canImportCcs')).toBe(false)
+  })
+
+  it('仅在点击时把有效 OpenAI Key 与 /v1 基地址送到 Codex++ 协议', async () => {
+    const key = {
+      ...createApiKey(),
+      group: { platform: 'openai', status: 'active' }
+    } as ApiKey
+    listKeys.mockResolvedValueOnce({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
+    getPublicSettings.mockResolvedValueOnce({ api_base_url: 'https://api.example.test/proxy' })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'keys.developerTools.title').trigger('click')
+    const modal = wrapper.getComponent({ name: 'DeveloperToolsModal' })
+    expect(modal.props('codexCandidate').baseUrl).toBe('https://api.example.test/proxy/v1')
+    expect(modal.props('codexCandidate')).not.toHaveProperty('apiKey')
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    try {
+      modal.vm.$emit('importCodex')
+      await nextTick()
+      expect(open).toHaveBeenCalledTimes(1)
+      const [url, target] = open.mock.calls[0]
+      expect(target).toBe('_self')
+      const uri = new URL(url!)
+      expect(uri.host).toBe('v1')
+      expect(uri.searchParams.get('baseUrl')).toBe('https://api.example.test/proxy/v1')
+      expect(uri.searchParams.get('apiKey')).toBe(key.key)
+      expect(modal.props('show')).toBe(false)
+    } finally {
+      open.mockRestore()
+    }
   })
 })

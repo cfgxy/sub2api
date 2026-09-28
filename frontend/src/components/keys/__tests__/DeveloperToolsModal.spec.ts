@@ -23,6 +23,26 @@ describe('开发工具弹窗', () => {
     expect(wrapper.text()).toContain('keys.developerTools.codexUnavailable')
   })
 
+  it('有可导入候选时允许用户点击 Codex++，不在弹窗属性中放密钥', async () => {
+    const wrapper = mount(DeveloperToolsModal, {
+      props: {
+        show: true,
+        canImportCcs: true,
+        codexCandidate: {
+          name: 'Sub2API / OpenAI / key #42',
+          baseUrl: 'https://api.example.test/v1',
+          wireApi: 'responses',
+          relayMode: 'pureApi'
+        }
+      },
+      global: { stubs }
+    })
+    expect(wrapper.get('[data-testid="codex-import"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="codex-import"]').trigger('click')
+    expect(wrapper.emitted('importCodex')).toHaveLength(1)
+    expect(wrapper.text()).toContain('keys.developerTools.confirmInApp')
+  })
+
   it('保留 CCSwitch 下载与旧导入动作', async () => {
     const wrapper = mount(DeveloperToolsModal, {
       props: { show: true, canImportCcs: true, codexCandidate: null },

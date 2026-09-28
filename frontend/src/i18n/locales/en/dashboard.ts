@@ -116,8 +116,8 @@ export default {
       download: 'Download the tool',
       import: 'Import key configuration',
       importToCodex: 'Import to Codex++',
-      pending: 'Codex++ import will be available after protocol integration',
-      codexUnavailable: 'This key is not eligible for automatic import; the Codex++ connection is unavailable'
+      confirmInApp: 'After clicking, confirm in Codex++. The protocol link may be recorded by the browser or OS; use only a trusted device.',
+      codexUnavailable: 'Only active, readable OpenAI keys are supported; Claude import is not yet available'
     },
     enable: 'Enable',
     disable: 'Disable',

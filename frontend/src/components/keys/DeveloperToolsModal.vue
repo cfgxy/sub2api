@@ -47,12 +47,12 @@
           <div class="min-w-0 flex-1 space-y-3">
             <h3 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('keys.developerTools.import') }}</h3>
             <template v-if="activeTab === 'codex'">
-              <button type="button" data-testid="codex-import" class="btn btn-primary" disabled>
+              <button type="button" data-testid="codex-import" class="btn btn-primary" :disabled="!codexCandidate" @click="emit('importCodex')">
                 <Icon name="upload" size="sm" class="mr-2" />
                 {{ t('keys.developerTools.importToCodex') }}
               </button>
               <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t(codexCandidate ? 'keys.developerTools.pending' : 'keys.developerTools.codexUnavailable') }}
+                {{ t(codexCandidate ? 'keys.developerTools.confirmInApp' : 'keys.developerTools.codexUnavailable') }}
               </p>
             </template>
             <button v-else type="button" data-testid="ccs-import" class="btn btn-primary" @click="emit('importCcs')">
@@ -84,7 +84,7 @@ const props = defineProps<{
   canImportCcs: boolean
   codexCandidate: CodexPlusPlusCandidate | null
 }>()
-const emit = defineEmits<{ close: []; importCcs: [] }>()
+const emit = defineEmits<{ close: []; importCcs: []; importCodex: [] }>()
 const { t } = useI18n()
 const activeTab = ref<'codex' | 'ccs'>('codex')
 
