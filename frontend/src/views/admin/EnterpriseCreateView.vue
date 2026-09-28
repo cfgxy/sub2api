@@ -31,7 +31,13 @@
               <el-form-item label="企业入口域名" prop="portal_host"><el-input v-model="form.portal_host" placeholder="enterprise.example.com" /></el-form-item>
             </section>
             <section class="section"><div class="section-head"><span>2</span><div><h2>唯一主账号与订阅</h2><p>开通前会校验账号状态及当前可用周订阅。</p></div></div>
-              <el-form-item label="专用上游用户 ID" prop="dedicated_upstream_user_id"><el-input-number v-model="form.dedicated_upstream_user_id" :min="1" controls-position="right" /></el-form-item>
+              <el-form-item label="专用主账号" prop="dedicated_upstream_user_id">
+                <el-select v-model="form.dedicated_upstream_user_id" filterable remote clearable :remote-method="searchUsers" :loading="searching" :disabled="!enterprisesLoaded" placeholder="按邮箱或昵称搜索" style="width:100%" @change="selectUser">
+                  <el-option v-for="option in userOptions" :key="option.user.id" :value="option.user.id" :label="`${option.user.username} · ${option.user.email}${option.reason ? `（${option.reason}）` : ''}`" :disabled="!!option.reason" />
+                </el-select>
+              </el-form-item>
+              <el-alert v-if="sourceError" type="error" :title="sourceError" :closable="false" show-icon class="source-error" />
+              <p v-else-if="selectedReason" class="source-error">{{ selectedReason }}</p>
               <el-alert type="info" :closable="false" title="平台只保存关联关系" description="主账号密码、Token 和 Key 不会显示在企业端或审计记录中；没有可用订阅时创建会被拒绝。" />
             </section>
             <section class="section"><div class="section-head"><span>3</span><div><h2>开通说明</h2><p>说明会进入平台审计，便于后续追溯。</p></div></div>
@@ -47,27 +53,85 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { enterprisePlatformAPI, type PlatformEnterprise } from '@/api/enterprisePlatform'
+import { list as listUsers } from '@/api/admin/users'
+import type { AdminUser } from '@/types'
 
 const router = useRouter()
 const formRef = ref<FormInstance>()
 const saving = ref(false)
 const success = ref(false)
 const created = ref<PlatformEnterprise>()
+const searching = ref(false)
+const enterprisesLoaded = ref(false)
+const sourceError = ref('')
+const existingEnterprises = ref<PlatformEnterprise[]>([])
+const candidates = ref<AdminUser[]>([])
+const selectedUser = ref<AdminUser>()
+let searchSequence = 0
 const form = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: 0, reason: '' })
+const userOptions = computed(() => candidates.value.map((user) => ({ user, reason: ineligibleReason(user) })))
+const selectedReason = computed(() => selectedUser.value ? ineligibleReason(selectedUser.value) : '')
+
+onMounted(async () => {
+  try {
+    existingEnterprises.value = await enterprisePlatformAPI.list()
+    enterprisesLoaded.value = true
+  } catch {
+    sourceError.value = '企业列表加载失败，无法核验主账号，请刷新重试'
+  }
+})
+
+function ineligibleReason(user: AdminUser): string {
+  if (!enterprisesLoaded.value) return '正在核验主账号'
+  if (user.status !== 'active') return '账号已停用'
+  if (existingEnterprises.value.some((item) => item.dedicated_upstream_user_id === user.id)) return '已关联其他企业'
+  const now = Date.now()
+  if (!user.subscriptions?.some((item) => item.status === 'active'
+    && Date.parse(item.starts_at) <= now && Date.parse(item.expires_at || '') > now
+    && item.group?.status === 'active' && Number(item.group.weekly_limit_usd) > 0)) {
+    return '没有当前可用的周订阅'
+  }
+  return ''
+}
+
+async function searchUsers(query: string) {
+  const sequence = ++searchSequence
+  candidates.value = []
+  if (!query.trim() || !enterprisesLoaded.value) return
+  sourceError.value = ''
+  searching.value = true
+  try {
+    const response = await listUsers(1, 20, { search: query.trim(), include_subscriptions: true })
+    if (sequence === searchSequence) candidates.value = response.items
+  } catch {
+    if (sequence === searchSequence) sourceError.value = '用户搜索失败，请重试'
+  } finally {
+    if (sequence === searchSequence) searching.value = false
+  }
+}
+
+function selectUser(id: number | '') {
+  selectedUser.value = candidates.value.find((user) => user.id === id)
+}
+
 const rules: FormRules = {
   name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
   portal_host: [{ required: true, message: '请输入企业入口域名', trigger: 'blur' }, { pattern: /^[a-z0-9.-]+$/, message: '请输入有效域名', trigger: 'blur' }],
-  dedicated_upstream_user_id: [{ required: true, message: '请输入专用上游用户 ID', trigger: 'change' }],
+  dedicated_upstream_user_id: [{ type: 'number', min: 1, message: '请搜索并选择专用主账号', trigger: 'change' }],
   reason: [{ required: true, message: '请输入开通原因', trigger: 'blur' }],
 }
 
 async function submit() {
   if (!await formRef.value?.validate().catch(() => false)) return
+  if (!enterprisesLoaded.value || !selectedUser.value || form.dedicated_upstream_user_id !== selectedUser.value.id || selectedReason.value) {
+    ElMessage.error(selectedReason.value || sourceError.value || '请搜索并选择符合条件的主账号')
+    return
+  }
   saving.value = true
   success.value = false
   try {
@@ -86,4 +150,5 @@ async function submit() {
 
 <style scoped>
 .platform-page{min-height:100vh;background:#f0f2f5;color:#111827}.side{position:fixed;inset:0 auto 0 0;width:232px;padding:20px 12px;background:#fff;border-right:1px solid #e5e7eb}.logo{display:flex;align-items:center;gap:10px;padding:0 10px;margin-bottom:26px}.logo-mark{display:grid;width:30px;height:30px;place-items:center;border-radius:7px;background:#2563eb;color:#fff;font-weight:800}.logo strong,.logo small{display:block}.logo small{margin-top:2px;color:#6b7280;font-size:10px}.nav-label{margin:16px 10px 7px;color:#9ca3af;font-size:11px;font-weight:700}.nav{display:block;padding:11px;border-radius:6px;color:#4b5563;text-decoration:none}.nav.active{background:#eff6ff;color:#2563eb;font-weight:700}.side-help{position:absolute;right:22px;bottom:20px;left:22px;padding-top:14px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px}.content{margin-left:232px}.topbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;height:64px;padding:0 28px;background:#fff;border-bottom:1px solid #e5e7eb}.crumb{font-weight:650}.crumb span{margin-left:8px;color:#9ca3af;font-weight:400}.health{display:flex;align-items:center;gap:7px;margin-left:auto;color:#4b5563;font-size:12px}.health i{width:7px;height:7px;border-radius:50%;background:#15803d}main{max-width:1120px;margin:0 auto;padding:28px}.back{display:inline-block;margin-bottom:12px;color:#64748b;font-size:13px;text-decoration:none}.titlebar{margin-bottom:18px}.titlebar h1{margin:0 0 6px;font-size:24px}.titlebar p{margin:0;color:#526078}.result{margin-bottom:16px}.result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 20px;margin-bottom:8px}.result-grid span{display:block;color:#6b7280;font-size:12px}.result-grid strong{font-weight:600;overflow-wrap:anywhere}.result-note{margin:4px 0 8px;color:#6b7280;font-size:12px}.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}.form-panel,.check-panel{background:#fff;border:1px solid #e5e7eb;border-radius:8px}.section{padding:20px 22px;border-bottom:1px solid #e5e7eb}.section-head{display:flex;gap:11px;margin-bottom:16px}.section-head>span{display:grid;width:24px;height:24px;place-items:center;border-radius:50%;background:#eff6ff;color:#2563eb;font-weight:700}.section-head h2{margin:2px 0 4px;font-size:15px}.section-head p{margin:0;color:#6b7280;font-size:12px}.actions{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px}.check-panel{padding:20px}.check-panel h3{margin:0 0 14px;font-size:14px}.check-panel ul{display:grid;gap:12px;margin:0;padding:0 0 0 18px;color:#526078;font-size:12px;line-height:18px}.note{margin-top:18px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:12px;line-height:18px}@media(max-width:760px){.side{display:none}.content{margin-left:0}.topbar{padding:0 16px}.crumb span,.health{display:none}main{padding:18px 14px}.layout{grid-template-columns:1fr}.check-panel{order:-1}.actions{padding:16px}.actions .el-button{flex:1}}
+.source-error{margin:0 0 12px;color:#b42318;font-size:12px}
 </style>

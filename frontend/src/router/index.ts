@@ -14,8 +14,9 @@ import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
 import { enterpriseRoutes } from './enterpriseRoutes'
-import { resolveEnterpriseNavigation } from './enterpriseGuard'
+import { resolveEnterpriseEntry, resolveEnterpriseNavigation } from './enterpriseGuard'
 import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
+import { enterpriseAPI } from '@/api/enterprise'
 
 /**
  * Route definitions with lazy loading
@@ -814,6 +815,20 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
+
+  if (to.path === '/' || to.path === '/home') {
+    const enterpriseAuth = useEnterpriseAuthStore()
+    enterpriseAuth.restore()
+    const target = await resolveEnterpriseEntry(to.path, enterpriseAPI.getBrand, {
+      authenticated: enterpriseAuth.isAuthenticated,
+      role: enterpriseAuth.principal?.role,
+      forcePasswordChange: enterpriseAuth.mustChangePassword,
+    })
+    if (target) {
+      next(target)
+      return
+    }
+  }
 
   if (to.path.startsWith('/enterprise')) {
     const enterpriseAuth = useEnterpriseAuthStore()

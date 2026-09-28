@@ -15,6 +15,21 @@ export function enterpriseHome(role?: EnterpriseRole): string {
 	return role === 'enterprise_admin' ? '/enterprise/admin/workbench' : '/enterprise/home'
 }
 
+export async function resolveEnterpriseEntry(
+  path: string,
+  getBrand: () => Promise<unknown>,
+  auth: EnterpriseAuthSnapshot,
+): Promise<string | null> {
+  if (path !== '/' && path !== '/home') return null
+  try {
+    await getBrand()
+  } catch {
+    return null
+  }
+  if (!auth.authenticated) return '/enterprise/login'
+  return auth.forcePasswordChange ? '/enterprise/change-password' : enterpriseHome(auth.role)
+}
+
 export function resolveEnterpriseNavigation(meta: EnterpriseRouteAccess, path: string, auth: EnterpriseAuthSnapshot): string | null {
   if (!meta.requiresEnterpriseAuth) {
     return path === '/enterprise/login' && auth.authenticated
