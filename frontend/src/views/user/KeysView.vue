@@ -400,14 +400,12 @@
                 <Icon name="terminal" size="sm" />
                 <span class="text-xs">{{ t('keys.useKey') }}</span>
               </button>
-              <!-- Import to CC Switch Button -->
               <button
-                v-if="!publicSettings?.hide_ccs_import_button"
-                @click="importToCcswitch(row)"
+                @click="openDeveloperTools(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
               >
                 <Icon name="upload" size="sm" />
-                <span class="text-xs">{{ t('keys.importToCcSwitch') }}</span>
+                <span class="text-xs">{{ t('keys.developerTools.title') }}</span>
               </button>
               <!-- Toggle Status Button -->
               <button
@@ -1079,6 +1077,15 @@
       @close="closeUseKeyModal"
     />
 
+    <DeveloperToolsModal
+      :show="showDeveloperTools"
+      :can-import-ccs="!publicSettings?.hide_ccs_import_button"
+      :codex-candidate="codexCandidate"
+      @close="closeDeveloperTools"
+      @import-ccs="importCcsFromDeveloperTools"
+      @import-codex="importCodexFromDeveloperTools"
+    />
+
     <!-- CCS Client Selection Dialog for Antigravity -->
     <BaseDialog
       :show="showCcsClientSelect"
@@ -1219,6 +1226,7 @@ import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+	import DeveloperToolsModal from '@/components/keys/DeveloperToolsModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
@@ -1227,6 +1235,7 @@ import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
+import { buildCodexPlusPlusImportUri, resolveCodexPlusPlusCandidate } from '@/utils/codexPlusPlusImport'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import { KEY_GROUP_PROVIDERS, KEY_GROUP_PROVIDER_ICONS, getKeyGroupProvider, type KeyGroupProvider } from '@/utils/keyGroupProviders'
@@ -1400,10 +1409,14 @@ const showDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
+const showDeveloperTools = ref(false)
 const showCcsClientSelect = ref(false)
 const showColumnDropdown = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
 const selectedKey = ref<ApiKey | null>(null)
+const codexCandidate = computed(() => selectedKey.value
+  ? resolveCodexPlusPlusCandidate(selectedKey.value, publicSettings.value?.api_base_url || window.location.origin)
+  : null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
@@ -1668,6 +1681,31 @@ const openUseKeyModal = (key: ApiKey) => {
 const closeUseKeyModal = () => {
   showUseKeyModal.value = false
   selectedKey.value = null
+}
+
+const openDeveloperTools = (key: ApiKey) => {
+  selectedKey.value = key
+  showDeveloperTools.value = true
+}
+
+const closeDeveloperTools = () => {
+  showDeveloperTools.value = false
+  selectedKey.value = null
+}
+
+const importCcsFromDeveloperTools = () => {
+  const key = selectedKey.value
+  closeDeveloperTools()
+  if (key) importToCcswitch(key)
+}
+
+const importCodexFromDeveloperTools = () => {
+  const key = selectedKey.value
+  const candidate = codexCandidate.value
+  if (!key || !candidate) return
+  const uri = buildCodexPlusPlusImportUri(candidate, key.key)
+  closeDeveloperTools()
+  window.open(uri, '_self')
 }
 
 const handlePageChange = (page: number) => {

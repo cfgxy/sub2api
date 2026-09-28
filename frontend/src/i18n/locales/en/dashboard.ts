@@ -111,6 +111,14 @@ export default {
     copyToClipboard: 'Copy to clipboard',
     copied: 'Copied!',
     importToCcSwitch: 'Import to CCS',
+    developerTools: {
+      title: 'Developer Tools',
+      download: 'Download the tool',
+      import: 'Import key configuration',
+      importToCodex: 'Import to Codex++',
+      confirmInApp: 'After clicking, confirm in Codex++. The protocol link may be recorded by the browser or OS; use only a trusted device.',
+      codexUnavailable: 'Only active, readable OpenAI keys are supported; Claude import is not yet available'
+    },
     enable: 'Enable',
     disable: 'Disable',
     nameLabel: 'Name',

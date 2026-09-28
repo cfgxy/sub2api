@@ -111,6 +111,14 @@ export default {
     copyToClipboard: '复制到剪贴板',
     copied: '已复制！',
     importToCcSwitch: '导入到 CCS',
+    developerTools: {
+      title: '开发工具',
+      download: '下载工具',
+      import: '导入密钥配置',
+      importToCodex: '导入到 Codex++',
+      confirmInApp: '点击后请在 Codex++ 中确认。协议链接可能被浏览器或系统记录，请仅在可信设备上操作。',
+      codexUnavailable: '仅支持有效且可读取的 OpenAI 密钥；Claude 接口暂未支持'
+    },
     enable: '启用',
     disable: '禁用',
     nameLabel: '名称',
