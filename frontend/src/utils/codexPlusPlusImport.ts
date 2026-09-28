@@ -22,7 +22,9 @@ export function resolveCodexPlusPlusCandidate(
 
   try {
     const url = new URL(baseUrl)
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null
+    const isLoopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+    if ((url.protocol !== 'https:' && !(isLoopback && url.protocol === 'http:')) ||
+        url.username || url.password || url.search || url.hash) return null
     const path = url.pathname.replace(/\/+$/, '')
     url.pathname = path.endsWith('/v1') ? path : `${path}/v1`
     const model = verifiedModels.includes(selectedModel) ? selectedModel.trim() : ''

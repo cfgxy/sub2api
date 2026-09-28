@@ -21,6 +21,10 @@ describe('Codex++ v1 供应商导入', () => {
     })
     expect(resolveCodexPlusPlusCandidate(openaiKey, 'https://api.example.test/proxy/v1')?.baseUrl)
       .toBe('https://api.example.test/proxy/v1')
+    expect(resolveCodexPlusPlusCandidate(openaiKey, 'http://127.0.0.1:18080')?.baseUrl)
+      .toBe('http://127.0.0.1:18080/v1')
+    expect(resolveCodexPlusPlusCandidate(openaiKey, 'http://localhost:18080/v1')?.baseUrl)
+      .toBe('http://localhost:18080/v1')
     expect(candidate).not.toHaveProperty('apiKey')
   })
 
@@ -53,6 +57,7 @@ describe('Codex++ v1 供应商导入', () => {
     expect(resolveCodexPlusPlusCandidate({ ...openaiKey, group: undefined }, 'https://api.test')).toBeNull()
     expect(resolveCodexPlusPlusCandidate({ ...openaiKey, group: { ...openaiKey.group!, platform: 'anthropic' } }, 'https://api.test')).toBeNull()
     expect(resolveCodexPlusPlusCandidate(openaiKey, 'http://api.test')).toBeNull()
+    expect(resolveCodexPlusPlusCandidate(openaiKey, 'http://192.168.1.20:18080')).toBeNull()
     expect(resolveCodexPlusPlusCandidate(openaiKey, 'https://name:pass@api.test')).toBeNull()
     expect(resolveCodexPlusPlusCandidate(openaiKey, 'https://api.test/v1?key=bad')).toBeNull()
     expect(() => buildCodexPlusPlusImportUri(resolveCodexPlusPlusCandidate(openaiKey, 'https://api.test')!, 'sk-****')).toThrow()
