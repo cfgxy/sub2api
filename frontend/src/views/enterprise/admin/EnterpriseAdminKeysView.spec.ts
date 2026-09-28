@@ -29,6 +29,9 @@ describe('EnterpriseAdminKeysView', () => {
     expect(wrapper.text()).toContain('employee@example.com')
     expect(wrapper.text()).toContain('启用')
     expect(wrapper.text()).not.toContain('generation')
+    expect(wrapper.text()).toContain('查看员工 Key 的归属与状态，可撤销已启用的 Key')
+    expect(wrapper.text()).not.toMatch(/查看.*掩码|代轮换/)
+    expect(wrapper.findAll('button').map(button => button.text()).join(' ')).not.toContain('轮换')
     wrapper.unmount()
   })
 

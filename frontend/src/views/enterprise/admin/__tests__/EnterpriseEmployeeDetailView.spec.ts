@@ -146,6 +146,9 @@ describe('EnterpriseEmployeeDetailView', () => {
     await clickText(wrapper, 'API Key')
 
     expect(wrapper.text()).toContain('该员工当前没有可用的 API Key')
+    expect(wrapper.text()).toContain('Key 轮换由员工本人在员工门户操作')
+    expect(wrapper.text()).not.toMatch(/代轮换|管理员.*轮换|分配.*Key/)
+    expect(wrapper.findAll('button').map(button => button.text()).join(' ')).not.toContain('轮换')
     wrapper.unmount()
   })
 

@@ -4,7 +4,7 @@
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">员工 Key</h2>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">查看员工 Key 的归属、状态与掩码。</p>
+          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">查看员工 Key 的归属与状态，可撤销已启用的 Key。</p>
         </div>
         <button type="button" class="btn btn-secondary" :disabled="loading" @click="load">
           <Icon name="refresh" size="md" class="mr-2" :class="{ 'animate-spin': loading }" />刷新

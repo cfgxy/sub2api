@@ -165,7 +165,7 @@
           <EmptyState
             icon="key"
             title="该员工当前没有可用的 API Key"
-            description="可在「员工 Key」页为其分配或代轮换 Key。"
+            description="Key 轮换由员工本人在员工门户操作；管理员仅可查看已有 Key 掩码并撤销。"
           />
         </div>
       </div>
