@@ -254,7 +254,7 @@ backend/scripts/check-team-files.sh
 backend/scripts/deadcode-baseline.txt
 backend/scripts/team-files.txt
 backend/scripts/u1000-allowlist.txt
-# SHAN-409：upstream v0.2.8 合入点 fd80b08c 之后团队新增/改动的文件（逐项均为团队提交，无上游原产未改动文件）
+# SHAN-409：upstream v0.2.8 合入点 fd80b08c 之后团队新增/改动的文件（除末尾「上游同步新线索」一项外，逐项均为团队提交）
 # 团队新增文件（合入点不存在）
 backend/internal/enterpriseidentity/password_policy_test.go
 backend/internal/enterpriseidentity/platform_enterprise_anchor_test.go
@@ -281,10 +281,11 @@ frontend/src/views/admin/__tests__/enterpriseTestI18n.ts
 frontend/src/views/enterprise/admin/__tests__/EnterpriseAdminPagesUnavailable.spec.ts
 frontend/src/views/enterprise/EnterpriseLoginView.spec.ts
 frontend/src/views/enterprise/EnterpriseRecoveryViews.spec.ts
-# 上游原产文件、团队侧已改动（密码八位门槛、CSP nonce、依赖漏洞、Codex++ 导入、企业 i18n 等）
-backend/cmd/server/VERSION
+# 上游原产文件、团队侧已改动（密码八位门槛、CSP nonce、依赖漏洞、Codex++ 导入、企业 i18n、SHAN-409 lint 清零等）
+backend/.golangci.yml
 backend/go.mod
 backend/internal/handler/auth_handler.go
+backend/internal/handler/grok_media_slots_test.go
 backend/internal/service/auth_email_binding.go
 backend/internal/service/auth_service_register_test.go
 backend/internal/web/embed_on.go
@@ -304,3 +305,5 @@ frontend/src/views/auth/__tests__/LoginView.spec.ts
 frontend/src/views/auth/USAGE_EXAMPLES.md
 frontend/src/views/user/KeysView.vue
 frontend/src/views/user/__tests__/KeysView.spec.ts
+# 上游同步新线索：合入点之后的上游同步 17c2a6cc3 带入，唯一触及提交为上游 a3eb7ef30 chore: sync VERSION（无团队提交），须保留登记否则守卫变红
+backend/cmd/server/VERSION
