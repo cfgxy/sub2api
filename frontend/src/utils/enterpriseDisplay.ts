@@ -7,6 +7,7 @@ const enumKeys = {
   key: { active: 'active', disabled: 'disabled', quota_exhausted: 'quotaExhausted', expired: 'expired' },
   source: { available: 'available', unavailable: 'unavailable' },
   allocation: { normal: 'normal', overage: 'overage' },
+  platform: { openai: 'openai', anthropic: 'anthropic', gemini: 'gemini', antigravity: 'antigravity' },
 } as const
 
 function label(group: keyof typeof enumKeys, value: string, t: Translate): string {
@@ -20,6 +21,7 @@ export const employeeStatusLabel = (value: string, t: Translate) => label('emplo
 export const keyStatusLabel = (value: string, t: Translate) => label('key', value, t)
 export const sourceStatusLabel = (value: string, t: Translate) => label('source', value, t)
 export const allocationStatusLabel = (value: string, t: Translate) => label('allocation', value, t)
+export const platformLabel = (value: string, t: Translate) => label('platform', value, t)
 
 const auditEvents: Record<string, string> = {
   'allocation.update': 'allocationUpdate',

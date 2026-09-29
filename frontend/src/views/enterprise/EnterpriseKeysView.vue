@@ -17,6 +17,10 @@
           {{ t('enterprise.keys.create') }}
         </button>
         <template v-else>
+          <RouterLink to="/enterprise/keys/guide" class="btn btn-secondary btn-md" data-testid="open-guide">
+            <Icon name="book" size="sm" />
+            {{ t('enterprise.keys.guideEntry') }}
+          </RouterLink>
           <button class="btn btn-secondary btn-md" :disabled="mutating" data-testid="rotate-key" @click="askRotate">
             <Icon name="sync" size="sm" />
             {{ t('enterprise.keys.rotate') }}
@@ -53,8 +57,17 @@
           <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.keys.currentKey') }}</span>
           <code class="mt-1 block break-all text-base text-gray-900 dark:text-white">{{ key.masked_key }}</code>
         </div>
-        <StatusBadge :status="key.status" :label="keyStatusLabel(key.status, t)" />
+        <div class="flex items-center gap-3">
+          <StatusBadge :status="key.status" :label="keyStatusLabel(key.status, t)" />
+          <button v-if="fullKey" class="btn btn-secondary btn-sm" data-testid="copy-key" @click="copyKey">
+            <Icon name="copy" size="sm" />
+            {{ t('enterprise.keys.copyKey') }}
+          </button>
+        </div>
       </div>
+      <p v-if="!fullKey" class="text-sm text-gray-500 dark:text-dark-400" data-testid="copy-key-unavailable">
+        {{ t('enterprise.keys.copyKeyUnavailable') }}
+      </p>
 
       <div class="max-w-md space-y-2">
         <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.keys.quotaTitle') }}</span>
@@ -78,7 +91,10 @@
         </div>
       </div>
       <template #footer>
-        <div class="flex justify-end">
+        <div class="flex justify-end gap-3">
+          <RouterLink to="/enterprise/keys/guide" class="btn btn-secondary btn-md" data-testid="secret-open-guide">
+            {{ t('enterprise.keys.secretGuide') }}
+          </RouterLink>
           <button class="btn btn-primary btn-md" data-testid="close-secret" @click="clearSecret">
             {{ t('enterprise.keys.secretConfirm') }}
           </button>
@@ -100,9 +116,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { onBeforeRouteLeave } from 'vue-router'
+import { RouterLink, onBeforeRouteLeave } from 'vue-router'
 import Icon from '@/components/icons/Icon.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -111,12 +127,14 @@ import Input from '@/components/common/Input.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import { enterpriseAPI, isEnterpriseKeyMutationStateConflict } from '@/api/enterprise'
+import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores/app'
 import { keyStatusLabel } from '@/utils/enterpriseDisplay'
 import type { EnterpriseEmployeeKey } from '@/types/enterprise'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const { copyToClipboard } = useClipboard()
 
 const key = ref<EnterpriseEmployeeKey | null>(null)
 const loading = ref(false)
@@ -125,6 +143,16 @@ const mutating = ref(false)
 const secret = ref('')
 const secretVisible = ref(false)
 const pendingAction = ref<'disable' | 'rotate' | null>(null)
+
+const MASKED_KEY = /\*|•|…|\.\.\./
+const fullKey = computed(() => {
+  const value = key.value?.key?.trim() ?? ''
+  return value && !MASKED_KEY.test(value) ? value : ''
+})
+
+async function copyKey() {
+  if (fullKey.value) await copyToClipboard(fullKey.value, t('enterprise.guide.key.copied'))
+}
 
 const formatUsage = (value: number) => `$${value.toFixed(2)}`
 const formatLimit = (value: number) => (value > 0 ? formatUsage(value) : t('enterprise.common.unlimited'))
