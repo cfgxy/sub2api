@@ -16,8 +16,9 @@ import (
 
 // seedEnterpriseActivationUpstream seeds the dedicated upstream user, an active
 // group and the native subscription a platform enterprise binds to. A nil
-// weeklyWindowStart models an upstream subscription without an established
-// weekly window, which an active enterprise subscription cannot mirror.
+// weeklyWindowStart models an upstream subscription whose window anchors are not
+// materialized yet; since SHAN-382 enterprise creation initializes them inside the
+// same transaction instead of rejecting the candidate.
 func seedEnterpriseActivationUpstream(t *testing.T, ctx context.Context, suffix string, weeklyWindowStart *time.Time) (int64, int64, int64) {
 	t.Helper()
 	var userID int64
