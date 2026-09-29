@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { i18n, loadLocaleMessages } from '@/i18n'
+import Select from '@/components/common/Select.vue'
 import { enterpriseTestLocale } from './enterpriseTestI18n'
 
 import EnterpriseCreateView from '../EnterpriseCreateView.vue'
@@ -68,23 +69,21 @@ describe('EnterpriseCreateView 搜索选人', () => {
   })
 
   it('初始空态搜索、选人、清空和重新选择均只提交真实用户 ID', async () => {
-    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
+    const wrapper = mountView()
     await flushPromises()
-    const select = wrapper.findComponent({ name: 'ElSelect' })
-    expect(select.props('modelValue')).toBe('')
-    expect(wrapper.find('.el-select__placeholder').text()).toBe('按邮箱或昵称搜索')
+    const select = wrapper.findComponent(Select)
+    expect(select.props('modelValue')).toBeNull()
+    expect(select.props('placeholder')).toBe('按邮箱或昵称搜索')
     expect(wrapper.vm.selectedUser).toBeUndefined()
 
     await wrapper.vm.searchUsers('member')
     await flushPromises()
     expect(wrapper.vm.userOptions.map((option: { user: { id: number } }) => option.user.id)).toEqual([9])
     select.vm.$emit('update:modelValue', 9)
-    select.vm.$emit('change', 9)
     await flushPromises()
     expect(wrapper.vm.selectedUser?.id).toBe(9)
 
-    select.vm.$emit('update:modelValue', '')
-    select.vm.$emit('change', '')
+    select.vm.$emit('update:modelValue', null)
     await flushPromises()
     expect(wrapper.vm.form.dedicated_upstream_user_id).toBe('')
     expect(wrapper.vm.selectedUser).toBeUndefined()
@@ -94,7 +93,6 @@ describe('EnterpriseCreateView 搜索选人', () => {
 
     await wrapper.vm.searchUsers('member')
     select.vm.$emit('update:modelValue', 9)
-    select.vm.$emit('change', 9)
     await flushPromises()
     create.mockResolvedValueOnce({ id: 7, dedicated_upstream_user_id: 9 })
     await wrapper.vm.submit()
@@ -103,7 +101,7 @@ describe('EnterpriseCreateView 搜索选人', () => {
 
   it('无效的 0 不成为候选或提交值', async () => {
     listUsers.mockResolvedValueOnce({ items: [{ ...eligible, id: 0 }, eligible], total: 2, page: 1, page_size: 20, pages: 1 })
-    const wrapper = mount(EnterpriseCreateView, { global: { plugins: [ElementPlus, i18n] } })
+    const wrapper = mountView()
     await flushPromises()
     await wrapper.vm.searchUsers('member')
     expect(wrapper.vm.userOptions.map((option: { user: { id: number } }) => option.user.id)).toEqual([9])
