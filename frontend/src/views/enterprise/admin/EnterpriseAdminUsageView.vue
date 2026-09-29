@@ -67,7 +67,7 @@
             <template #cell-request_at="{ value }">{{ formatDate(value) }}</template>
             <template #cell-employee_email="{ value }"><span class="break-all">{{ value || '未归属员工' }}</span></template>
             <template #cell-model="{ value }">{{ value || '未记录' }}</template>
-            <template #cell-window_type="{ value }">{{ value === 'week' ? '按周' : value === 'day' ? '按天' : value === 'month' ? '按月' : '未知窗口' }}</template>
+            <template #cell-window_type="{ value }">{{ windowTypeLabel(value, t) }}</template>
             <template #cell-classification="{ value }">{{ value === 'employee' ? '员工' : value === 'controlled_external' ? '受控外部' : '未知归属' }}</template>
             <template #empty><EmptyState title="当前筛选条件暂无明细" /></template>
           </DataTable>
@@ -93,7 +93,7 @@ import EnterpriseUsageTrendChart from '@/components/charts/EnterpriseUsageTrendC
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
-import { sourceStatusLabel } from '@/utils/enterpriseDisplay'
+import { sourceStatusLabel, windowTypeLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type { EnterpriseDepartment, EnterpriseEmployee, EnterprisePaginated, EnterpriseWorkbenchSummary, EnterpriseWorkbenchUsageRow } from '@/types/enterprise'
 

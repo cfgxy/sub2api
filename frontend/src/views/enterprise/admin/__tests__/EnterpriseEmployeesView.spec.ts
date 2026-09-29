@@ -114,6 +114,25 @@ describe('EnterpriseEmployeesView', () => {
     wrapper.unmount()
   })
 
+  it('keeps the create dialog open with a visible duplicate-email hint on a 409, instead of an unhandled rejection (SHAN-392 rework)', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickText(wrapper, '创建员工')
+    await wrapper.get('[data-testid="generate-initial-password"]').trigger('click')
+    await wrapper.get('#create-email').setValue('dup@example.com')
+
+    createEmployee.mockRejectedValueOnce({ status: 409, code: 'ENTERPRISE_CONFLICT', message: 'conflict' })
+    await clickText(wrapper, '创建')
+
+    expect(createEmployee).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('#create-email').exists()).toBe(true)
+    expect(wrapper.text()).toContain('该邮箱已被使用，请更换邮箱')
+    expect(toastMessages()).toContain('该邮箱已被使用，请更换邮箱')
+    expect(wrapper.text()).not.toContain('复制交付信息')
+    wrapper.unmount()
+  })
+
   it('generates a 12-character initial password and shows a one-time delivery card with email, password and entry URL after creation', async () => {
     const wrapper = mountView()
     await flushPromises()

@@ -227,7 +227,7 @@ const terms = computed(() => ({
 }))
 
 type SourceState = 'loading' | 'ready' | 'unavailable'
-const loading = ref(false)
+const loading = ref(true)
 const saving = ref(false)
 const sourceState = ref<SourceState>('loading')
 const subscriptionId = ref<number>()
@@ -267,8 +267,8 @@ const employeeOptions = computed(() =>
 async function loadDirectories() {
   try {
     const [loadedDepartments, loadedEmployees] = await Promise.all([
-      enterpriseAPI.listDepartments(),
-      enterpriseAPI.listEmployees()
+      enterpriseAPI.listDepartments({ suppressUnavailableRedirect: true }),
+      enterpriseAPI.listEmployees({ suppressUnavailableRedirect: true })
     ])
     departments.value = loadedDepartments
     employees.value = loadedEmployees
@@ -282,7 +282,7 @@ async function load() {
   sourceState.value = 'loading'
   result.value = undefined
   try {
-    const summary = await enterpriseAPI.getWorkbenchSummary()
+    const summary = await enterpriseAPI.getWorkbenchSummary(undefined, { suppressUnavailableRedirect: true })
     subscriptionId.value = summary.subscription_id ?? undefined
     windowAnchor.value = summary.pool_window_anchor
     if (subscriptionId.value && windowAnchor.value) {
@@ -290,7 +290,7 @@ async function load() {
         enterprise_id: enterpriseId.value,
         window_type: 'week',
         window_anchor: windowAnchor.value,
-      })
+      }, { suppressUnavailableRedirect: true })
     }
     sourceState.value = 'ready'
   } catch {

@@ -63,6 +63,25 @@ describe('EnterpriseAllocationView', () => {
     listEmployees.mockResolvedValue([{ id: 1, email: 'a@example.com', status: 'active', must_change_password: false }, { id: 2, email: 'b@example.com', status: 'active', must_change_password: false }])
   })
 
+  it('does not flash the no-subscription empty state on the first frame while data is loading (SHAN-392 rework)', async () => {
+    let release: (value: unknown) => void = () => {}
+    getWorkbenchSummary.mockReturnValue(new Promise((resolve) => { release = resolve }))
+    const wrapper = mountView()
+
+    expect(wrapper.text()).not.toContain('暂无生效订阅')
+
+    release({
+      total_usage_credit: '0', total_requests: 0, employee_count: 0, active_employee_count: 0,
+      subscription_id: 0, subscription_status: 'none', subscription_plan: '',
+      enterprise_pool_limit: '0', enterprise_pool_used: '0', enterprise_pool_remaining: '0', enterprise_pool_exhausted: false,
+      pool_source_status: 'available', pool_source: '', pool_window_type: 'week', pool_window_anchor: '2026-09-14T00:00:00Z',
+      employee_summaries: [], usage_trend: [],
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无生效订阅')
+    wrapper.unmount()
+  })
+
   it('renders pool stats, per-employee status and overallocation warning', async () => {
     const wrapper = mountView()
     await flushPromises()

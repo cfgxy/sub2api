@@ -133,6 +133,7 @@
           <div class="card">
             <DataTable :columns="usageColumns" :data="usage.items" :loading="usageLoading" row-key="attribution_id">
               <template #cell-request_at="{ value }">{{ formatDate(value) }}</template>
+              <template #cell-window_type="{ value }">{{ windowTypeLabel(value, t) }}</template>
               <template #cell-classification="{ value }">
                 {{ value === 'employee' ? '员工' : '受控外部' }}
               </template>
@@ -199,7 +200,7 @@
                   <span :title="event.event_type">{{ auditEventLabel(event.event_type, t) }}</span>
                 </p>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-                  {{ formatDate(event.created_at) }} · {{ event.actor_ref }}
+                  {{ formatDate(event.created_at) }} · {{ auditActorLabel(event.actor_ref, t) }}
                 </p>
               </li>
             </ul>
@@ -267,7 +268,7 @@ import {
   isEnterpriseEmployeeDepartmentInvalid,
   isEnterpriseEmployeeVersionConflict
 } from '@/api/enterprise'
-import { auditEventLabel, employeeStatusLabel, keyStatusLabel } from '@/utils/enterpriseDisplay'
+import { auditActorLabel, auditEventLabel, employeeStatusLabel, keyStatusLabel, windowTypeLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type {
   EnterpriseDepartment,
@@ -392,8 +393,8 @@ async function loadDetail() {
   detailError.value = ''
   try {
     const [loadedDetail, loadedDepartments] = await Promise.all([
-      enterpriseAPI.getEmployee(employeeId.value),
-      enterpriseAPI.listDepartments()
+      enterpriseAPI.getEmployee(employeeId.value, { suppressUnavailableRedirect: true }),
+      enterpriseAPI.listDepartments({ suppressUnavailableRedirect: true })
     ])
     detail.value = loadedDetail
     departments.value = loadedDepartments
@@ -413,8 +414,8 @@ async function loadUsage() {
         employee_id: employeeId.value,
         page: usagePage.value,
         page_size: pageSize.value
-      }),
-      enterpriseAPI.getWorkbenchSummary({ employee_id: employeeId.value })
+      }, { suppressUnavailableRedirect: true }),
+      enterpriseAPI.getWorkbenchSummary({ employee_id: employeeId.value }, { suppressUnavailableRedirect: true })
     ])
     Object.assign(usage, rows)
     usageSummary.value = summary
@@ -436,7 +437,7 @@ async function loadHistory() {
         employee_id: employeeId.value,
         page: historyPage.value,
         page_size: pageSize.value
-      })
+      }, { suppressUnavailableRedirect: true })
     )
     historyLoaded.value = true
   } catch (error) {

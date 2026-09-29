@@ -430,6 +430,13 @@ async function createEmployee() {
     resetCreate()
     appStore.showSuccess('员工已创建')
     await load()
+  } catch (error) {
+    if ((error as { status?: number })?.status === 409) {
+      createErrors.email = '该邮箱已被使用，请更换邮箱'
+      appStore.showError('该邮箱已被使用，请更换邮箱')
+    } else {
+      appStore.showError((error as { message?: string })?.message || '员工创建失败')
+    }
   } finally {
     saving.value = false
   }

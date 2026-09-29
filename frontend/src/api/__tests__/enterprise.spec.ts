@@ -350,4 +350,24 @@ describe('enterprise API password handling', () => {
     enterpriseAPI.listWorkbenchAuditEvents({ page: 1 }, { suppressUnavailableRedirect: true })
     expect(get).toHaveBeenLastCalledWith('/enterprise/admin/workbench/audit-events', { params: { page: 1 }, enterpriseSuppressUnavailableRedirect: true })
   })
+
+  it('passes the opt-in redirect flag through getEmployee/listAdminKeys/listSubscriptionAllocations (SHAN-392 rework)', () => {
+    const get = vi.spyOn(enterpriseClient, 'get').mockResolvedValue({ data: [] })
+    const allocParams = { enterprise_id: 7, window_type: 'week' as const, window_anchor: '2026-09-28' }
+
+    enterpriseAPI.getEmployee(42)
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/employees/42', undefined)
+    enterpriseAPI.getEmployee(42, { suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/employees/42', { enterpriseSuppressUnavailableRedirect: true })
+
+    enterpriseAPI.listAdminKeys()
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/keys', undefined)
+    enterpriseAPI.listAdminKeys({ suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/admin/keys', { enterpriseSuppressUnavailableRedirect: true })
+
+    enterpriseAPI.listSubscriptionAllocations(9, allocParams)
+    expect(get).toHaveBeenLastCalledWith('/enterprise/subscriptions/9/allocations', { params: allocParams })
+    enterpriseAPI.listSubscriptionAllocations(9, allocParams, { suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/subscriptions/9/allocations', { params: allocParams, enterpriseSuppressUnavailableRedirect: true })
+  })
 })

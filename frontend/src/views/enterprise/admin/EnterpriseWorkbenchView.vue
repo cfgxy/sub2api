@@ -258,7 +258,7 @@
               </span>
             </p>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              {{ displayActor(event.actor_ref) }} · {{ formatDate(event.created_at) }}
+              {{ auditActorLabel(event.actor_ref, t) }} · {{ formatDate(event.created_at) }}
             </p>
           </li>
         </ul>
@@ -306,7 +306,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import EnterpriseUsageTrendChart from '@/components/charts/EnterpriseUsageTrendChart.vue'
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
-import { auditEntityLabel, auditEventLabel, sourceStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
+import { auditActorLabel, auditEntityLabel, auditEventLabel, sourceStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type {
   EnterpriseDepartment,
@@ -391,7 +391,6 @@ const trendValues = computed(() => (summary.value?.usage_trend || []).map((point
 
 const usagePercentage = (item: EnterpriseWorkbenchEmployeeSummary) =>
   Math.min(100, Math.round((Number(item.usage_credit) / Math.max(Number(item.configured_credit), 1)) * 100))
-const displayActor = (value: string) => (value.toLowerCase().includes('session') ? 'enterprise_actor' : value)
 const resetData = () => {
   summary.value = undefined
   sourceStates.summary = 'loading'
@@ -399,7 +398,7 @@ const resetData = () => {
 
 async function loadSummary() {
   try {
-    summary.value = await enterpriseAPI.getWorkbenchSummary(params())
+    summary.value = await enterpriseAPI.getWorkbenchSummary(params(), { suppressUnavailableRedirect: true })
     sourceStates.summary = 'ready'
   } catch {
     sourceStates.summary = 'unavailable'
@@ -410,8 +409,8 @@ async function loadSummary() {
 async function loadDirectories() {
   try {
     [departments.value, employees.value] = await Promise.all([
-      enterpriseAPI.listDepartments(),
-      enterpriseAPI.listEmployees()
+      enterpriseAPI.listDepartments({ suppressUnavailableRedirect: true }),
+      enterpriseAPI.listEmployees({ suppressUnavailableRedirect: true })
     ])
     sourceStates.directories = 'ready'
   } catch {

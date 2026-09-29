@@ -70,7 +70,7 @@ async function load() {
   loadError.value = false
   keys.value = []
   try {
-    keys.value = await enterpriseAPI.listAdminKeys()
+    keys.value = await enterpriseAPI.listAdminKeys({ suppressUnavailableRedirect: true })
   } catch {
     loadError.value = true
     appStore.showError('员工 Key 暂时不可用')

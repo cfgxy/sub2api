@@ -89,7 +89,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
-import { auditEntityLabel, auditEventLabel } from '@/utils/enterpriseDisplay'
+import { auditActorLabel, auditEntityLabel, auditEventLabel, auditReasonLabel, windowTypeLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type { EnterprisePaginated, EnterpriseWorkbenchAuditEvent } from '@/types/enterprise'
 
@@ -134,12 +134,18 @@ const formatDate = (value: string | Date) => new Intl.DateTimeFormat('zh-CN', { 
 const resultCode = (row: EnterpriseWorkbenchAuditEvent) => row.result || String(row.payload?.result || row.payload?.status || 'success')
 const resultLabel = (row: EnterpriseWorkbenchAuditEvent) => t(`admin.enterprise.audit.result.${['success', 'failure', 'rejected'].includes(resultCode(row)) ? resultCode(row) : 'unknown'}`)
 const resultStatus = (row: EnterpriseWorkbenchAuditEvent) => resultCode(row) === 'success' ? 'active' : 'error'
-const auditReason = (row: EnterpriseWorkbenchAuditEvent) => row.reason || String(row.payload?.reason || '未提供')
-const displayActorRef = (value: string) => value.toLowerCase().includes('session') ? 'enterprise_actor' : value
+const auditReason = (row: EnterpriseWorkbenchAuditEvent) => {
+  const raw = row.reason || String(row.payload?.reason || '')
+  return raw ? auditReasonLabel(raw, t) : '未提供'
+}
+const displayActorRef = (value: string) => auditActorLabel(value, t)
 function whitelistedFields(row: EnterpriseWorkbenchAuditEvent) {
   return Object.entries(row.payload || {}).filter(([key]) => key in auditPayloadFieldLabels).map(([key, value]) => ({
     key, label: auditPayloadFieldLabels[key],
-    value: key === 'result' ? t(`admin.enterprise.audit.result.${['success', 'failure', 'rejected'].includes(String(value)) ? value : 'unknown'}`) : typeof value === 'object' ? JSON.stringify(value) : String(value)
+    value: key === 'result' ? t(`admin.enterprise.audit.result.${['success', 'failure', 'rejected'].includes(String(value)) ? value : 'unknown'}`)
+      : key === 'reason' ? auditReasonLabel(String(value), t)
+      : key === 'window_type' ? windowTypeLabel(String(value), t)
+      : typeof value === 'object' ? JSON.stringify(value) : String(value)
   }))
 }
 
