@@ -75,8 +75,8 @@ const existingEnterprises = ref<PlatformEnterprise[]>([])
 const candidates = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser>()
 let searchSequence = 0
-const form = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: 0, reason: '' })
-const userOptions = computed(() => candidates.value.map((user) => ({ user, reason: ineligibleReason(user) })))
+const form = reactive<{ name: string; portal_host: string; dedicated_upstream_user_id: number | ''; reason: string }>({ name: '', portal_host: '', dedicated_upstream_user_id: '', reason: '' })
+const userOptions = computed(() => candidates.value.filter((user) => Number.isInteger(user.id) && user.id > 0).map((user) => ({ user, reason: ineligibleReason(user) })))
 const selectedReason = computed(() => selectedUser.value ? ineligibleReason(selectedUser.value) : '')
 
 function optionLabel(option: { user: AdminUser; reason: string }) {
@@ -124,7 +124,7 @@ async function searchUsers(query: string) {
 }
 
 function selectUser(id: number | '') {
-  selectedUser.value = candidates.value.find((user) => user.id === id)
+  selectedUser.value = userOptions.value.find((option) => option.user.id === id)?.user
 }
 
 const rules = computed<FormRules>(() => ({
@@ -143,7 +143,7 @@ async function submit() {
   saving.value = true
   success.value = false
   try {
-    created.value = await enterprisePlatformAPI.create(form)
+    created.value = await enterprisePlatformAPI.create({ ...form, dedicated_upstream_user_id: selectedUser.value.id })
     success.value = true
     ElMessage.success(t('admin.enterprise.create.createSuccess'))
     window.scrollTo({ top: 0, behavior: 'smooth' })
