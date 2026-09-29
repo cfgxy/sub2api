@@ -274,6 +274,26 @@ async function withEnterpriseKeyMutation<T>(
 
 const idempotencyHeaders = (idempotencyKey: string) => ({ headers: { 'Idempotency-Key': idempotencyKey } })
 
+export interface EnterpriseGuideModel {
+  id: string
+  platform: string
+}
+
+export async function fetchEnterpriseGuideModels(signal?: AbortSignal): Promise<EnterpriseGuideModel[]> {
+  const payload: unknown = await data<unknown>(enterpriseClient.get('/enterprise/guide/models', {
+    signal,
+    enterpriseSuppressUnavailableRedirect: true,
+  }))
+  if (!isRecord(payload) || !Array.isArray(payload.data)) {
+    throw { status: 502, reason: 'ENTERPRISE_GUIDE_MODEL_RESPONSE_INVALID', message: 'Model response is invalid' }
+  }
+  return payload.data.flatMap((item): EnterpriseGuideModel[] => {
+    if (!isRecord(item) || typeof item.id !== 'string' || typeof item.platform !== 'string') return []
+    const id = item.id.trim()
+    return id ? [{ id, platform: item.platform.trim() }] : []
+  })
+}
+
 export const enterpriseAPI = {
   getBrand: () => data<EnterpriseBrand>(enterpriseClient.get('/enterprise/brand', { enterprisePublicBrandProbe: true })),
   login: (input: { email: string; password: string }) => data<EnterpriseTokenPair>(enterpriseClient.post('/enterprise/auth/login', input)),

@@ -396,7 +396,7 @@ func (r *usageLogRepository) resolveEnterpriseUsageAttributionSnapshot(ctx conte
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var snapshot *service.EnterpriseUsageAttributionSnapshot
 	for rows.Next() {
@@ -499,7 +499,7 @@ func validateEnterpriseUsageAttributions(ctx context.Context, sqlq sqlExecutor, 
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	seen := 0
 	for rows.Next() {
 		var enterpriseID, subscriptionID, apiKeyID, generation int64

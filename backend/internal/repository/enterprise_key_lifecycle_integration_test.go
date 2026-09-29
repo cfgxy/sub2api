@@ -950,8 +950,12 @@ func TestEnterpriseEmployeeKeyHTTPProtocolUsesAuthenticatedEmployeeAndHost(t *te
 
 	current := perform(http.MethodGet, "/api/v1/enterprise/keys/current", "", employeeSession.AccessToken, strings.ToUpper(host)+":443", "")
 	require.Equal(t, http.StatusOK, current.Code)
+	require.Equal(t, "no-store", current.Header().Get("Cache-Control"))
 	require.Contains(t, current.Body.String(), enterprise.MaskEmployeeKey(originalKey))
-	require.NotContains(t, current.Body.String(), originalKey)
+	require.Contains(t, current.Body.String(), `"key":"`+originalKey+`"`)
+	otherEmployee := perform(http.MethodGet, "/api/v1/enterprise/keys/current", "", secondEmployeeSession.AccessToken, host, "")
+	require.Equal(t, http.StatusOK, otherEmployee.Code)
+	require.NotContains(t, otherEmployee.Body.String(), originalKey)
 	_, err = integrationDB.ExecContext(ctx, `
 		UPDATE api_keys SET expires_at = NOW() - INTERVAL '1 second',
 			usage_5h = 1.25, usage_1d = 2.5, usage_7d = 6.75,

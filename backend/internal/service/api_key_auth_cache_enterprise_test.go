@@ -22,7 +22,7 @@ func TestAPIKeyAuthSnapshotPreservesEnterpriseAttributionCandidate(t *testing.T)
 	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
 	require.NotNil(t, snapshot)
 	require.True(t, snapshot.EnterpriseAttributionCandidate)
-	require.Equal(t, 24, snapshot.Version)
+	require.Equal(t, apiKeyAuthSnapshotVersion, snapshot.Version)
 
 	materialized := svc.snapshotToAPIKey("sk-test", snapshot)
 	require.True(t, materialized.EnterpriseAttributionCandidate)

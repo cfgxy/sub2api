@@ -32,6 +32,8 @@ const (
 type Handler struct {
 	service                    *Service
 	keyRepository              employeeKeyStore
+	guideGroupStore            enterpriseGuideGroupStore
+	guideModels                enterpriseGuideModelList
 	apiKeyService              employeeKeyGenerator
 	rateLimiter                *middleware.RateLimiter
 	resolveRateLimitEnterprise func(context.Context, string) (int64, error)
@@ -45,6 +47,18 @@ type employeeKeyStore interface {
 	RotateEmployeeKey(context.Context, enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error)
 }
 
+type employeeOwnerKeyStore interface {
+	GetEmployeeCurrentKeyForOwner(context.Context, int64, int64) (*enterprise.EmployeeKey, error)
+}
+
+type enterpriseGuideGroupStore interface {
+	GetEmployeeGuideGroupID(context.Context, int64, int64) (*int64, error)
+}
+
+type enterpriseGuideModelList interface {
+	ListEnterpriseGuideModels(context.Context, int64) ([]service.EnterpriseGuideModel, error)
+}
+
 type enterpriseAdminKeyStore interface {
 	ListEnterpriseKeys(context.Context, int64) ([]enterprise.EnterpriseKeySummary, error)
 	RevokeEnterpriseKey(context.Context, int64, int64, string, string) (*enterprise.EmployeeKeyMutationResult, error)
@@ -56,6 +70,9 @@ type employeeKeyGenerator interface {
 
 func NewHandler(service *Service, keyRepository employeeKeyStore, apiKeyService employeeKeyGenerator, redisClient *redis.Client) *Handler {
 	h := &Handler{service: service, keyRepository: keyRepository, apiKeyService: apiKeyService, rateLimiter: middleware.NewRateLimiter(redisClient)}
+	if store, ok := keyRepository.(enterpriseGuideGroupStore); ok {
+		h.guideGroupStore = store
+	}
 	h.workbench = NewWorkbenchHandler(h)
 	if service != nil {
 		h.resolveRateLimitEnterprise = func(ctx context.Context, host string) (int64, error) {
@@ -88,6 +105,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	authenticated.DELETE("/sessions/:id", h.revokeSession)
 	authenticated.DELETE("/sessions", h.revokeAllSessions)
 	authenticated.GET("/keys/current", h.getCurrentKey)
+	authenticated.GET("/guide/models", h.getGuideModels)
 	authenticated.POST("/keys", h.employeeKeyMutationRateLimit(), h.createKey)
 	authenticated.POST("/keys/disable", h.employeeKeyMutationRateLimit(), h.disableKey)
 	authenticated.POST("/keys/rotate", h.employeeKeyMutationRateLimit(), h.rotateKey)
@@ -340,9 +358,7 @@ func (h *Handler) CreatePlatformEnterprise(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	item, err := h.service.CreateEnterprise(c.Request.Context(), CreateEnterpriseInput{
-		Name: req.Name, Host: req.Host, DedicatedUpstreamUser: req.DedicatedUpstreamUser, Reason: req.Reason,
-	}, subject.UserID)
+	item, err := h.service.CreateEnterprise(c.Request.Context(), CreateEnterpriseInput(req), subject.UserID)
 	if response.ErrorFrom(c, err) {
 		return
 	}
@@ -570,15 +586,43 @@ func (h *Handler) getCurrentKey(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.keyRepository == nil {
+	ownerStore, ok := h.keyRepository.(employeeOwnerKeyStore)
+	if !ok {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
 		return
 	}
-	key, err := h.keyRepository.GetEmployeeCurrentKey(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+	key, err := ownerStore.GetEmployeeCurrentKeyForOwner(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
 	if response.ErrorFrom(c, err) {
 		return
 	}
 	response.Success(c, key)
+}
+
+func (h *Handler) getGuideModels(c *gin.Context) {
+	claims, ok := employeeClaims(c)
+	if !ok {
+		return
+	}
+	if h.guideGroupStore == nil || h.guideModels == nil {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	groupID, err := h.guideGroupStore.GetEmployeeGuideGroupID(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	models := make([]service.EnterpriseGuideModel, 0)
+	if groupID != nil {
+		listed, err := h.guideModels.ListEnterpriseGuideModels(c.Request.Context(), *groupID)
+		if response.ErrorFrom(c, err) {
+			return
+		}
+		models = append(models, listed...)
+	}
+	response.Success(c, gin.H{"object": "list", "data": models})
 }
 
 func (h *Handler) employeeHome(c *gin.Context) {

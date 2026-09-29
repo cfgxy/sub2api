@@ -95,6 +95,12 @@ describe('enterprise API password handling', () => {
       },
     })
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'background.png', { type: 'image/png' })
+    // jsdom 的 FileReader 产出的 ArrayBuffer 与 Node webcrypto 不同 realm，Node 20 会拒收；
+    // 真实浏览器无此限制。此处只桥接输入类型，哈希仍由真实 digest 计算。
+    const nativeDigest = crypto.subtle.digest.bind(crypto.subtle)
+    vi.spyOn(crypto.subtle, 'digest').mockImplementation((algorithm, data) => (
+      nativeDigest(algorithm, data instanceof ArrayBuffer ? new Uint8Array(data) : data)
+    ))
 
     await enterpriseAPI.uploadBrandBackground(file)
 

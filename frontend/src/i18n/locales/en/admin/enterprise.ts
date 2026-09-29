@@ -8,6 +8,7 @@ export default {
       key: { active: 'Enabled', disabled: 'Disabled', quotaExhausted: 'Quota exhausted', expired: 'Expired' },
       source: { available: 'Available', unavailable: 'Unavailable' },
       allocation: { normal: 'Normal', overage: 'Overage' },
+      platform: { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini', antigravity: 'Antigravity' },
       window: { week: 'Weekly', day: 'Daily', month: 'Monthly' },
     },
     audit: {

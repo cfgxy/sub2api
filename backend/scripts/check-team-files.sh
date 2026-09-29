@@ -1,10 +1,10 @@
 #!/bin/bash
 # 团队文件清单守卫：PR 改动的文件若不在团队清单内（= 上游原产文件），告警退出。
-# 清单基线 = fork 基点 ab99d56e..main 的团队改动文件 + SHAN-356 起新增文件。
+# 清单基线 = 上游同步基点 fd80b08c（v0.2.8 合入点）..main 的团队改动文件 + SHAN-356 起新增文件。
 # 用法: check-team-files.sh [base-ref]   （CI 传目标分支名，本地缺省用 fork 基点 SHA）
 set -euo pipefail
 
-FORK_BASE=ab99d56e9626e6cd731592dae8553c9758a0efa2
+FORK_BASE=fd80b08c90b55edcad5b00171b53f08721d30da1
 BASE="${1:-$FORK_BASE}"
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)

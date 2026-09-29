@@ -149,6 +149,7 @@ export interface EmployeeUpdateInput {
 
 export interface EnterpriseEmployeeKey {
   id: number
+  key?: string
   masked_key: string
   name: string
   status: 'active' | 'disabled' | 'quota_exhausted' | 'expired'
