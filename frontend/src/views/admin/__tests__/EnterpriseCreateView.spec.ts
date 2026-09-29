@@ -68,6 +68,15 @@ describe('EnterpriseCreateView 搜索选人', () => {
     listUsers.mockResolvedValue({ items: [eligible], total: 1, page: 1, page_size: 20, pages: 1 })
   })
 
+  it('表单关闭原生校验（novalidate），空提交时由自定义校验给出固定提示而非浏览器气泡', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('form').attributes('novalidate')).toBeDefined()
+    await wrapper.vm.submit()
+    expect(create).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('初始空态搜索、选人、清空和重新选择均只提交真实用户 ID', async () => {
     const wrapper = mountView()
     await flushPromises()

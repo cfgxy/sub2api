@@ -7,7 +7,7 @@ export default {
     actions: { refresh: 'Refresh runtime', retry: 'Retry', Allow: 'Allow', Warn: 'Warn', Block: 'Block' },
     common: { actions: 'Actions', never: 'Never' },
     mode: { off: 'Off', async_audit: 'Async audit only', blocking: 'Synchronous audit and block' },
-    status: { disabled: 'Disabled', running: 'Running', degraded: 'Degraded', error: 'Error', healthy: 'Healthy', failed: 'Failed', stale: 'Stale heartbeat' },
+    status: { ok: 'Normal', disabled: 'Disabled', running: 'Running', degraded: 'Degraded', error: 'Error', healthy: 'Healthy', failed: 'Failed', stale: 'Stale heartbeat' },
     decisions: { pass: 'Pass', flag: 'Flag', critical: 'Critical' },
     riskLevels: { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' },
     scanners: {

@@ -111,6 +111,7 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
+    expect(getCurrentKey).toHaveBeenCalledWith({ suppressUnavailableRedirect: true })
     expect(wrapper.text()).toContain('已用 $0.00')
     expect(wrapper.text()).not.toContain('5 小时')
     expect(wrapper.text()).not.toContain('1 天')

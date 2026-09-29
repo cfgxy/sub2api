@@ -45,6 +45,7 @@ describe('EnterpriseChangePasswordView', () => {
     expect(text).not.toContain('12 个字符')
     expect(wrapper.findAll('.auth-layout')).toHaveLength(1)
     expect(wrapper.get('form').attributes('aria-busy')).toBe('false')
+    expect(wrapper.get('form').attributes('novalidate')).toBeDefined()
     wrapper.unmount()
   })
 

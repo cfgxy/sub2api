@@ -376,4 +376,86 @@ describe('enterprise API password handling', () => {
     enterpriseAPI.listSubscriptionAllocations(9, allocParams, { suppressUnavailableRedirect: true })
     expect(get).toHaveBeenLastCalledWith('/enterprise/subscriptions/9/allocations', { params: allocParams, enterpriseSuppressUnavailableRedirect: true })
   })
+
+  it('passes the opt-in redirect flag through employee-portal reads and the password change (SHAN-410 B-4)', () => {
+    const get = vi.spyOn(enterpriseClient, 'get').mockResolvedValue({ data: [] })
+    const post = vi.spyOn(enterpriseClient, 'post').mockResolvedValue({ data: { success: true } })
+    const optIn = { enterpriseSuppressUnavailableRedirect: true }
+
+    const reads: Array<[string, (options?: { suppressUnavailableRedirect?: boolean }) => unknown, string]> = [
+      ['getEmployeeHome', (o) => enterpriseAPI.getEmployeeHome(o), '/enterprise/home'],
+      ['getEmployeeProfile', (o) => enterpriseAPI.getEmployeeProfile(o), '/enterprise/profile'],
+      ['listSessions', (o) => enterpriseAPI.listSessions(o), '/enterprise/sessions'],
+      ['getCurrentKey', (o) => enterpriseAPI.getCurrentKey(o), '/enterprise/keys/current'],
+      ['getEmployeeUsage', (o) => enterpriseAPI.getEmployeeUsage(o), '/enterprise/usage/me'],
+      ['getAdminBrand', (o) => enterpriseAPI.getAdminBrand(o), '/enterprise/admin/brand'],
+    ]
+    for (const [name, call, url] of reads) {
+      call()
+      expect(get, `${name} 默认不豁免`).toHaveBeenLastCalledWith(url, undefined)
+      call({ suppressUnavailableRedirect: true })
+      expect(get, `${name} 显式豁免`).toHaveBeenLastCalledWith(url, optIn)
+    }
+
+    enterpriseAPI.getEmployeeUsageTrend({ start_at: 'a' })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/usage/me/trend', { params: { start_at: 'a' } })
+    enterpriseAPI.getEmployeeUsageTrend({ start_at: 'a' }, { suppressUnavailableRedirect: true })
+    expect(get).toHaveBeenLastCalledWith('/enterprise/usage/me/trend', { params: { start_at: 'a' }, ...optIn })
+
+    enterpriseAPI.changePassword('old', 'new-password')
+    expect(post).toHaveBeenLastCalledWith('/enterprise/password/change', { current_password: 'old', new_password: 'new-password' }, undefined)
+    enterpriseAPI.changePassword('old', 'new-password', { suppressUnavailableRedirect: true })
+    expect(post).toHaveBeenLastCalledWith('/enterprise/password/change', { current_password: 'old', new_password: 'new-password' }, optIn)
+  })
+})
+
+describe('enterprise API wrong current password (SHAN-410 B-4)', () => {
+  const originalLocation = window.location
+  const refreshSpy = () => vi.spyOn(enterpriseAPI, 'refresh')
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+    localStorage.setItem('enterprise_access_token', 'local-test-session')
+    localStorage.setItem('enterprise_refresh_token', 'local-test-refresh')
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, pathname: '/enterprise/settings', href: '/enterprise/settings' },
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true })
+  })
+
+  const rejectWith = (status: number, reason: string) => vi.fn(async (config: InternalAxiosRequestConfig) => {
+    throw new AxiosError('rejected', 'ERR_BAD_REQUEST', config, undefined, {
+      data: { reason, message: 'invalid email or password' }, status, statusText: 'Unauthorized', headers: {}, config,
+    })
+  })
+
+  it('INVALID_CREDENTIALS 401 does not trigger refresh, session clearing or a session-states redirect', async () => {
+    const refresh = refreshSpy()
+    const adapter = rejectWith(401, 'INVALID_CREDENTIALS')
+
+    await expect(enterpriseClient.post('/enterprise/password/change', { current_password: 'x', new_password: 'yyyyyyyy' }, { adapter }))
+      .rejects.toMatchObject({ status: 401, reason: 'INVALID_CREDENTIALS' })
+
+    expect(refresh).not.toHaveBeenCalled()
+    expect(adapter).toHaveBeenCalledOnce()
+    expect(localStorage.getItem('enterprise_refresh_token')).toBe('local-test-refresh')
+    expect(window.location.href).toBe('/enterprise/settings')
+    expect(enterpriseSessionStateForError({ response: { status: 401, data: { reason: 'INVALID_CREDENTIALS' } } })).toBeNull()
+  })
+
+  it('a genuine expired-session 401 still refreshes and redirects to the session-expired state', async () => {
+    const refresh = refreshSpy().mockRejectedValue(new Error('refresh failed'))
+    const adapter = rejectWith(401, 'INVALID_ENTERPRISE_TOKEN')
+
+    await expect(enterpriseClient.get('/enterprise/sessions', { adapter })).rejects.toMatchObject({ status: 401 })
+
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(localStorage.getItem('enterprise_refresh_token')).toBeNull()
+    expect(enterpriseSessionStateForError({ response: { status: 401, data: { reason: 'INVALID_ENTERPRISE_TOKEN' } } })).toBe('session-expired')
+  })
 })

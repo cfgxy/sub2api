@@ -122,6 +122,7 @@ describe('EnterpriseAllocationView', () => {
 
     await clickText(wrapper, '保存')
 
+    expect(getAllocationSummary.mock.calls.at(-1)?.[3]).toEqual({ suppressUnavailableRedirect: true })
     expect(setAllocation).toHaveBeenCalledWith(9, 1, expect.objectContaining({
       enterprise_id: 7,
       window_type: 'week',

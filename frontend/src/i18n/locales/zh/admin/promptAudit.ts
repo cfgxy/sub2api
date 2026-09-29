@@ -7,7 +7,7 @@ export default {
     actions: { refresh: '刷新运行态', retry: '重试', Allow: '放行', Warn: '警告', Block: '阻止' },
     common: { actions: '操作', never: '从未' },
     mode: { off: '已关闭', async_audit: '异步只审计', blocking: '同步审计并阻止' },
-    status: { disabled: '未启用', running: '运行中', degraded: '降级', error: '错误', healthy: '健康', failed: '失败', stale: '心跳过期' },
+    status: { ok: '正常', disabled: '未启用', running: '运行中', degraded: '降级', error: '错误', healthy: '健康', failed: '失败', stale: '心跳过期' },
     decisions: { pass: '通过', flag: '标记', critical: '严重' },
     riskLevels: { low: '低', medium: '中', high: '高', critical: '严重' },
     scanners: {

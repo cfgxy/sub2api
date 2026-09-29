@@ -104,6 +104,9 @@ describe('EnterpriseEmployeeUsageView', () => {
     expect(detailParams.end_at).toBe('2026-09-08T00:00:00Z')
     expect(trendParams.start_at).toBe('2026-09-01T00:00:00Z')
     expect(trendParams.end_at).toBe('2026-09-08T00:00:00Z')
+    expect(getEmployeeUsage).toHaveBeenLastCalledWith({ suppressUnavailableRedirect: true })
+    expect(getEmployeeUsageTrend.mock.calls.at(-1)?.[1]).toEqual({ suppressUnavailableRedirect: true })
+    expect(listEmployeeUsage.mock.calls.at(-1)?.[1]).toEqual({ suppressUnavailableRedirect: true })
     wrapper.unmount()
   })
 

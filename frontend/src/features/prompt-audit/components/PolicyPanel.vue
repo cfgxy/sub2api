@@ -32,7 +32,7 @@
                 <input type="checkbox" :checked="draft.group_ids.includes(group.id)" @change="toggleGroup(group.id)" />
                 {{ group.name }}
               </span>
-              <span class="text-xs text-gray-500 dark:text-dark-400">{{ group.platform }} · {{ group.status }}</span>
+              <span class="text-xs text-gray-500 dark:text-dark-400">{{ group.platform }} · {{ group.status === 'active' ? t('common.active') : t('common.inactive') }}</span>
             </label>
             <p v-if="filteredGroups.length === 0" class="px-2 py-4 text-center text-sm text-gray-500">{{ t('admin.promptAudit.policy.noGroups') }}</p>
           </div>

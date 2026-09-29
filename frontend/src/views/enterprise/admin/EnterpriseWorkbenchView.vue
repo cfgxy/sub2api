@@ -4,11 +4,11 @@
     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div class="min-w-0">
         <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-400">
-          企业管理 / 运营概览
+          {{ t('enterprise.workbench.eyebrow') }}
         </p>
-        <h2 class="mt-1 text-xl font-bold text-gray-900 dark:text-white">管理员工作台</h2>
+        <h2 class="mt-1 text-xl font-bold text-gray-900 dark:text-white">{{ t('enterprise.workbench.title') }}</h2>
         <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-          查看{{ terms.pool }}、员工{{ terms.allocation }}与关键运营状态。
+          {{ t('enterprise.workbench.subtitle', { pool: terms.pool, allocation: terms.allocation }) }}
         </p>
       </div>
       <button
@@ -19,7 +19,7 @@
         @click="load"
       >
         <Icon name="refresh" size="md" class="mr-2" :class="{ 'animate-spin': loading }" />
-        刷新数据
+        {{ t('enterprise.workbench.refresh') }}
       </button>
     </div>
 
@@ -29,13 +29,13 @@
       role="status"
       class="card flex flex-col gap-1 border-l-4 border-l-amber-500 p-4"
     >
-      <span class="text-sm font-semibold text-gray-900 dark:text-white">部分数据源暂时不可用</span>
+      <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.partialTitle') }}</span>
       <span class="text-xs text-gray-500 dark:text-dark-400">
-        {{ sourceIssueText }}。页面已清除本次查询前的数据，不以旧值伪装实时结果。
+        {{ t('enterprise.workbench.partialHint', { sources: sourceIssueText }) }}
       </span>
       <div>
         <button type="button" class="btn btn-secondary btn-sm mt-2" :disabled="loading" @click="load">
-          重试
+          {{ t('enterprise.workbench.retry') }}
         </button>
       </div>
     </div>
@@ -47,11 +47,11 @@
 
     <template v-else>
       <!-- 概览指标 -->
-      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="企业额度概览">
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" :aria-label="t('enterprise.workbench.overviewAria')">
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">当前订阅</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.workbench.currentSubscription') }}</p>
           <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-            {{ summary?.subscription_plan || '未获取' }}
+            {{ summary?.subscription_plan || t('enterprise.workbench.notRetrieved') }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
             {{ subscriptionStatusText }}
@@ -63,11 +63,11 @@
             {{ summary?.enterprise_pool_limit || '0' }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-            每周上游硬{{ terms.quota }} · {{ poolSourceLabel }}{{ poolObservedAtLabel ? ` · ${poolObservedAtLabel}` : '' }}
+            {{ t('enterprise.workbench.poolHint', { quota: terms.quota, source: poolSourceLabel }) }}{{ poolObservedAtLabel ? ` · ${poolObservedAtLabel}` : '' }}
           </p>
         </div>
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">总池{{ terms.remaining }}</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.workbench.poolRemaining', { remaining: terms.remaining }) }}</p>
           <p
             class="mt-2 truncate text-xl font-bold"
             :class="summary?.enterprise_pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
@@ -75,16 +75,16 @@
             {{ summary?.enterprise_pool_remaining || '0' }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-            {{ summary?.enterprise_pool_exhausted ? '总池已耗尽：联系平台或等待订阅恢复' : '上游订阅权威值，剩余不会为负' }}
+            {{ t(summary?.enterprise_pool_exhausted ? 'enterprise.workbench.poolExhaustedHint' : 'enterprise.workbench.poolRemainingHint') }}
           </p>
         </div>
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">筛选用量</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.workbench.filteredUsage') }}</p>
           <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
             {{ summary?.total_usage_credit || '0' }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-            {{ summary?.total_requests || 0 }} 次请求 · 当前筛选范围
+            {{ t('enterprise.workbench.requestsInScope', { count: summary?.total_requests || 0 }) }}
           </p>
         </div>
       </section>
@@ -99,12 +99,12 @@
           />
           <div class="min-w-0">
             <p class="text-sm font-semibold text-gray-900 dark:text-white">
-              {{ summary?.enterprise_pool_exhausted ? `${terms.pool}已耗尽` : `${terms.pool}可用` }}
+              {{ t(summary?.enterprise_pool_exhausted ? 'enterprise.workbench.poolExhausted' : 'enterprise.workbench.poolAvailable', { pool: terms.pool }) }}
             </p>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
               {{ summary?.enterprise_pool_exhausted
-                ? `不等同于个人${terms.overage}，请先处理订阅来源`
-                : `企业硬${terms.quota}与个人${terms.allocation}分开核对` }}
+                ? t('enterprise.workbench.poolExhaustedNote', { overage: terms.overage })
+                : t('enterprise.workbench.poolAvailableNote', { quota: terms.quota, allocation: terms.allocation }) }}
             </p>
           </div>
         </div>
@@ -112,19 +112,19 @@
           <StatusBadge status="neutral" label="" class="mt-1" />
           <div class="min-w-0">
             <p class="text-sm font-semibold text-gray-900 dark:text-white">
-              {{ summary?.employee_count || 0 }} 名员工有用量
+              {{ t('enterprise.workbench.employeesWithUsage', { count: summary?.employee_count || 0 }) }}
             </p>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              在职员工 {{ summary?.active_employee_count || 0 }} 名
+              {{ t('enterprise.workbench.activeEmployees', { count: summary?.active_employee_count || 0 }) }}
             </p>
           </div>
         </div>
         <div class="card flex items-start gap-3 p-4">
           <StatusBadge status="neutral" label="" class="mt-1" />
           <div class="min-w-0">
-            <p class="text-sm font-semibold text-gray-900 dark:text-white">统计窗口：每周</p>
+            <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.windowWeekly') }}</p>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              窗口锚点 {{ formatOptionalDate(summary?.pool_window_anchor) }}
+              {{ t('enterprise.workbench.windowAnchor', { time: formatOptionalDate(summary?.pool_window_anchor) }) }}
             </p>
           </div>
         </div>
@@ -132,10 +132,10 @@
           <StatusBadge status="neutral" label="" class="mt-1" />
           <div class="min-w-0">
             <p class="text-sm font-semibold text-gray-900 dark:text-white">
-              已排期订阅：{{ summary.scheduled_subscription_plan || '未知计划' }}
+              {{ t('enterprise.workbench.scheduledPlan', { plan: summary.scheduled_subscription_plan || t('enterprise.workbench.unknownPlan') }) }}
             </p>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              创建于 {{ formatOptionalDate(summary.scheduled_subscription_since) }}，尚未生效
+              {{ t('enterprise.workbench.scheduledSince', { time: formatOptionalDate(summary.scheduled_subscription_since) }) }}
             </p>
           </div>
         </div>
@@ -146,9 +146,9 @@
         <div class="card p-4 xl:col-span-2">
           <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">用量趋势</h3>
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.trendTitle') }}</h3>
               <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-                按当前筛选范围聚合，单位：请求数
+                {{ t('enterprise.workbench.trendHint') }}
               </p>
             </div>
             <span class="whitespace-nowrap text-xs text-gray-500 dark:text-dark-400">
@@ -159,26 +159,26 @@
             v-if="!trendLabels.length"
             class="flex h-56 items-center justify-center text-sm text-gray-500 dark:text-dark-400"
           >
-            当前筛选条件暂无趋势数据
+            {{ t('enterprise.workbench.trendEmpty') }}
           </div>
           <EnterpriseUsageTrendChart
             v-else
             :labels="trendLabels"
             :values="trendValues"
-            dataset-label="请求数"
+            :dataset-label="t('enterprise.workbench.datasetRequests')"
           />
         </div>
 
         <div class="card p-4">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">员工{{ terms.allocation }}使用</h3>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.employeeUsageTitle', { allocation: terms.allocation }) }}</h3>
           <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-            {{ terms.allocation }}仅为配置与计量口径
+            {{ t('enterprise.workbench.employeeUsageHint', { allocation: terms.allocation }) }}
           </p>
           <div
             v-if="!topEmployees.length"
             class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-dark-400"
           >
-            当前筛选条件暂无员工用量
+            {{ t('enterprise.workbench.employeeUsageEmpty') }}
           </div>
           <div v-else class="mt-4 space-y-4">
             <div v-for="item in topEmployees" :key="item.employee_id">
@@ -196,7 +196,7 @@
                 :aria-valuenow="usagePercentage(item)"
                 aria-valuemin="0"
                 aria-valuemax="100"
-                :aria-label="`${item.email} ${terms.allocation}使用率`"
+                :aria-label="t('enterprise.workbench.usageRateAria', { email: item.email, allocation: terms.allocation })"
               >
                 <div
                   class="progress-bar"
@@ -223,27 +223,27 @@
       <section class="card p-4">
         <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">最近操作</h3>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">近期企业管理审计事件</p>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.recentTitle') }}</h3>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.workbench.recentHint') }}</p>
           </div>
           <RouterLink
             to="/enterprise/admin/audit"
             class="whitespace-nowrap text-xs font-semibold text-primary-600 hover:text-primary-700 dark:text-primary-400"
           >
-            查看审计
+            {{ t('enterprise.workbench.viewAudit') }}
           </RouterLink>
         </div>
         <div
           v-if="activityState === 'unavailable'"
           class="flex h-32 items-center justify-center text-sm text-gray-500 dark:text-dark-400"
         >
-          审计数据源暂时不可用
+          {{ t('enterprise.workbench.auditUnavailable') }}
         </div>
         <div
           v-else-if="!recentAuditEvents.length"
           class="flex h-32 items-center justify-center text-sm text-gray-500 dark:text-dark-400"
         >
-          暂无最近操作
+          {{ t('enterprise.workbench.recentEmpty') }}
         </div>
         <ul v-else class="space-y-4 border-l border-gray-200 pl-5 dark:border-dark-700">
           <li v-for="event in recentAuditEvents" :key="event.id" class="relative">
@@ -267,9 +267,9 @@
       <!-- 员工分配概况 -->
       <section class="card p-4">
         <div class="mb-4">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">员工分配概况</h3>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.overviewTitle') }}</h3>
           <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-            {{ terms.pool }}耗尽与个人{{ terms.overage }}分开处理；完整用量明细见「企业用量」页，操作审计见「管理审计」页
+            {{ t('enterprise.workbench.overviewHint', { pool: terms.pool, overage: terms.overage }) }}
           </p>
         </div>
         <DataTable
@@ -291,7 +291,7 @@
             </span>
           </template>
           <template #empty>
-            <EmptyState title="当前筛选条件暂无用量" description="调整筛选范围或等待员工产生调用后再查看。" />
+            <EmptyState :title="t('enterprise.workbench.overviewEmptyTitle')" :description="t('enterprise.workbench.overviewEmptyDescription')" />
           </template>
         </DataTable>
       </section>
@@ -321,7 +321,7 @@ import type {
   EnterpriseWorkbenchSummary
 } from '@/types/enterprise'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const appStore = useAppStore()
 
 const terms = computed(() => ({
@@ -346,24 +346,24 @@ const hasSourceIssue = computed(() => Object.values(sourceStates).some((state) =
 const sourceIssueText = computed(() =>
   Object.entries(sourceStates)
     .filter(([, state]) => state === 'unavailable')
-    .map(([name]) => ({ summary: '汇总', directories: '组织目录' }[name]))
-    .join('、')
+    .map(([name]) => t(name === 'summary' ? 'enterprise.workbench.sourceSummary' : 'enterprise.workbench.sourceDirectories'))
+    .join(t('enterprise.workbench.sourceSeparator'))
 )
 const subscriptionStatusText = computed(() =>
   summary.value?.subscription_status
     ? subscriptionStatusLabel(summary.value.subscription_status, t)
-    : '上游订阅来源不可用'
+    : t('enterprise.workbench.subscriptionUnavailable')
 )
 const poolSourceLabel = computed(
-  () => `来源${sourceStatusLabel(summary.value?.pool_source_status || 'unavailable', t)}`
+  () => t('enterprise.workbench.poolSource', { status: sourceStatusLabel(summary.value?.pool_source_status || 'unavailable', t) })
 )
 const poolObservedAtLabel = computed(() =>
   summary.value?.pool_observed_at
-    ? `更新于 ${new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(summary.value.pool_observed_at))}`
+    ? t('enterprise.workbench.poolObservedAt', { time: new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(summary.value.pool_observed_at)) })
     : ''
 )
 const trendSourceLabel = computed(() =>
-  sourceStates.summary === 'ready' ? '来源：企业用量' : '来源不可用'
+  t(sourceStates.summary === 'ready' ? 'enterprise.workbench.trendSource' : 'enterprise.workbench.trendSourceUnavailable')
 )
 
 const employeeSummaries = computed(() => summary.value?.employee_summaries || [])
@@ -372,13 +372,13 @@ const topEmployees = computed(() =>
 )
 
 const employeeColumns = computed<Column[]>(() => [
-  { key: 'email', label: '员工' },
-  { key: 'requests', label: '请求数' },
+  { key: 'email', label: t('enterprise.workbench.columnEmployee') },
+  { key: 'requests', label: t('enterprise.workbench.columnRequests') },
   { key: 'configured_credit', label: terms.value.allocation },
   { key: 'usage_credit', label: terms.value.actualCost },
   { key: 'remaining_credit', label: terms.value.remaining },
   { key: 'overage_credit', label: terms.value.overage },
-  { key: 'recommendation', label: '处理建议' }
+  { key: 'recommendation', label: t('enterprise.workbench.columnRecommendation') }
 ])
 
 // 后端以 NUMERIC(20,8) 定长字符串返回（零值为 "0.00000000"），按数值判断而非字符串比较
@@ -387,10 +387,10 @@ const isPositiveAmount = (value?: string | null) => Number(value ?? 0) > 0
 // 概览汇总有意不传 window_type：它反映整体快照，与用量页的窗口筛选口径不同
 const params = (): Record<string, string | number> => ({})
 const formatDate = (value: string | Date) =>
-  new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-const formatOptionalDate = (value?: string) => (value ? formatDate(value) : '未获取')
+  new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+const formatOptionalDate = (value?: string) => (value ? formatDate(value) : t('enterprise.workbench.notRetrieved'))
 const trendLabel = (value: string) =>
-  new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(value))
+  new Intl.DateTimeFormat(locale.value, { month: 'numeric', day: 'numeric' }).format(new Date(value))
 const trendLabels = computed(() => (summary.value?.usage_trend || []).map((point) => trendLabel(point.at)))
 const trendValues = computed(() => (summary.value?.usage_trend || []).map((point) => point.requests))
 
@@ -444,7 +444,7 @@ async function load() {
   resetData()
   const results = await Promise.allSettled([loadSummary(), loadDirectories()])
   if (results.some((result) => result.status === 'rejected')) {
-    appStore.showError('部分工作台数据暂时不可用')
+    appStore.showError(t('enterprise.workbench.partialToast'))
   }
   loading.value = false
 }

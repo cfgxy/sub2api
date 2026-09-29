@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import EnterpriseWorkbenchView from '../EnterpriseWorkbenchView.vue'
+import { enterpriseTestLocale } from '@/views/admin/__tests__/enterpriseTestI18n'
 
 vi.mock('vue-i18n', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-i18n')>()),
@@ -34,6 +35,7 @@ function mountView() {
 describe('EnterpriseWorkbenchView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    enterpriseTestLocale.value = 'zh'
     listWorkbenchAuditEvents.mockResolvedValue({
       items: [{ id: 1, event_type: 'allocation.update', entity_type: 'employee', result: 'success', payload: {}, actor_ref: 'admin@example.com', created_at: new Date().toISOString() }],
       total: 1, page: 1, page_size: 5, pages: 1,
@@ -106,5 +108,63 @@ describe('EnterpriseWorkbenchView', () => {
     expect(wrapper.text()).toContain('部分数据源暂时不可用')
     expect(wrapper.text()).not.toContain('employee@example.com')
     wrapper.unmount()
+  })
+
+  describe('en locale renders no hard-coded Chinese', () => {
+    const CJK = /[\u3400-\u9fff\uff00-\uffef]/
+    const renderedHtml = (wrapper: ReturnType<typeof mountView>) => wrapper.html().replace(/<!--[\s\S]*?-->/g, '')
+
+    async function mountEnglish(options: { failSummary?: boolean; empty?: boolean } = {}) {
+      enterpriseTestLocale.value = 'en'
+      if (options.failSummary) {
+        getWorkbenchSummary.mockRejectedValue(new Error('source unavailable'))
+        listDepartments.mockRejectedValue(new Error('source unavailable'))
+      }
+      if (options.empty) {
+        listWorkbenchAuditEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 5, pages: 0 })
+        getWorkbenchSummary.mockResolvedValue({
+          total_usage_credit: '0', total_requests: 0, employee_count: 0, active_employee_count: 0,
+          subscription_status: 'active', subscription_plan: 'Business', enterprise_pool_limit: '100', enterprise_pool_used: '100',
+          enterprise_pool_remaining: '0', enterprise_pool_exhausted: true, pool_source_status: 'available', pool_window_type: 'week',
+          pool_window_anchor: new Date().toISOString(), pool_observed_at: new Date().toISOString(),
+          scheduled_subscription_since: new Date().toISOString(), scheduled_subscription_plan: '',
+          employee_summaries: [], usage_trend: [],
+        })
+      }
+      const wrapper = mountView()
+      await flushPromises()
+      return wrapper
+    }
+
+    it('populated state: headings, table headers, cards and dates are English', async () => {
+      const wrapper = await mountEnglish()
+      const text = wrapper.text()
+      expect(text).toContain('Recommended action')
+      expect(text).toContain('Employee allocation overview')
+      expect(text).toContain('Usage trend')
+      expect(text).toContain('Admin workbench')
+      expect(renderedHtml(wrapper)).not.toMatch(CJK)
+      wrapper.unmount()
+    })
+
+    it('empty and exhausted state (incl. aria-label, empty-state copy, scheduled plan) has no Chinese', async () => {
+      const wrapper = await mountEnglish({ empty: true })
+      const text = wrapper.text()
+      expect(text).toContain('No usage for the current filter')
+      expect(text).toContain('No trend data for the current filter')
+      expect(text).toContain('No recent activity')
+      expect(text).toContain('Unknown plan')
+      expect(renderedHtml(wrapper)).not.toMatch(CJK)
+      wrapper.unmount()
+    })
+
+    it('source-unavailable state and its toast are English', async () => {
+      const wrapper = await mountEnglish({ failSummary: true })
+      expect(wrapper.text()).toContain('Some data sources are temporarily unavailable')
+      expect(wrapper.text()).toContain('Summary')
+      expect(wrapper.text()).toContain('Organization directory')
+      expect(renderedHtml(wrapper)).not.toMatch(CJK)
+      wrapper.unmount()
+    })
   })
 })

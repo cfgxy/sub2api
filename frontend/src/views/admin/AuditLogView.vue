@@ -97,6 +97,7 @@
           </template>
 
           <template #cell-action="{ row }">
+            <!-- REVIEW NOTE (SHAN-410/B-5)：action/method/path 是审计原始记录（技术定位用），按 SHAN-392 同一口径保留原文，不修复。 -->
             <div class="min-w-0 max-w-xs">
               <div class="truncate font-mono text-sm text-gray-800 dark:text-gray-200" :title="row.action">
                 {{ row.action }}

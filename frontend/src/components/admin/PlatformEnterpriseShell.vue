@@ -18,7 +18,7 @@
         </div>
         <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
           <span class="sidebar-brand-title text-lg font-bold text-gray-900 dark:text-white">Sub2API</span>
-          <span class="sidebar-brand-title text-[10px] font-medium text-gray-400 dark:text-dark-500">{{ t('admin.enterprise.create.platform') }}</span>
+          <span class="sidebar-brand-title text-[10px] font-medium text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.platform') }}</span>
         </div>
       </div>
 

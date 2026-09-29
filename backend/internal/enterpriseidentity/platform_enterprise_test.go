@@ -42,3 +42,31 @@ func TestGetPlatformEnterpriseIncludesSubscriptionAndImpactSummary(t *testing.T)
 	require.Equal(t, "scheduled", item.Subscriptions[1].Status)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestListPlatformEnterprisesIncludesSubscriptionsSameAsDetail(t *testing.T) {
+	svc, mock := newMockService(t)
+	createdAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	anchor := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	subscriptions, err := json.Marshal([]map[string]any{
+		{"id": 41, "status": "active", "plan": "周订阅", "weekly_limit": "550.00000000",
+			"weekly_window_start": anchor, "starts_at": createdAt, "expires_at": anchor.AddDate(0, 0, 7)},
+	})
+	require.NoError(t, err)
+	columns := []string{"id", "name", "host", "dedicated", "status", "created_at", "admin_email", "employees", "active_employees", "sessions", "keys", "subscriptions"}
+	mock.ExpectQuery(`(?s)SELECT e\.id.*jsonb_agg.*es\.enterprise_id = e\.id.*FROM enterprises AS e`).
+		WillReturnRows(sqlmock.NewRows(columns).
+			AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", createdAt, "admin@example.com", int64(12), int64(10), int64(3), int64(8), subscriptions).
+			AddRow(int64(8), "Beta", "beta.example.com", int64(98), "active", createdAt, "", int64(0), int64(0), int64(0), int64(0), []byte("[]")))
+
+	items, err := svc.ListPlatformEnterprises(context.Background(), "", "")
+
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Len(t, items[0].Subscriptions, 1)
+	require.Equal(t, int64(41), items[0].Subscriptions[0].ID)
+	require.Equal(t, "active", items[0].Subscriptions[0].Status)
+	require.Equal(t, "550.00000000", items[0].Subscriptions[0].WeeklyLimit)
+	require.NotNil(t, items[0].Subscriptions[0].WeeklyWindowStart)
+	require.Empty(t, items[1].Subscriptions)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

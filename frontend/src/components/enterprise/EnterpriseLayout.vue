@@ -18,7 +18,7 @@
         </div>
         <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
           <span class="sidebar-brand-title text-lg font-bold text-gray-900 dark:text-white">Sub2API</span>
-          <span class="sidebar-brand-title text-[10px] font-medium text-gray-400 dark:text-dark-500">企业控制台</span>
+          <span class="sidebar-brand-title text-[10px] font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.shell.consoleTitle') }}</span>
         </div>
       </div>
 
@@ -27,7 +27,7 @@
         <div class="sidebar-section">
           <div class="sidebar-section-title" :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
             <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">
-              {{ auth.isAdmin ? '企业管理' : '个人功能' }}
+              {{ t(auth.isAdmin ? 'enterprise.shell.sectionAdmin' : 'enterprise.shell.sectionEmployee') }}
             </span>
           </div>
 
@@ -55,7 +55,7 @@
           </div>
           <div class="sidebar-label min-w-0" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
             <div class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ auth.principal?.email }}</div>
-            <div class="text-xs text-gray-500 dark:text-dark-400">{{ auth.isAdmin ? '企业管理员' : '企业员工' }}</div>
+            <div class="text-xs text-gray-500 dark:text-dark-400">{{ t(auth.isAdmin ? 'enterprise.shell.roleAdmin' : 'enterprise.shell.roleEmployee') }}</div>
           </div>
         </div>
 
@@ -65,10 +65,10 @@
           @click="toggleTheme"
           class="sidebar-link mb-2 w-full"
           :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-          :title="sidebarCollapsed ? (isDark ? '切换为亮色' : '切换为暗色') : undefined"
+          :title="sidebarCollapsed ? t(isDark ? 'enterprise.shell.switchLight' : 'enterprise.shell.switchDark') : undefined"
         >
           <component :is="isDark ? SunIcon : MoonIcon" class="h-5 w-5 flex-shrink-0" :class="isDark ? 'text-amber-500' : ''" />
-          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ isDark ? '亮色模式' : '暗色模式' }}</span>
+          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t(isDark ? 'enterprise.shell.lightMode' : 'enterprise.shell.darkMode') }}</span>
         </button>
 
         <!-- Collapse Button -->
@@ -77,10 +77,10 @@
           @click="toggleSidebar"
           class="sidebar-link w-full"
           :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :title="sidebarCollapsed ? t('enterprise.shell.expandSidebar') : t('enterprise.shell.collapseSidebar')"
         >
           <component :is="sidebarCollapsed ? ChevronDoubleRightIcon : ChevronDoubleLeftIcon" class="h-5 w-5 flex-shrink-0" />
-          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">收起侧边栏</span>
+          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('enterprise.shell.collapseSidebar') }}</span>
         </button>
       </div>
     </aside>
@@ -110,7 +110,7 @@
               data-testid="mobile-menu-toggle"
               @click="toggleMobileSidebar"
               class="btn-ghost btn-icon lg:hidden"
-              aria-label="切换菜单"
+              :aria-label="t('enterprise.shell.toggleMenu')"
             >
               <Icon name="menu" size="md" />
             </button>
@@ -127,14 +127,14 @@
                 data-testid="user-dropdown-toggle"
                 @click="toggleDropdown"
                 class="flex items-center gap-2 rounded-xl p-1.5 transition-colors hover:bg-gray-100 dark:hover:bg-dark-800"
-                aria-label="用户菜单"
+                :aria-label="t('enterprise.shell.userMenu')"
               >
                 <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 text-sm font-medium text-white shadow-sm">
                   {{ userInitial }}
                 </div>
                 <div class="hidden text-left md:block">
                   <div class="text-sm font-medium text-gray-900 dark:text-white">{{ auth.principal?.email }}</div>
-                  <div class="text-xs text-gray-500 dark:text-dark-400">{{ auth.isAdmin ? '企业管理员' : '企业员工' }}</div>
+                  <div class="text-xs text-gray-500 dark:text-dark-400">{{ t(auth.isAdmin ? 'enterprise.shell.roleAdmin' : 'enterprise.shell.roleEmployee') }}</div>
                 </div>
                 <Icon name="chevronDown" size="sm" class="hidden text-gray-400 md:block" />
               </button>
@@ -144,7 +144,7 @@
                 <div v-if="dropdownOpen" class="dropdown right-0 mt-2 w-56">
                   <div class="border-b border-gray-100 px-4 py-3 dark:border-dark-700">
                     <div class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ auth.principal?.email }}</div>
-                    <div class="text-xs text-gray-500 dark:text-dark-400">{{ auth.isAdmin ? '企业管理员' : '企业员工' }}</div>
+                    <div class="text-xs text-gray-500 dark:text-dark-400">{{ t(auth.isAdmin ? 'enterprise.shell.roleAdmin' : 'enterprise.shell.roleEmployee') }}</div>
                   </div>
 
                   <div class="py-1">
@@ -156,7 +156,7 @@
                       <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
                       </svg>
-                      退出登录
+                      {{ t('enterprise.shell.logout') }}
                     </button>
                   </div>
                 </div>
@@ -177,10 +177,12 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
@@ -191,24 +193,27 @@ const mobileOpen = computed(() => appStore.mobileOpen)
 
 // 导航 IA 与 L0 版本保持一致：管理员 9 项 / 员工 5 项
 const navigation = computed(() => auth.isAdmin ? [
-  { path: '/enterprise/admin/workbench', label: '工作台', icon: 'chartBar' as const },
-  { path: '/enterprise/admin/usage', label: '企业用量', icon: 'search' as const },
-  { path: '/enterprise/admin/audit', label: '管理审计', icon: 'clipboard' as const },
-  { path: '/enterprise/admin/allocation', label: '额度分配', icon: 'grid' as const },
-  { path: '/enterprise/admin/employees', label: '员工', icon: 'users' as const },
-  { path: '/enterprise/admin/keys', label: '员工 Key', icon: 'key' as const },
-  { path: '/enterprise/admin/departments', label: '部门', icon: 'grid' as const },
-  { path: '/enterprise/admin/brand', label: '品牌', icon: 'sparkles' as const },
-  { path: '/enterprise/admin/sessions', label: '我的会话', icon: 'shield' as const },
+  { path: '/enterprise/admin/workbench', label: t('enterprise.shell.nav.workbench'), icon: 'chartBar' as const },
+  { path: '/enterprise/admin/usage', label: t('enterprise.shell.nav.adminUsage'), icon: 'search' as const },
+  { path: '/enterprise/admin/audit', label: t('enterprise.shell.nav.adminAudit'), icon: 'clipboard' as const },
+  { path: '/enterprise/admin/allocation', label: t('enterprise.shell.nav.allocation'), icon: 'grid' as const },
+  { path: '/enterprise/admin/employees', label: t('enterprise.shell.nav.employees'), icon: 'users' as const },
+  { path: '/enterprise/admin/keys', label: t('enterprise.shell.nav.adminKeys'), icon: 'key' as const },
+  { path: '/enterprise/admin/departments', label: t('enterprise.shell.nav.departments'), icon: 'grid' as const },
+  { path: '/enterprise/admin/brand', label: t('enterprise.shell.nav.brand'), icon: 'sparkles' as const },
+  { path: '/enterprise/admin/sessions', label: t('enterprise.shell.nav.sessions'), icon: 'shield' as const },
 ] : [
-  { path: '/enterprise/home', label: '个人概览', icon: 'chartBar' as const },
-  { path: '/enterprise/keys', label: 'API Key', icon: 'key' as const },
-  { path: '/enterprise/usage', label: '个人用量', icon: 'grid' as const },
-  { path: '/enterprise/settings', label: '个人设置', icon: 'shield' as const },
-  { path: '/enterprise/sessions', label: '我的会话', icon: 'shield' as const },
+  { path: '/enterprise/home', label: t('enterprise.shell.nav.home'), icon: 'chartBar' as const },
+  { path: '/enterprise/keys', label: t('enterprise.shell.nav.keys'), icon: 'key' as const },
+  { path: '/enterprise/usage', label: t('enterprise.shell.nav.usage'), icon: 'grid' as const },
+  { path: '/enterprise/settings', label: t('enterprise.shell.nav.settings'), icon: 'shield' as const },
+  { path: '/enterprise/sessions', label: t('enterprise.shell.nav.sessions'), icon: 'shield' as const },
 ])
 
-const pageTitle = computed(() => (route.meta.title as string) || '')
+const pageTitle = computed(() => {
+  const key = route.meta.titleKey
+  return typeof key === 'string' ? t(key) : (route.meta.title as string) || ''
+})
 
 const userInitial = computed(() => (auth.principal?.email || '?').charAt(0).toUpperCase())
 

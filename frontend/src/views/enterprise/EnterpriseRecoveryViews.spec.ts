@@ -51,6 +51,15 @@ describe('EnterpriseForgotPasswordView', () => {
     wrapper.unmount()
   })
 
+  it('uses custom validation (novalidate) so the fixed email message is reachable instead of the native bubble', async () => {
+    const wrapper = mountView(EnterpriseForgotPasswordView)
+    expect(wrapper.get('form').attributes('novalidate')).toBeDefined()
+    await wrapper.get('form').trigger('submit')
+    expect(forgotPassword).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请输入有效邮箱')
+    wrapper.unmount()
+  })
+
   it('keeps the form available after failure and never displays backend details', async () => {
     forgotPassword.mockRejectedValue({ message: 'sensitive backend detail' })
     const wrapper = mountView(EnterpriseForgotPasswordView)
@@ -87,6 +96,16 @@ describe('EnterpriseResetPasswordView', () => {
     expect(wrapper.text()).toContain('重置链接缺少令牌')
     expect(wrapper.get('a[href="/enterprise/forgot-password"]').text()).toContain('重新申请')
     expect(wrapper.find('form').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('uses custom validation (novalidate) so empty fields show the fixed messages', async () => {
+    query.token = 'fixture-token'
+    const wrapper = mountView(EnterpriseResetPasswordView)
+    expect(wrapper.get('form').attributes('novalidate')).toBeDefined()
+    await wrapper.get('form').trigger('submit')
+    expect(resetPassword).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('密码至少需要 8 个字符')
     wrapper.unmount()
   })
 

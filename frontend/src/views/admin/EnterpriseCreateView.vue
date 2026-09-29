@@ -38,10 +38,10 @@
       </div>
 
       <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
-        <form class="card" @submit.prevent="submit">
+        <form class="card" novalidate @submit.prevent="submit">
           <section class="card-body space-y-4 border-b border-gray-200 dark:border-dark-700">
             <div class="flex gap-3">
-              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">1</span>
+              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-700 dark:bg-primary-900/30 dark:text-primary-400">1</span>
               <div>
                 <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.basicTitle') }}</h2>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.basicDescription') }}</p>
@@ -69,7 +69,7 @@
 
           <section class="card-body space-y-4 border-b border-gray-200 dark:border-dark-700">
             <div class="flex gap-3">
-              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">2</span>
+              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-700 dark:bg-primary-900/30 dark:text-primary-400">2</span>
               <div>
                 <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.accountTitle') }}</h2>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.accountDescription') }}</p>
@@ -116,7 +116,7 @@
 
           <section class="card-body space-y-4">
             <div class="flex gap-3">
-              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">3</span>
+              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary-50 text-xs font-bold text-primary-700 dark:bg-primary-900/30 dark:text-primary-400">3</span>
               <div>
                 <h2 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.enterprise.create.reasonTitle') }}</h2>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.reasonDescription') }}</p>

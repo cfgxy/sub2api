@@ -19,7 +19,7 @@
         密码已更新，正在进入工作台。
       </p>
 
-      <form class="space-y-5" :aria-busy="loading" @submit.prevent="submit">
+      <form class="space-y-5" novalidate :aria-busy="loading" @submit.prevent="submit">
         <div>
           <label for="enterprise-new-password" class="input-label">新密码</label>
           <div class="relative">

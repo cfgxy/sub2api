@@ -64,7 +64,7 @@
           <template #cell-created_at="{ row }">{{ formatDate(row.created_at) }}</template>
           <template #cell-summary="{ row }">
             <span v-if="row.subscriptions?.length">{{ row.subscriptions.map(subscriptionSummary).join('；') }}</span>
-            <span v-else class="text-gray-400 dark:text-dark-500" data-testid="enterprise-no-subscriptions">
+            <span v-else class="text-gray-500 dark:text-dark-400" data-testid="enterprise-no-subscriptions">
               {{ t('admin.enterprise.common.noSubscriptions') }}
             </span>
           </template>

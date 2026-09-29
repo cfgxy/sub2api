@@ -33,6 +33,7 @@ describe('EnterpriseBrandView', () => {
 
   it('renders the preview without a shield icon and shows the static field limits', async () => {
     const wrapper = mount(EnterpriseBrandView, { global: { plugins: [ElementPlus] } })
+    expect(getAdminBrand).toHaveBeenCalledWith({ suppressUnavailableRedirect: true })
     await flushPromises()
 
     expect(wrapper.findComponent(Icon).exists()).toBe(false)
