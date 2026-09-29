@@ -402,7 +402,7 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var upstreamEmail, upstreamStatus string
 	if err = tx.QueryRowContext(ctx, `
@@ -541,7 +541,7 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]PlatformEnterprise, 0)
 	for rows.Next() {
 		var item PlatformEnterprise
@@ -613,7 +613,7 @@ func (s *Service) DisableEnterprise(ctx context.Context, id, actorUserID int64, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `UPDATE enterprises SET status = 'disabled', updated_at = NOW() WHERE id = $1 AND status = 'active'`, id)
 	if err != nil {
 		return err
@@ -665,7 +665,7 @@ func (s *Service) EnableEnterprise(ctx context.Context, id, actorUserID int64, r
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `UPDATE enterprises SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'disabled'`, id)
 	if err != nil {
 		return err
@@ -706,7 +706,7 @@ func (s *Service) UpdateEnterpriseHost(ctx context.Context, id, actorUserID int6
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var currentHost string
 	if err = tx.QueryRowContext(ctx, `SELECT LOWER(BTRIM(portal_host)) FROM enterprises WHERE id = $1`, id).Scan(&currentHost); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -831,7 +831,7 @@ func (s *Service) createSession(ctx context.Context, p Principal, userAgent, ip 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO enterprise_sessions (
 			id, enterprise_id, principal_type, principal_id, refresh_family_id,
@@ -969,7 +969,7 @@ func (s *Service) Refresh(ctx context.Context, host, refresh, userAgent, ip stri
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var sessionID, principalType, familyID string
 	var principalID, authVersion int64
 	var tokenExpires, sessionExpires time.Time
@@ -1050,7 +1050,7 @@ func (s *Service) Logout(ctx context.Context, host, refresh string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var familyID string
 	err = tx.QueryRowContext(ctx, `
 		SELECT token.refresh_family_id
@@ -1102,7 +1102,7 @@ func (s *Service) ChangeInitialPassword(ctx context.Context, claims *Claims, nex
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees
 		SET password_hash = $1, must_change_password = FALSE, initial_password_expires_at = NULL,
@@ -1144,7 +1144,7 @@ func (s *Service) ChangePassword(ctx context.Context, claims *Claims, current, n
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `UPDATE enterprise_employees SET password_hash = $1, must_change_password = FALSE, initial_password_expires_at = NULL, password_changed_at = NOW(), auth_version = auth_version + 1, updated_at = NOW() WHERE enterprise_id = $2 AND id = $3 AND status = 'active'`, string(nextHash), claims.EnterpriseID, claims.PrincipalID); err != nil {
 		return err
 	}
@@ -1218,7 +1218,7 @@ func (s *Service) ResetPassword(ctx context.Context, host, token, next string) e
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var tokenID string
 	var employeeID int64
 	err = tx.QueryRowContext(ctx, `
@@ -1276,7 +1276,7 @@ func (s *Service) ListSessions(ctx context.Context, claims *Claims) ([]Session, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Session, 0)
 	for rows.Next() {
 		var item Session
@@ -1298,7 +1298,7 @@ func (s *Service) RevokeSession(ctx context.Context, claims *Claims, id string) 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW()
 		WHERE enterprise_id = $1 AND principal_type = $2 AND principal_id = $3 AND id = $4
@@ -1322,7 +1322,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context, claims *Claims) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE enterprise_sessions SET revoked_at = COALESCE(revoked_at, NOW()), updated_at = NOW()
 		WHERE enterprise_id = $1 AND principal_type = $2 AND principal_id = $3 AND revoked_at IS NULL
@@ -1340,7 +1340,7 @@ func (s *Service) ListDepartments(ctx context.Context, enterpriseID int64) ([]De
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Department, 0)
 	for rows.Next() {
 		var item Department
@@ -1370,7 +1370,7 @@ func (s *Service) CreateDepartment(ctx context.Context, enterpriseID int64, name
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	err = tx.QueryRowContext(ctx, `INSERT INTO enterprise_departments (enterprise_id, name) VALUES ($1, $2) RETURNING id, name, created_at`, enterpriseID, name).Scan(&item.ID, &item.Name, &item.CreatedAt)
 	if err != nil {
 		return nil, errConflict
@@ -1409,7 +1409,7 @@ func (s *Service) DeleteDepartment(ctx context.Context, enterpriseID, department
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var departmentName string
 	if err := tx.QueryRowContext(ctx, `SELECT name FROM enterprise_departments WHERE enterprise_id = $1 AND id = $2 AND status = 'active' FOR UPDATE`, enterpriseID, departmentID).Scan(&departmentName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1440,7 +1440,7 @@ func (s *Service) ListEmployees(ctx context.Context, enterpriseID int64) ([]Empl
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Employee, 0)
 	for rows.Next() {
 		var item Employee
@@ -1676,7 +1676,7 @@ func (s *Service) ListEmployeeUsage(ctx context.Context, enterpriseID, employeeI
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]EmployeeUsageRecord, 0)
 	for rows.Next() {
 		var item EmployeeUsageRecord
@@ -1722,7 +1722,7 @@ func (s *Service) ListEmployeeUsageTrend(ctx context.Context, enterpriseID, empl
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]EmployeeUsageTrendPoint, 0)
 	for rows.Next() {
 		var item EmployeeUsageTrendPoint
@@ -1776,7 +1776,7 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 		if txErr != nil {
 			return nil, txErr
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		err = insertEmployee(tx)
 		if err == nil {
 			if auditErr := writeAuditEvent(ctx, tx, enterpriseID, "employee.created", "employee", &item.ID, map[string]any{"result": "success", "employee_id": item.ID, "department_id": departmentID}); auditErr != nil {
@@ -1837,7 +1837,7 @@ func (s *Service) ResetEmployeePassword(ctx context.Context, claims *Claims, emp
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees
 		SET password_hash = $1, must_change_password = TRUE, initial_password_expires_at = NOW() + INTERVAL '24 hours',
@@ -1947,7 +1947,7 @@ func (s *Service) TerminateEmployee(ctx context.Context, enterpriseID, employeeI
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE enterprise_employees SET status = 'terminated', current_email = NULL, department_id = NULL,
 		    disabled_at = COALESCE(disabled_at, NOW()), terminated_at = NOW(), auth_version = auth_version + 1, version = version + 1, updated_at = NOW()
@@ -2105,7 +2105,7 @@ func (s *Service) PutBrand(ctx context.Context, enterpriseID int64, input BrandI
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO enterprise_branding (enterprise_id, enterprise_name, title, body, slogan)
 		VALUES ($1, $2, $3, $4, $5)
@@ -2167,7 +2167,7 @@ func (s *Service) UploadBrandBackground(ctx context.Context, enterpriseID int64,
 		if err != nil {
 			return nil, err
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		if err := writeBrand(tx); err != nil {
 			return nil, err
 		}

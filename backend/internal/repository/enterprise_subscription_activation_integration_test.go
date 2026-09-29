@@ -16,8 +16,9 @@ import (
 
 // seedEnterpriseActivationUpstream seeds the dedicated upstream user, an active
 // group and the native subscription a platform enterprise binds to. A nil
-// weeklyWindowStart models an upstream subscription without an established
-// weekly window, which an active enterprise subscription cannot mirror.
+// weeklyWindowStart models an upstream subscription whose window anchors are not
+// materialized yet; since SHAN-382 enterprise creation initializes them inside the
+// same transaction instead of rejecting the candidate.
 func seedEnterpriseActivationUpstream(t *testing.T, ctx context.Context, suffix string, weeklyWindowStart *time.Time) (int64, int64, int64) {
 	t.Helper()
 	var userID int64
@@ -173,24 +174,40 @@ func TestEnterpriseCreationRollsBackWholeTransactionWhenActivationFails(t *testi
 	require.Zero(t, subscriptionCount)
 }
 
-func TestEnterpriseCreationRejectsUpstreamSubscriptionWithoutWeeklyWindow(t *testing.T) {
+func TestEnterpriseCreationInitializesUpstreamWeeklyWindowAnchor(t *testing.T) {
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	userID, _, _ := seedEnterpriseActivationUpstream(t, ctx, suffix, nil)
-	t.Cleanup(func() { cleanupEnterpriseActivationUpstream(t, userID) })
+	userID, _, upstreamSubscriptionID := seedEnterpriseActivationUpstream(t, ctx, suffix, nil)
 
 	svc := enterpriseidentity.NewService(integrationDB, nil, nil, nil, nil)
-	_, err := svc.CreateEnterprise(ctx, enterpriseidentity.CreateEnterpriseInput{
+	created, err := svc.CreateEnterprise(ctx, enterpriseidentity.CreateEnterpriseInput{
 		Name:                  "Acme NoAnchor " + suffix,
 		Host:                  "acme-no-anchor-" + suffix + ".example.com",
 		DedicatedUpstreamUser: userID,
-		Reason:                "shan-322 anchor guard",
+		Reason:                "shan-382 anchor initialization",
 	}, 1)
-	require.ErrorContains(t, err, "no active subscription")
+	require.NoError(t, err)
+	t.Cleanup(func() { cleanupEnterpriseFixture(t, created.ID, userID, suffix) })
 
-	var enterpriseCount int
+	// SHAN-382: enterprise creation counts as the first consumption, so the
+	// upstream subscription anchors are initialized in the same transaction and
+	// the enterprise subscription mirrors the freshly written weekly anchor.
+	var dailyAnchor, weeklyAnchor, monthlyAnchor sql.NullTime
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM enterprises WHERE portal_host = $1`,
-		"acme-no-anchor-"+suffix+".example.com").Scan(&enterpriseCount))
-	require.Zero(t, enterpriseCount)
+		SELECT daily_window_start, weekly_window_start, monthly_window_start
+		FROM user_subscriptions WHERE id = $1`, upstreamSubscriptionID).
+		Scan(&dailyAnchor, &weeklyAnchor, &monthlyAnchor))
+	require.True(t, dailyAnchor.Valid)
+	require.True(t, weeklyAnchor.Valid)
+	require.True(t, monthlyAnchor.Valid)
+
+	var status string
+	var observed sql.NullTime
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status, observed_weekly_window_start
+		FROM enterprise_subscriptions WHERE enterprise_id = $1`, created.ID).
+		Scan(&status, &observed))
+	require.Equal(t, "active", status)
+	require.True(t, observed.Valid)
+	require.True(t, observed.Time.UTC().Equal(weeklyAnchor.Time.UTC()))
 }

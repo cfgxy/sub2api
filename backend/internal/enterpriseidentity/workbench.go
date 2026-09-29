@@ -345,7 +345,7 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var item WorkbenchEmployeeSummary
 		var departmentID sql.NullInt64
@@ -478,7 +478,7 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	if err != nil {
 		return nil, err
 	}
-	defer trendRows.Close()
+	defer func() { _ = trendRows.Close() }()
 	for trendRows.Next() {
 		var point WorkbenchUsageTrendPoint
 		if err := trendRows.Scan(&point.At, &point.Requests, &point.UsageCredit); err != nil {
@@ -566,7 +566,7 @@ func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q 
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]WorkbenchUsageRow, 0)
 	for rows.Next() {
 		var item WorkbenchUsageRow
@@ -664,7 +664,7 @@ func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]WorkbenchAuditEvent, 0)
 	for rows.Next() {
 		var item WorkbenchAuditEvent

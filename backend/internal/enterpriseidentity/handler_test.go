@@ -509,7 +509,9 @@ func TestEnterprisePublicAuthRateLimitDoesNotShareTransportPeerAcrossTrustedClie
 	h := newEnterpriseRateLimitTestHandler(rdb)
 
 	peerKey := "rate_limit:enterprise-auth-test-peer:" + hashRateLimitScope("10.0.0.2")
-	server.Set(peerKey, "1000")
+	if err := server.Set(peerKey, "1000"); err != nil {
+		t.Fatalf("seed rate limit key: %v", err)
+	}
 	server.SetTTL(peerKey, time.Minute)
 
 	handlerCalls := 0

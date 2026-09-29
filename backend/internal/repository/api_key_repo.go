@@ -116,7 +116,7 @@ func (r *apiKeyRepository) IsEnterpriseAssigned(ctx context.Context, id int64) (
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return false, rows.Err()
 	}
@@ -137,7 +137,7 @@ func (r *apiKeyRepository) IsEnterpriseDedicatedUser(ctx context.Context, userID
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return false, rows.Err()
 	}
