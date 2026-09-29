@@ -13,7 +13,8 @@ import (
 	postgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-func TestGetPlatformEnterprisePostgreSQLReturnsSubscriptionsInStableOrder(t *testing.T) {
+func newPlatformEnterpriseFixture(t *testing.T) (context.Context, *sql.DB, time.Time) {
+	t.Helper()
 	ctx := context.Background()
 	container, err := postgres.Run(
 		ctx,
@@ -80,11 +81,20 @@ func TestGetPlatformEnterprisePostgreSQLReturnsSubscriptionsInStableOrder(t *tes
 		{`INSERT INTO user_subscriptions (id, group_id, starts_at, expires_at) VALUES
 			(41, 1, $1, $2), (42, 2, $2, $3)`, []any{activeStart, scheduledStart, scheduledStart.AddDate(0, 0, 7)}},
 		{`INSERT INTO enterprise_subscriptions (id, enterprise_id, upstream_user_subscription_id, status, observed_weekly_window_start) VALUES
-			(41, 7, 41, 'active', $1), (42, 7, 42, 'scheduled', NULL)`, []any{activeStart}},
+			(41, 7, 41, 'active', $1), (42, 7, 42, 'scheduled', NULL), (51, 8, 51, 'active', $1), (52, 7, 52, 'expired', $1)`, []any{activeStart}},
+		{`INSERT INTO enterprises (id, name, portal_host, dedicated_upstream_user_id, admin_user_id, status, created_at)
+			VALUES (8, 'Other', 'other.example.com', 99, 99, 'active', $1), (9, 'Empty', 'empty.example.com', 99, 99, 'active', $1)`, []any{activeStart}},
+		{`INSERT INTO groups (id, name, weekly_limit_usd) VALUES (3, '其他企业订阅', 300)`, nil},
+		{`INSERT INTO user_subscriptions (id, group_id, starts_at, expires_at) VALUES (51, 3, $1, $2), (52, 1, $1, $1)`, []any{activeStart, scheduledStart}},
 	} {
 		_, err = db.ExecContext(ctx, query.statement, query.args...)
 		require.NoError(t, err)
 	}
+	return ctx, db, activeStart
+}
+
+func TestGetPlatformEnterprisePostgreSQLReturnsSubscriptionsInStableOrder(t *testing.T) {
+	ctx, db, _ := newPlatformEnterpriseFixture(t)
 
 	svc := NewService(db, nil, nil, nil, nil)
 	item, err := svc.GetPlatformEnterprise(ctx, 7)
@@ -95,4 +105,34 @@ func TestGetPlatformEnterprisePostgreSQLReturnsSubscriptionsInStableOrder(t *tes
 	require.Equal(t, "active", item.Subscriptions[0].Status)
 	require.Equal(t, int64(42), item.Subscriptions[1].ID)
 	require.Equal(t, "scheduled", item.Subscriptions[1].Status)
+}
+
+func TestListPlatformEnterprisesPostgreSQLMatchesDetailAndKeepsTenantIsolation(t *testing.T) {
+	ctx, db, _ := newPlatformEnterpriseFixture(t)
+	svc := NewService(db, nil, nil, nil, nil)
+
+	items, err := svc.ListPlatformEnterprises(ctx, "", "")
+	require.NoError(t, err)
+	require.Len(t, items, 3)
+
+	byID := map[int64]PlatformEnterprise{}
+	for _, item := range items {
+		byID[item.ID] = item
+		detail, detailErr := svc.GetPlatformEnterprise(ctx, item.ID)
+		require.NoError(t, detailErr)
+		require.Equal(t, detail.Subscriptions, item.Subscriptions, "enterprise %d: list and detail subscriptions must match", item.ID)
+	}
+
+	require.Len(t, byID[7].Subscriptions, 2)
+	require.Equal(t, int64(41), byID[7].Subscriptions[0].ID)
+	require.Equal(t, int64(42), byID[7].Subscriptions[1].ID)
+	for _, subscription := range byID[7].Subscriptions {
+		require.NotEqual(t, int64(51), subscription.ID, "enterprise 7 must not see enterprise 8's subscription")
+		require.NotEqual(t, int64(52), subscription.ID, "expired subscriptions are not part of the summary")
+	}
+	require.Len(t, byID[8].Subscriptions, 1)
+	require.Equal(t, int64(51), byID[8].Subscriptions[0].ID)
+	require.Equal(t, "其他企业订阅", byID[8].Subscriptions[0].Plan)
+	require.NotNil(t, byID[9].Subscriptions)
+	require.Empty(t, byID[9].Subscriptions)
 }

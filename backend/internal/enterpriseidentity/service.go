@@ -517,6 +517,19 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 	return result, nil
 }
 
+// platformSubscriptionsSQL 依赖外层别名 e（enterprises）；列表与详情共用同一口径，enterprise_id = e.id 是企业间隔离条件。
+const platformSubscriptionsSQL = `COALESCE((SELECT jsonb_agg(jsonb_build_object(
+					'id', es.id, 'status', es.status, 'plan', g.name,
+					'weekly_limit', COALESCE(g.weekly_limit_usd::text, ''),
+					'weekly_window_start', es.observed_weekly_window_start,
+					'starts_at', us.starts_at, 'expires_at', us.expires_at
+					) ORDER BY CASE WHEN es.status = 'active' THEN 0 ELSE 1 END, us.starts_at, es.id
+					) FROM enterprise_subscriptions AS es
+					JOIN user_subscriptions AS us ON us.id = es.upstream_user_subscription_id
+					JOIN groups AS g ON g.id = us.group_id
+					WHERE es.enterprise_id = e.id AND es.status IN ('active', 'scheduled')
+				), '[]'::jsonb)`
+
 func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status string) ([]PlatformEnterprise, error) {
 	conditions := []string{"1 = 1"}
 	args := make([]any, 0, 2)
@@ -536,7 +549,8 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 		       (SELECT COUNT(*) FROM enterprise_sessions WHERE enterprise_id = e.id AND revoked_at IS NULL AND expires_at > NOW()),
 		       (SELECT COUNT(*) FROM enterprise_key_assignments AS assignment
 		          JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
-		          WHERE assignment.enterprise_id = e.id AND assignment.status = 'active' AND api_key.status = 'active')
+		          WHERE assignment.enterprise_id = e.id AND assignment.status = 'active' AND api_key.status = 'active'),
+		       `+platformSubscriptionsSQL+`
 		FROM enterprises AS e WHERE `+strings.Join(conditions, " AND ")+` ORDER BY e.id DESC`, args...)
 	if err != nil {
 		return nil, err
@@ -546,9 +560,15 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 	for rows.Next() {
 		var item PlatformEnterprise
 		var adminEmail string
+		var subscriptionsJSON []byte
 		if err := rows.Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt,
-			&adminEmail, &item.EmployeeCount, &item.ActiveEmployeeCount, &item.ActiveSessionCount, &item.ActiveKeyCount); err != nil {
+			&adminEmail, &item.EmployeeCount, &item.ActiveEmployeeCount, &item.ActiveSessionCount, &item.ActiveKeyCount, &subscriptionsJSON); err != nil {
 			return nil, err
+		}
+		if len(subscriptionsJSON) > 0 {
+			if err := json.Unmarshal(subscriptionsJSON, &item.Subscriptions); err != nil {
+				return nil, err
+			}
 		}
 		item.AdminEmail = maskEnterpriseEmail(adminEmail)
 		items = append(items, item)
@@ -568,17 +588,7 @@ func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*Platfor
 	var subscriptionsJSON []byte
 	err = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE((SELECT email FROM users WHERE id = e.admin_user_id), ''),
-		       COALESCE((SELECT jsonb_agg(jsonb_build_object(
-					'id', es.id, 'status', es.status, 'plan', g.name,
-					'weekly_limit', COALESCE(g.weekly_limit_usd::text, ''),
-					'weekly_window_start', es.observed_weekly_window_start,
-					'starts_at', us.starts_at, 'expires_at', us.expires_at
-					) ORDER BY CASE WHEN es.status = 'active' THEN 0 ELSE 1 END, us.starts_at, es.id
-					) FROM enterprise_subscriptions AS es
-					JOIN user_subscriptions AS us ON us.id = es.upstream_user_subscription_id
-					JOIN groups AS g ON g.id = us.group_id
-					WHERE es.enterprise_id = e.id AND es.status IN ('active', 'scheduled')
-				), '[]'::jsonb)
+		       `+platformSubscriptionsSQL+`
 		FROM enterprises AS e WHERE e.id = $1`, id).Scan(&item.AdminEmail, &subscriptionsJSON)
 	if err != nil {
 		return nil, err
