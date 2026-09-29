@@ -130,6 +130,12 @@ linters:
       - path: '_test\.go$'
         linters: [ gosec ]
         text: 'G70[34]'
+      # 上游原产未用符号，按 SHAN-342 审计 SA5 Owner 指令禁删禁改；与
+      # scripts/u1000-allowlist.txt 同一条登记，仅豁免这一个符号。复核路径：
+      # Owner 解除禁删指令后删除该函数，并同步删除本条与 allowlist 条目。
+      - path: 'internal/service/grok_media\.go$'
+        linters: [ unused ]
+        text: 'func grokVideoPendingBillingKey is unused'
 
 formatters:
   enable:

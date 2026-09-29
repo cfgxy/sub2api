@@ -754,9 +754,10 @@ func grokVideoCompletionUsageSnapshot(
 		subscription = &copy
 	}
 	if pending.UpstreamSubscriptionID > 0 {
-		if subscription == nil {
+		switch subscription {
+		case nil:
 			subscription = &service.UserSubscription{}
-		} else if subscription == pollSubscription {
+		case pollSubscription:
 			copy := *subscription
 			subscription = &copy
 		}

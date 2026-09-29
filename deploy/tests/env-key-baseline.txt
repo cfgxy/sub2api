@@ -1,4 +1,5 @@
 # SHAN-356 env 键闭环守卫基线：现状偏差登记（新偏差将被 deploy/tests/env-key-closure-test.sh 拦截）
+# SHAN-409：v0.2.8 上游同步新线索登记——sample-extra APPLE_CONTAINER_NETWORK_SUBNET（apple-container 辅助脚本键，上游 185951957）、compose-extra SIMPLE_MODE_KEY_RATE_LIMIT_ENABLED（上游 3b336b2ec，样例仅注释示例）。
 # 格式: <类别> <键名>
 # required-missing: compose 必填插值(:?)但样例未列 —— 全部来自上游 docker-compose.standalone.yml
 #   (外部数据库/Redis 部署形态, 用户必须自备连接信息), 上游原产不处置。
@@ -9,6 +10,7 @@
 required-missing DATABASE_HOST
 required-missing DATABASE_PASSWORD
 required-missing REDIS_HOST
+sample-extra APPLE_CONTAINER_NETWORK_SUBNET
 sample-extra APPLE_CONTAINER_POSTGRES_IMAGE
 sample-extra APPLE_CONTAINER_REDIS_IMAGE
 sample-extra APPLE_CONTAINER_SUB2API_IMAGE
@@ -70,6 +72,7 @@ compose-extra GEMINI_CLI_OAUTH_CLIENT_SECRET
 compose-extra NPM_CONFIG_REGISTRY
 compose-extra REDIS_HOST
 compose-extra SECURITY_URL_ALLOWLIST_UPSTREAM_HOSTS
+compose-extra SIMPLE_MODE_KEY_RATE_LIMIT_ENABLED
 compose-extra SUB2API_DEV_ALL_PROXY
 compose-extra SUB2API_DEV_HTTP_PROXY
 compose-extra SUB2API_DEV_HTTPS_PROXY

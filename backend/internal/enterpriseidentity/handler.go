@@ -340,9 +340,7 @@ func (h *Handler) CreatePlatformEnterprise(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	item, err := h.service.CreateEnterprise(c.Request.Context(), CreateEnterpriseInput{
-		Name: req.Name, Host: req.Host, DedicatedUpstreamUser: req.DedicatedUpstreamUser, Reason: req.Reason,
-	}, subject.UserID)
+	item, err := h.service.CreateEnterprise(c.Request.Context(), CreateEnterpriseInput(req), subject.UserID)
 	if response.ErrorFrom(c, err) {
 		return
 	}
