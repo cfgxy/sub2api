@@ -10,7 +10,8 @@ vi.mock('vue-i18n', async () => ({
 }))
 
 // BaseDialog 通过 Teleport 渲染到 body，就地展开后断言才能落在 wrapper 内
-const mountOptions = { global: { stubs: { teleport: true } } }
+const mountOptions = { global: { stubs: { teleport: true, RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } }
+const mountView = () => mount(EnterpriseKeysView, mountOptions)
 const confirmDialog = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(ConfirmDialog)
 
 const { getCurrentKey, createKey, disableKey, rotateKey, isEnterpriseKeyMutationStateConflict, onBeforeRouteLeave } = vi.hoisted(() => ({
@@ -21,6 +22,9 @@ const { getCurrentKey, createKey, disableKey, rotateKey, isEnterpriseKeyMutation
   isEnterpriseKeyMutationStateConflict: vi.fn(),
   onBeforeRouteLeave: vi.fn(),
 }))
+
+const { copyToClipboard } = vi.hoisted(() => ({ copyToClipboard: vi.fn() }))
+vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard }) }))
 
 vi.mock('@/api/enterprise', () => ({
   enterpriseAPI: {
@@ -284,6 +288,54 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     expect(document.body.textContent).not.toContain(plaintext)
     expect(JSON.stringify(localStorage)).not.toContain(plaintext)
     expect(JSON.stringify(sessionStorage)).not.toContain(plaintext)
+    wrapper.unmount()
+  })
+
+  it('offers the integration guide and a copy action only when the full key is available', async () => {
+    const base = {
+      id: 21, masked_key: 'sk-gui...abcd', name: 'Enterprise employee key', status: 'active',
+      quota: 25, quota_used: 0, rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0,
+      usage_5h: 0, usage_1d: 0, usage_7d: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }
+    const full = 'sk-guide-full-key-value'
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    getCurrentKey.mockResolvedValue({ ...base, key: full })
+    copyToClipboard.mockResolvedValue(true)
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="open-guide"]').attributes('href')).toBe('/enterprise/keys/guide')
+    expect(wrapper.text()).not.toContain(full)
+    await wrapper.get('[data-testid="copy-key"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith(full, expect.any(String))
+    expect(JSON.stringify(log.mock.calls)).not.toContain(full)
+    expect(JSON.stringify(localStorage)).not.toContain(full)
+    wrapper.unmount()
+
+    getCurrentKey.mockResolvedValue(base)
+    const masked = mountView()
+    await flushPromises()
+    expect(masked.find('[data-testid="copy-key"]').exists()).toBe(false)
+    expect(masked.find('[data-testid="copy-key-unavailable"]').exists()).toBe(true)
+    expect(masked.find('[data-testid="open-guide"]').exists()).toBe(true)
+    masked.unmount()
+  })
+
+  it('links the one-time secret dialog to the integration guide', async () => {
+    createKey.mockResolvedValue({
+      key: {
+        id: 22, masked_key: 'sk-new...abcd', name: 'Enterprise employee key', status: 'active',
+        quota: 0, quota_used: 0, rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0,
+        usage_5h: 0, usage_1d: 0, usage_7d: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      },
+      plaintext: 'sk-new-one-time-secret',
+      replayed: false,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="create-key"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="secret-open-guide"]').attributes('href')).toBe('/enterprise/keys/guide')
     wrapper.unmount()
   })
 })

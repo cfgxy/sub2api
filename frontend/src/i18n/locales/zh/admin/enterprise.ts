@@ -8,6 +8,7 @@ export default {
       key: { active: '启用', disabled: '停用', quotaExhausted: '额度耗尽', expired: '已过期' },
       source: { available: '可用', unavailable: '不可用' },
       allocation: { normal: '正常', overage: '超用量' },
+      platform: { openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini', antigravity: 'Antigravity' },
       window: { week: '按周', day: '按天', month: '按月' },
     },
     audit: {

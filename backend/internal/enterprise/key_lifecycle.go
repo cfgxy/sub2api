@@ -33,6 +33,7 @@ const (
 
 type EmployeeKey struct {
 	ID          int64      `json:"id"`
+	Key         string     `json:"key,omitempty"`
 	MaskedKey   string     `json:"masked_key"`
 	Name        string     `json:"name"`
 	Status      string     `json:"status"`
@@ -108,6 +109,14 @@ func MaskEmployeeKey(value string) string {
 }
 
 func (r *Repository) GetEmployeeCurrentKey(ctx context.Context, enterpriseID, employeeID int64) (*EmployeeKey, error) {
+	return r.getEmployeeCurrentKey(ctx, enterpriseID, employeeID, false)
+}
+
+func (r *Repository) GetEmployeeCurrentKeyForOwner(ctx context.Context, enterpriseID, employeeID int64) (*EmployeeKey, error) {
+	return r.getEmployeeCurrentKey(ctx, enterpriseID, employeeID, true)
+}
+
+func (r *Repository) getEmployeeCurrentKey(ctx context.Context, enterpriseID, employeeID int64, includeKey bool) (*EmployeeKey, error) {
 	row, err := scanEmployeeKey(r.db.QueryRowContext(ctx, employeeKeySelect+`
 		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
 		  AND assignment.status = 'active' AND employee.status = 'active'
@@ -118,6 +127,9 @@ func (r *Repository) GetEmployeeCurrentKey(ctx context.Context, enterpriseID, em
 	}
 	if err != nil {
 		return nil, err
+	}
+	if includeKey {
+		row.Key = row.Plaintext
 	}
 	return &row.EmployeeKey, nil
 }
