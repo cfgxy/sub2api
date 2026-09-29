@@ -19,7 +19,7 @@ jobs:
       - name: Team files guard
         run: |
           BASE="${{ github.base_ref }}"
-          if [ -z "$BASE" ]; then BASE=ab99d56e9626e6cd731592dae8553c9758a0efa2; fi
+          if [ -z "$BASE" ]; then BASE=fd80b08c90b55edcad5b00171b53f08721d30da1; fi
           bash backend/scripts/check-team-files.sh "$BASE"
       - name: Deadcode and U1000 guards
         run: bash backend/scripts/check-deadcode.sh

@@ -854,7 +854,7 @@ func (r *Repository) ListSubscriptionAllocations(ctx context.Context, query List
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	allocatedTotal := decimal.Zero
 	for rows.Next() {
@@ -1729,7 +1729,7 @@ func (r *Repository) ListAllocationRevisions(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var revisions []AllocationRevision
 	for rows.Next() {
@@ -1774,7 +1774,7 @@ func (r *Repository) ListAuditEvents(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []AuditEvent
 	for rows.Next() {

@@ -137,7 +137,7 @@ func (r *Repository) ListEnterpriseKeys(ctx context.Context, enterpriseID int64)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]EnterpriseKeySummary, 0)
 	for rows.Next() {
 		var item EnterpriseKeySummary
