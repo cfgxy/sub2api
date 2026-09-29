@@ -281,6 +281,8 @@ frontend/src/views/admin/__tests__/enterpriseTestI18n.ts
 frontend/src/views/enterprise/admin/__tests__/EnterpriseAdminPagesUnavailable.spec.ts
 frontend/src/views/enterprise/EnterpriseLoginView.spec.ts
 frontend/src/views/enterprise/EnterpriseRecoveryViews.spec.ts
+frontend/src/i18n/locales/en/enterprise.ts
+frontend/src/i18n/locales/zh/enterprise.ts
 # 上游原产文件、团队侧已改动（密码八位门槛、CSP nonce、依赖漏洞、Codex++ 导入、企业 i18n、SHAN-409 lint 清零等）
 backend/.golangci.yml
 backend/go.mod
@@ -305,5 +307,16 @@ frontend/src/views/auth/__tests__/LoginView.spec.ts
 frontend/src/views/auth/USAGE_EXAMPLES.md
 frontend/src/views/user/KeysView.vue
 frontend/src/views/user/__tests__/KeysView.spec.ts
+frontend/src/components/account/AccountStatsModal.vue
+frontend/src/components/account/AccountTestModal.vue
+frontend/src/components/account/__tests__/AccountTestModal.spec.ts
+frontend/src/components/admin/account/AccountStatsModal.vue
+frontend/src/components/admin/account/AccountTestModal.vue
+frontend/src/components/admin/user/UserApiKeysModal.vue
+frontend/src/components/layout/EXAMPLES.md
+frontend/src/i18n/locales/en/index.ts
+frontend/src/i18n/locales/zh/index.ts
+frontend/src/views/admin/DashboardView.vue
+frontend/src/views/admin/__tests__/DashboardView.spec.ts
 # 上游同步新线索：合入点之后的上游同步 17c2a6cc3 带入，唯一触及提交为上游 a3eb7ef30 chore: sync VERSION（无团队提交），须保留登记否则守卫变红
 backend/cmd/server/VERSION
