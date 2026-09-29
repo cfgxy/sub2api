@@ -212,7 +212,7 @@
                 >
                   {{ terms.overage }} {{ item.overage_credit }}
                 </span>
-                <span v-else class="truncate" :title="item.recommendation">{{ item.recommendation }}</span>
+                <span v-else class="truncate">{{ t('admin.enterprise.terms.withinAllocation') }}</span>
               </div>
             </div>
           </div>
@@ -283,6 +283,11 @@
               :class="isPositiveAmount(value) ? 'font-semibold text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
             >
               {{ value }}
+            </span>
+          </template>
+          <template #cell-recommendation="{ row }">
+            <span :class="isPositiveAmount(row.overage_credit) ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'">
+              {{ isPositiveAmount(row.overage_credit) ? t('admin.enterprise.terms.reviewOverage') : t('admin.enterprise.terms.withinAllocation') }}
             </span>
           </template>
           <template #empty>

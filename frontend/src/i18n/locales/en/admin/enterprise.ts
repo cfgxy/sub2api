@@ -25,7 +25,7 @@ export default {
       entity: { unknown: 'Unknown entity', employee: 'Employee', department: 'Department', apiKey: 'API key', allocation: 'Employee allocation', subscription: 'Enterprise subscription', enterprise: 'Enterprise' },
       result: { success: 'Success', failure: 'Failure', rejected: 'Rejected', unknown: 'Unknown result' }
     },
-    terms: { allocation: 'Allocation', weeklyAllocation: 'Weekly allocation', weeklyLimit: 'Weekly limit', remaining: 'Remaining allocation', overage: 'Overage', used: 'Used', total: 'Total', quota: 'Quota', actualCost: 'Actual cost', pool: 'Enterprise pool' },
+    terms: { allocation: 'Allocation', weeklyAllocation: 'Weekly allocation', weeklyLimit: 'Weekly limit', remaining: 'Remaining allocation', overage: 'Overage', used: 'Used', total: 'Total', quota: 'Quota', actualCost: 'Actual cost', pool: 'Enterprise pool', withinAllocation: 'Within current allocation', reviewOverage: 'Review individual overage and adjust allocation as needed' },
     shell: { switchLight: 'Switch to light mode', switchDark: 'Switch to dark mode', lightMode: 'Light mode', darkMode: 'Dark mode', expandSidebar: 'Expand sidebar', collapseSidebar: 'Collapse sidebar', toggleMenu: 'Toggle menu' },
     common: {
       management: 'Enterprises', name: 'Enterprise name', portalHost: 'Portal domain', adminAccount: 'Primary account',

@@ -25,7 +25,7 @@ export default {
       entity: { unknown: '未知对象', employee: '员工', department: '部门', apiKey: 'API Key', allocation: '员工额度', subscription: '企业订阅', enterprise: '企业' },
       result: { success: '成功', failure: '失败', rejected: '被拒绝', unknown: '未知结果' }
     },
-    terms: { allocation: '额度', weeklyAllocation: '每周额度', weeklyLimit: '周上限', remaining: '剩余额度', overage: '超用量', used: '已用', total: '合计', quota: '配额', actualCost: '实际费用', pool: '企业总池' },
+    terms: { allocation: '额度', weeklyAllocation: '每周额度', weeklyLimit: '周上限', remaining: '剩余额度', overage: '超用量', used: '已用', total: '合计', quota: '配额', actualCost: '实际费用', pool: '企业总池', withinAllocation: '当前额度分配范围内', reviewOverage: '核对个人超用，并按业务需要调整额度分配' },
     shell: { switchLight: '切换为亮色', switchDark: '切换为暗色', lightMode: '亮色模式', darkMode: '暗色模式', expandSidebar: '展开侧边栏', collapseSidebar: '收起侧边栏', toggleMenu: '切换菜单' },
     common: {
       management: '企业管理', name: '企业名称', portalHost: '入口域名', adminAccount: '主账号',
