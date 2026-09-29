@@ -97,6 +97,14 @@ function buildAccount() {
 describe('AccountTestModal', () => {
   const originalFetch = global.fetch
 
+  it('renders translated account status rather than the API enum', () => {
+    const wrapper = mount(AccountTestModal, {
+      props: { show: true, account: { ...buildAccount(), status: 'inactive' } },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } }
+    })
+    expect(wrapper.find('[data-testid="account-status"]').text()).toBe('admin.accounts.status.inactive')
+  })
+
   beforeEach(() => {
     getAvailableModelsMock.mockReset()
     getAvailableModelsMock.mockResolvedValue([

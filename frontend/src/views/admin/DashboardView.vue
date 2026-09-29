@@ -1,14 +1,32 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
+      <header class="flex flex-wrap items-center justify-between gap-4 lg:justify-end">
+        <div class="lg:hidden">
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('admin.dashboard.title') }}</h1>
+          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('admin.dashboard.description') }}</p>
+        </div>
+        <button type="button" class="btn btn-secondary btn-md" data-testid="dashboard-refresh" :disabled="loading" @click="loadDashboardStats">
+          <Icon name="refresh" size="sm" />
+          {{ t('common.refresh') }}
+        </button>
+      </header>
       <!-- Loading State -->
-      <div v-if="loading" class="flex items-center justify-center py-12">
+      <div v-if="loading" class="flex items-center justify-center py-12" data-testid="dashboard-loading">
         <LoadingSpinner />
       </div>
+      <div v-else-if="statsError" role="alert" class="card p-6 text-sm text-red-600 dark:text-red-400" data-testid="dashboard-error">
+        <p>{{ t('admin.dashboard.failedToLoad') }}</p>
+        <button type="button" class="btn btn-secondary btn-sm mt-4" data-testid="dashboard-retry" @click="loadDashboardStats">
+          {{ t('admin.dashboard.retry') }}
+        </button>
+      </div>
 
-      <template v-else-if="stats">
+      <EmptyState v-else-if="!stats || !hasStats" :title="t('admin.dashboard.noDataAvailable')" data-testid="dashboard-empty" />
+
+      <template v-else>
         <!-- Row 1: Core Stats -->
-        <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div class="grid grid-cols-2 gap-4 lg:grid-cols-4" data-testid="dashboard-stats">
           <!-- Total API Keys -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
@@ -356,6 +374,7 @@ import type {
   UserSpendingRankingItem
 } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
@@ -392,6 +411,11 @@ const router = useRouter()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const stats = ref<DashboardStats | null>(null)
 const loading = ref(false)
+const statsError = ref(false)
+const hasStats = computed(() => !!stats.value && (
+  stats.value.total_users > 0 || stats.value.total_api_keys > 0 ||
+  stats.value.total_accounts > 0 || stats.value.total_requests > 0
+))
 const chartsLoading = ref(false)
 const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
@@ -649,6 +673,7 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
   if (includeStats && !stats.value) {
     loading.value = true
   }
+  if (includeStats) statsError.value = false
   chartsLoading.value = true
   try {
     const response = await adminAPI.dashboard.getSnapshotV2({
@@ -664,6 +689,8 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
     if (currentSeq !== chartLoadSeq) return
     if (includeStats && response.stats) {
       stats.value = response.stats
+    } else if (includeStats && !stats.value) {
+      statsError.value = true
     }
     trendData.value = response.trend || []
     modelStats.value = response.models || []
@@ -671,6 +698,7 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
     if (currentSeq !== chartLoadSeq) return
     appStore.showError(t('admin.dashboard.failedToLoad'))
     console.error('Error loading dashboard snapshot:', error)
+    if (includeStats) statsError.value = true
   } finally {
     if (currentSeq === chartLoadSeq) {
       loading.value = false

@@ -55,6 +55,8 @@ describe('EnterpriseWorkbenchView', () => {
     expect(summaryParams).not.toHaveProperty('window_type')
     expect(wrapper.text()).toContain('employee@example.com')
     expect(wrapper.text()).toContain('调整额度')
+    expect(wrapper.text()).toContain('当前额度分配范围内')
+    expect(wrapper.text()).not.toContain('当前额度范围内')
     expect(wrapper.text()).not.toContain('allocation.update')
     expect(wrapper.text()).toContain('admin@example.com')
     wrapper.unmount()

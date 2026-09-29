@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { i18n, loadLocaleMessages } from '@/i18n'
 import { enterpriseTestLocale } from './enterpriseTestI18n'
 
@@ -21,6 +21,8 @@ vi.mock('@/api/enterprisePlatform', () => ({
     get: vi.fn(),
     create: vi.fn(),
     disable: vi.fn(),
+    enable: vi.fn(),
+    updateHost: vi.fn(),
   },
 }))
 
@@ -29,6 +31,10 @@ vi.mock('vue-router', () => ({
 }))
 
 describe('EnterprisesView 订阅摘要空态', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
   it('后端返回 subscriptions 为 null 时渲染「无订阅」且不抛错', async () => {
     await loadLocaleMessages('zh')
     i18n.global.locale.value = 'zh'
@@ -47,13 +53,13 @@ describe('EnterprisesView 订阅摘要空态', () => {
     ])
     const wrapper = mount(EnterprisesView, {
       global: {
-        plugins: [ElementPlus, i18n],
-        stubs: { PlatformEnterpriseShell: { template: '<div><slot /></div>' } },
+        plugins: [i18n],
+        stubs: { teleport: true, PlatformEnterpriseShell: { template: '<div><slot /></div>' } },
       },
     })
     await flushPromises()
 
     expect(wrapper.text()).toContain('孤岭设计')
-    expect(wrapper.find('.muted').text()).toBe('无订阅')
+    expect(wrapper.find('[data-testid="enterprise-no-subscriptions"]').text()).toBe('无订阅')
   })
 })

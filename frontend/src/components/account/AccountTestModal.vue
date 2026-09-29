@@ -30,6 +30,7 @@
           </div>
         </div>
         <span
+          data-testid="account-status"
           :class="[
             'rounded-full px-2.5 py-1 text-xs font-semibold',
             account.status === 'active'
@@ -37,7 +38,7 @@
               : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
           ]"
         >
-          {{ account.status }}
+          {{ t(`admin.accounts.status.${account.status}`) }}
         </span>
       </div>
 

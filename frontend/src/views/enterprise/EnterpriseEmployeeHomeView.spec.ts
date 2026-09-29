@@ -1,8 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import EnterpriseEmployeeHomeView from './EnterpriseEmployeeHomeView.vue'
+
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div/>' } }, { path: '/enterprise/keys', component: { template: '<div/>' } }, { path: '/enterprise/usage', component: { template: '<div/>' } }] })
 
@@ -47,7 +52,7 @@ describe('EnterpriseEmployeeHomeView', () => {
       recent_trend: [{ at: new Date().toISOString(), requests: 3, actual_cost: '2.75' }],
       key: null,
     })
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('12.50')
@@ -63,7 +68,7 @@ describe('EnterpriseEmployeeHomeView', () => {
       recent_trend: [],
       key: null,
     })
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('企业总池已耗尽')
@@ -77,7 +82,7 @@ describe('EnterpriseEmployeeHomeView', () => {
       recent_trend: [],
       key: null,
     })
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('企业总池来源暂不可用')
@@ -87,7 +92,7 @@ describe('EnterpriseEmployeeHomeView', () => {
 
   it('shows an explicit empty state for the recent trend instead of a fabricated zero series', async () => {
     getEmployeeHome.mockResolvedValue({ usage: baseUsage, enterprise_pool: basePool, recent_trend: [], key: null })
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('近 7 天暂无调用记录')
@@ -101,7 +106,7 @@ describe('EnterpriseEmployeeHomeView', () => {
       recent_trend: [],
       key: null,
     })
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(listEmployeeUsage).toHaveBeenCalledWith({ page: 1, page_size: 5 }, { suppressUnavailableRedirect: true })
@@ -118,11 +123,74 @@ describe('EnterpriseEmployeeHomeView', () => {
       key: null,
     })
     listEmployeeUsage.mockRejectedValue(new Error('usage detail source unavailable'))
-    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [ElementPlus, router] } })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('调用明细来源暂时不可用')
     expect(wrapper.text()).toContain('12.50')
+    wrapper.unmount()
+  })
+
+  it('shows the loading state before the home payload resolves', async () => {
+    let resolveHome: (value: unknown) => void = () => undefined
+    getEmployeeHome.mockReturnValue(new Promise((resolve) => { resolveHome = resolve }))
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="home-loading"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="home-load-error"]').exists()).toBe(false)
+
+    resolveHome({ usage: baseUsage, enterprise_pool: basePool, recent_trend: [], key: null })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="home-loading"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows a load-error state and recovers on retry', async () => {
+    getEmployeeHome
+      .mockRejectedValueOnce(new Error('home source unavailable'))
+      .mockResolvedValueOnce({ usage: baseUsage, enterprise_pool: basePool, recent_trend: [], key: null })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="home-load-error"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="home-load-retry"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="home-load-error"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('12.50')
+    wrapper.unmount()
+  })
+
+  it('shows an explicit empty state for recent calls instead of a fabricated row', async () => {
+    getEmployeeHome.mockResolvedValue({ usage: baseUsage, enterprise_pool: basePool, recent_trend: [], key: null })
+    listEmployeeUsage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 5, pages: 1 })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="home-recent-empty"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('never renders platform-admin-only fields that leak into the employee payload', async () => {
+    const platformOnly = 'PLATFORM-ONLY-SENTINEL-4213'
+    const employeeVisible = 'EMPLOYEE-VISIBLE-SENTINEL'
+    getEmployeeHome.mockResolvedValue({
+      usage: { ...baseUsage, allocation: employeeVisible },
+      enterprise_pool: basePool,
+      recent_trend: [],
+      key: null,
+      // 后端若误带平台管理员专属字段，员工页面不得渲染
+      platform_total_revenue: platformOnly,
+      enterprises: [{ id: 1, name: platformOnly, owner_email: platformOnly }],
+    })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // 正向对照：同一断言方式确实能检出已渲染文本，证明下面的负向断言不是空断言
+    expect(wrapper.text()).toContain(employeeVisible)
+    expect(wrapper.text()).not.toContain(platformOnly)
     wrapper.unmount()
   })
 })

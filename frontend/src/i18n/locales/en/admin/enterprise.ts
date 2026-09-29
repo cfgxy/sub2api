@@ -25,7 +25,7 @@ export default {
       entity: { unknown: 'Unknown entity', employee: 'Employee', department: 'Department', apiKey: 'API key', allocation: 'Employee allocation', subscription: 'Enterprise subscription', enterprise: 'Enterprise' },
       result: { success: 'Success', failure: 'Failure', rejected: 'Rejected', unknown: 'Unknown result' }
     },
-    terms: { allocation: 'Allocation', weeklyAllocation: 'Weekly allocation', weeklyLimit: 'Weekly limit', remaining: 'Remaining allocation', overage: 'Overage', used: 'Used', total: 'Total', quota: 'Quota', actualCost: 'Actual cost', pool: 'Enterprise pool' },
+    terms: { allocation: 'Allocation', weeklyAllocation: 'Weekly allocation', weeklyLimit: 'Weekly limit', remaining: 'Remaining allocation', overage: 'Overage', used: 'Used', total: 'Total', quota: 'Quota', actualCost: 'Actual cost', pool: 'Enterprise pool', withinAllocation: 'Within current allocation', reviewOverage: 'Review individual overage and adjust allocation as needed' },
     shell: { switchLight: 'Switch to light mode', switchDark: 'Switch to dark mode', lightMode: 'Light mode', darkMode: 'Dark mode', expandSidebar: 'Expand sidebar', collapseSidebar: 'Collapse sidebar', toggleMenu: 'Toggle menu' },
     common: {
       management: 'Enterprises', name: 'Enterprise name', portalHost: 'Portal domain', adminAccount: 'Primary account',
@@ -47,7 +47,7 @@ export default {
       enableConfirm: 'Enable {name}? Portal sign-in will resume. Revoked sessions and disabled Key allocations will not be restored automatically; an administrator must reassign them if needed.',
       enableTitle: 'Enable enterprise', enableReason: 'Platform operator confirmed enable', enableSuccess: 'Enterprise enabled', enableFailed: 'Failed to enable enterprise',
       hostConfirm: 'Change the portal domain for {name} (currently {host})? Access and Tokens tied to the old Host will no longer work; use the new domain.',
-      hostTitle: 'Change portal domain', hostInvalid: 'Use lowercase letters, numbers, dots, and hyphens only',
+      hostTitle: 'Change portal domain', hostLabel: 'New portal domain', hostInvalid: 'Use lowercase letters, numbers, dots, and hyphens only',
       hostReason: 'Platform operator changed portal domain', hostSuccess: 'Portal domain updated', hostFailed: 'Failed to update portal domain',
     },
     detail: {

@@ -21,6 +21,7 @@ function mountShell() {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
+      { path: '/admin/dashboard', component: Empty, meta: { title: '管理控制台' } },
       { path: '/admin/enterprises', component: Empty, meta: { title: '企业管理' } },
       { path: '/admin/audit-logs', component: Empty },
     ],
@@ -60,12 +61,14 @@ describe('PlatformEnterpriseShell（L1 外壳重制）', () => {
     expect(wrapper.find('header').text()).toContain('Platform service is healthy')
     expect(wrapper.text()).not.toContain('平台管理')
   })
-  it('侧边栏渲染平台管理两项导航', () => {
+  it('侧边栏渲染仪表盘、企业管理与平台审计导航', () => {
     const { wrapper } = mountShell()
     const links = wrapper.findAll('nav a')
-    expect(links).toHaveLength(2)
-    expect(links[0].text()).toContain('企业管理')
-    expect(links[1].text()).toContain('平台审计')
+    expect(links).toHaveLength(3)
+    expect(links[0].attributes('href')).toBe('/admin/dashboard')
+    expect(links[0].text()).toContain('管理控制台')
+    expect(links[1].text()).toContain('企业管理')
+    expect(links[2].text()).toContain('平台审计')
   })
 
   it('点击折叠按钮通过 appStore 切换宽度（72px ↔ 256px）', async () => {

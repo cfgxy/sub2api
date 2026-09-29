@@ -25,7 +25,7 @@ export default {
       entity: { unknown: '未知对象', employee: '员工', department: '部门', apiKey: 'API Key', allocation: '员工额度', subscription: '企业订阅', enterprise: '企业' },
       result: { success: '成功', failure: '失败', rejected: '被拒绝', unknown: '未知结果' }
     },
-    terms: { allocation: '额度', weeklyAllocation: '每周额度', weeklyLimit: '周上限', remaining: '剩余额度', overage: '超用量', used: '已用', total: '合计', quota: '配额', actualCost: '实际费用', pool: '企业总池' },
+    terms: { allocation: '额度', weeklyAllocation: '每周额度', weeklyLimit: '周上限', remaining: '剩余额度', overage: '超用量', used: '已用', total: '合计', quota: '配额', actualCost: '实际费用', pool: '企业总池', withinAllocation: '当前额度分配范围内', reviewOverage: '核对个人超用，并按业务需要调整额度分配' },
     shell: { switchLight: '切换为亮色', switchDark: '切换为暗色', lightMode: '亮色模式', darkMode: '暗色模式', expandSidebar: '展开侧边栏', collapseSidebar: '收起侧边栏', toggleMenu: '切换菜单' },
     common: {
       management: '企业管理', name: '企业名称', portalHost: '入口域名', adminAccount: '主账号',
@@ -47,7 +47,7 @@ export default {
       enableConfirm: '确认启用 {name}？启用后恢复门户登录；停用期间被撤销的会话、已禁用的 Key 分配不会自动恢复，需管理员按需重新分配。',
       enableTitle: '启用企业', enableReason: '平台运营确认启用', enableSuccess: '企业已启用', enableFailed: '企业启用失败',
       hostConfirm: '修改 {name} 的入口域名（当前 {host}）。修改后旧域名上的企业访问与 Token 会因 Host 绑定失效，请以新域名访问门户。',
-      hostTitle: '修改入口域名', hostInvalid: '域名格式不正确（仅允许小写字母、数字、点与连字符）',
+      hostTitle: '修改入口域名', hostLabel: '新入口域名', hostInvalid: '域名格式不正确（仅允许小写字母、数字、点与连字符）',
       hostReason: '平台运营修改入口域名', hostSuccess: '入口域名已修改', hostFailed: '入口域名修改失败',
     },
     detail: {

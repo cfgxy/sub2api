@@ -189,7 +189,7 @@ async function handleSubmit() {
                       : 'bg-red-100 text-red-800'
                   "
                 >
-                  {{ key.status }}
+                  {{ keyStatusLabel(key.status === 'inactive' ? 'disabled' : key.status, t) }}
                 </span>
               </td>
               <td class="px-6 py-4 text-sm text-gray-500">
@@ -208,9 +208,12 @@ async function handleSubmit() {
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { AppLayout } from '@/components/layout'
+import { keyStatusLabel } from '@/utils/enterpriseDisplay'
 import type { ApiKey } from '@/types'
 
+const { t } = useI18n()
 const showCreateModal = ref(false)
 const apiKeys = ref<ApiKey[]>([])
 

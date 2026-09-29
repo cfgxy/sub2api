@@ -1,55 +1,122 @@
 <template>
-  <section class="workspace">
-    <div class="page-heading">
+  <section class="space-y-6">
+    <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
-        <h1>API Key</h1>
-        <p>查看本人密钥状态、额度和当前计费窗口。</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('enterprise.keys.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.keys.description') }}</p>
       </div>
-      <el-button v-if="!key" type="primary" :icon="Plus" :loading="mutating" data-testid="create-key" @click="createKey">创建 Key</el-button>
-      <div v-else class="actions">
-        <el-button :icon="Refresh" :loading="mutating" data-testid="rotate-key" @click="rotateKey">轮换</el-button>
-        <el-button type="danger" plain :icon="CircleClose" :loading="mutating" data-testid="disable-key" @click="disableKey">停用</el-button>
+      <div class="flex gap-3">
+        <button
+          v-if="!key"
+          class="btn btn-primary btn-md"
+          :disabled="mutating"
+          data-testid="create-key"
+          @click="createKey"
+        >
+          <Icon name="plus" size="sm" />
+          {{ t('enterprise.keys.create') }}
+        </button>
+        <template v-else>
+          <button class="btn btn-secondary btn-md" :disabled="mutating" data-testid="rotate-key" @click="askRotate">
+            <Icon name="sync" size="sm" />
+            {{ t('enterprise.keys.rotate') }}
+          </button>
+          <button class="btn btn-danger btn-md" :disabled="mutating" data-testid="disable-key" @click="askDisable">
+            <Icon name="ban" size="sm" />
+            {{ t('enterprise.keys.disable') }}
+          </button>
+        </template>
+      </div>
+    </header>
+
+    <div
+      v-if="!loading && loadError"
+      class="card card-body flex flex-col gap-3 border-red-200 text-sm text-red-600 dark:border-red-900/50 dark:text-red-400 sm:flex-row sm:items-center sm:justify-between"
+      role="alert"
+      data-testid="keys-load-error"
+    >
+      <span>{{ t('enterprise.keys.loadError') }}</span>
+      <button class="btn btn-secondary btn-sm self-start" data-testid="keys-load-retry" @click="load">
+        {{ t('enterprise.common.retry') }}
+      </button>
+    </div>
+
+    <div v-else-if="loading" class="flex justify-center py-16" data-testid="keys-loading">
+      <LoadingSpinner size="lg" />
+    </div>
+
+    <EmptyState v-else-if="!key" :title="t('enterprise.keys.empty')" :description="t('enterprise.keys.description')" data-testid="keys-empty" />
+
+    <div v-else class="card card-body space-y-6">
+      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-200 pb-5 dark:border-dark-700">
+        <div class="min-w-0">
+          <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.keys.currentKey') }}</span>
+          <code class="mt-1 block break-all text-base text-gray-900 dark:text-white">{{ key.masked_key }}</code>
+        </div>
+        <StatusBadge :status="key.status" :label="keyStatusLabel(key.status, t)" />
+      </div>
+
+      <div class="max-w-md space-y-2">
+        <span class="block text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.keys.quotaTitle') }}</span>
+        <strong class="block break-all text-xl text-gray-900 dark:text-white">{{ formatLimit(key.quota) }}</strong>
+        <small class="block text-xs text-gray-500 dark:text-dark-400">
+          {{ t('enterprise.keys.quotaUsed', { value: formatUsage(key.quota_used) }) }}
+        </small>
+        <div class="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
+          <i class="block h-full rounded-full bg-primary-500" :style="{ width: `${percentage(key.quota_used, key.quota)}%` }" />
+        </div>
       </div>
     </div>
 
-    <div v-loading="loading">
-      <div v-if="!loading && loadError" data-testid="keys-load-error" class="field-error">
-        API Key 信息暂时不可用，请稍后重试。
-        <el-button link type="primary" data-testid="keys-load-retry" @click="load">重新加载</el-button>
-      </div>
-      <el-empty v-else-if="!loading && !key" description="尚未创建 API Key" />
-      <template v-if="key">
-        <div class="key-line">
-          <div><span class="label">当前 Key</span><code>{{ key.masked_key }}</code></div>
-          <el-tag :type="key.status === 'active' ? 'success' : 'info'">{{ statusLabel(key.status) }}</el-tag>
+    <BaseDialog :show="secretVisible" :title="t('enterprise.keys.secretTitle')" width="normal" @close="clearSecret">
+      <div class="space-y-4">
+        <p class="rounded-lg bg-yellow-50 px-4 py-3 text-sm text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-500">
+          {{ t('enterprise.keys.secretWarning') }}
+        </p>
+        <div data-testid="plaintext-key" class="font-mono">
+          <Input :model-value="secret" readonly />
         </div>
-
-        <div class="metrics">
-          <article>
-            <span>总额度</span>
-            <strong>{{ formatLimit(key.quota) }}</strong>
-            <small>已使用 {{ formatUsage(key.quota_used) }}</small>
-            <el-progress :percentage="percentage(key.quota_used, key.quota)" :show-text="false" />
-          </article>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button class="btn btn-primary btn-md" data-testid="close-secret" @click="clearSecret">
+            {{ t('enterprise.keys.secretConfirm') }}
+          </button>
         </div>
       </template>
-    </div>
+    </BaseDialog>
 
-    <el-dialog v-model="secretVisible" title="请立即保存 API Key" width="min(560px, 92vw)" :close-on-click-modal="false" :teleported="false" @close="clearSecret">
-      <el-alert type="warning" :closable="false" title="该明文仅显示一次，关闭后无法再次查看。" />
-      <el-input class="secret-input" :model-value="secret" readonly data-testid="plaintext-key" />
-      <template #footer><el-button type="primary" data-testid="close-secret" @click="clearSecret">我已保存</el-button></template>
-    </el-dialog>
+    <ConfirmDialog
+      :show="pendingAction !== null"
+      :title="pendingAction === 'rotate' ? t('enterprise.keys.rotateTitle') : t('enterprise.keys.disableTitle')"
+      :message="pendingAction === 'rotate' ? t('enterprise.keys.rotateConfirm') : t('enterprise.keys.disableConfirm')"
+      :confirm-text="pendingAction === 'rotate' ? t('enterprise.keys.rotate') : t('enterprise.keys.disable')"
+      :cancel-text="t('common.cancel')"
+      danger
+      @confirm="confirmPendingAction"
+      @cancel="pendingAction = null"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { onBeforeRouteLeave } from 'vue-router'
-import { CircleClose, Plus, Refresh } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import Icon from '@/components/icons/Icon.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import Input from '@/components/common/Input.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
 import { enterpriseAPI, isEnterpriseKeyMutationStateConflict } from '@/api/enterprise'
+import { useAppStore } from '@/stores/app'
+import { keyStatusLabel } from '@/utils/enterpriseDisplay'
 import type { EnterpriseEmployeeKey } from '@/types/enterprise'
+
+const { t } = useI18n()
+const appStore = useAppStore()
 
 const key = ref<EnterpriseEmployeeKey | null>(null)
 const loading = ref(false)
@@ -57,11 +124,11 @@ const loadError = ref(false)
 const mutating = ref(false)
 const secret = ref('')
 const secretVisible = ref(false)
+const pendingAction = ref<'disable' | 'rotate' | null>(null)
 
 const formatUsage = (value: number) => `$${value.toFixed(2)}`
-const formatLimit = (value: number) => value > 0 ? formatUsage(value) : '不限'
-const percentage = (usage: number, limit: number) => limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0
-const statusLabel = (status: string) => ({ active: '有效', disabled: '已停用', quota_exhausted: '额度用尽', expired: '已过期' }[status] || status)
+const formatLimit = (value: number) => (value > 0 ? formatUsage(value) : t('enterprise.common.unlimited'))
+const percentage = (usage: number, limit: number) => (limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0)
 
 async function load() {
   loading.value = true
@@ -70,19 +137,20 @@ async function load() {
     key.value = await enterpriseAPI.getCurrentKey()
   } catch {
     loadError.value = true
-    ElMessage.error('加载 API Key 失败，请稍后重试')
+    appStore.showError(t('enterprise.keys.loadFailed'), 5000)
   } finally {
     loading.value = false
   }
 }
 
 async function handleMutationFailure(error: unknown, message: string) {
+  // 失败提示只使用本地固定文案，不回显后端原始错误，避免泄露明文或内部标识
   if (isEnterpriseKeyMutationStateConflict(error)) {
     await load()
-    ElMessage.warning('API Key 状态已更新，请确认后重试')
+    appStore.showWarning(t('enterprise.keys.stateConflict'), 4000)
     return
   }
-  ElMessage.error(message)
+  appStore.showError(message, 5000)
 }
 
 function showSecret(plaintext?: string, replayed = false) {
@@ -104,57 +172,66 @@ async function createKey() {
     const result = await enterpriseAPI.createKey()
     key.value = result.key
     showSecret(result.plaintext, result.replayed)
-    if (result.replayed) ElMessage.warning('请求已处理，原明文无法再次显示')
-    else ElMessage.success('API Key 已创建')
+    if (result.replayed) appStore.showWarning(t('enterprise.keys.replayed'), 4000)
+    else appStore.showSuccess(t('enterprise.keys.createSuccess'), 3000)
   } catch (error) {
-    await handleMutationFailure(error, '创建 API Key 失败，请重试')
-  } finally { mutating.value = false }
+    await handleMutationFailure(error, t('enterprise.keys.createFailed'))
+  } finally {
+    mutating.value = false
+  }
+}
+
+function askDisable() {
+  if (!key.value || mutating.value) return
+  pendingAction.value = 'disable'
+}
+
+function askRotate() {
+  if (!key.value || mutating.value) return
+  pendingAction.value = 'rotate'
+}
+
+async function confirmPendingAction() {
+  const action = pendingAction.value
+  pendingAction.value = null
+  if (action === 'disable') await disableKey()
+  else if (action === 'rotate') await rotateKey()
 }
 
 async function disableKey() {
   if (!key.value || mutating.value) return
   mutating.value = true
   try {
-    await ElMessageBox.confirm('停用后该 Key 将立即无法调用，且不能恢复。', '停用 API Key', { type: 'warning' })
-  } catch {
-    mutating.value = false
-    return
-  }
-  try {
     await enterpriseAPI.disableKey(key.value.id)
     key.value = null
     clearSecret()
-    ElMessage.success('API Key 已停用')
+    appStore.showSuccess(t('enterprise.keys.disableSuccess'), 3000)
   } catch (error) {
-    await handleMutationFailure(error, '停用 API Key 失败，请重试')
-  } finally { mutating.value = false }
+    await handleMutationFailure(error, t('enterprise.keys.disableFailed'))
+  } finally {
+    mutating.value = false
+  }
 }
 
 async function rotateKey() {
   if (!key.value || mutating.value) return
   mutating.value = true
   try {
-    await ElMessageBox.confirm('旧 Key 将立即停用，新 Key 会继承现有额度和窗口用量。', '轮换 API Key', { type: 'warning' })
-  } catch {
-    mutating.value = false
-    return
-  }
-  try {
     const result = await enterpriseAPI.rotateKey(key.value.id)
     key.value = result.key
     showSecret(result.plaintext, result.replayed)
-    if (result.replayed) ElMessage.warning('请求已处理，原明文无法再次显示')
-    else ElMessage.success('API Key 已轮换')
+    if (result.replayed) appStore.showWarning(t('enterprise.keys.replayed'), 4000)
+    else appStore.showSuccess(t('enterprise.keys.rotateSuccess'), 3000)
   } catch (error) {
-    await handleMutationFailure(error, '轮换 API Key 失败，请重试')
-  } finally { mutating.value = false }
+    await handleMutationFailure(error, t('enterprise.keys.rotateFailed'))
+  } finally {
+    mutating.value = false
+  }
 }
 
-onBeforeRouteLeave(() => { clearSecret() })
+onBeforeRouteLeave(() => {
+  clearSecret()
+})
 onUnmounted(clearSecret)
 onMounted(load)
 </script>
-
-<style scoped>
-.workspace{min-width:0}.field-error{display:flex;align-items:center;gap:8px;padding:14px 16px;border:1px solid #f5c2c7;border-radius:6px;background:#fdf2f2;color:#b42318;font-size:14px}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:24px}.page-heading h1{margin:0 0 6px;font-size:26px}.page-heading p,.label,article span,article small{margin:0;color:#64748b}.actions{display:flex;gap:10px}.key-line{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 0;border-top:1px solid #dce5e2;border-bottom:1px solid #dce5e2}.key-line>div{display:grid;gap:8px}.key-line code{font-size:16px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;padding-top:24px}.metrics article{display:grid;gap:10px;min-width:0;padding:18px;border:1px solid #dce5e2;border-radius:6px;background:#fff}.metrics strong{font-size:20px;overflow-wrap:anywhere}.metrics small{min-height:34px}.secret-input{margin-top:18px}.secret-input :deep(input){font-family:monospace}@media(max-width:900px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:640px){.page-heading{flex-direction:column}.actions,.page-heading>.el-button{width:100%}.actions .el-button{flex:1}.metrics{grid-template-columns:1fr}}
-</style>

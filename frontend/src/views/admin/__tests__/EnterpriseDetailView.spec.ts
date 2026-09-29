@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { i18n, loadLocaleMessages } from '@/i18n'
 import { enterpriseTestLocale } from './enterpriseTestI18n'
 
@@ -24,13 +24,26 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
 }))
 
+// ConfirmDialog 通过 Teleport 渲染到 body，就地展开后断言才能落在 wrapper 内
+function mountView() {
+  return mount(EnterpriseDetailView, {
+    global: {
+      plugins: [i18n],
+      stubs: { teleport: true, PlatformEnterpriseShell: { template: '<div><slot /></div>' } },
+    },
+  })
+}
+
 describe('EnterpriseDetailView 信息结构补齐', () => {
   beforeEach(async () => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
     await loadLocaleMessages('zh')
     await loadLocaleMessages('en')
     i18n.global.locale.value = 'zh'
     enterpriseTestLocale.value = 'zh'
   })
+
   it('概览与访问与账号分两个 Tab 展示，管理员邮箱只在访问与账号 Tab 中出现', async () => {
     get.mockResolvedValueOnce({
       id: 7,
@@ -46,30 +59,28 @@ describe('EnterpriseDetailView 信息结构补齐', () => {
       active_key_count: 1,
       subscriptions: [],
     })
-    const wrapper = mount(EnterpriseDetailView, {
-      global: {
-        plugins: [ElementPlus, i18n],
-        stubs: { PlatformEnterpriseShell: { template: '<div><slot /></div>' } },
-      },
-    })
+    const wrapper = mountView()
     await flushPromises()
 
-    const tabLabels = wrapper.findAll('.el-tabs__item').map((el) => el.text())
-    expect(tabLabels).toContain('概览')
-    expect(tabLabels).toContain('访问与账号')
+    expect(wrapper.get('[data-testid="enterprise-detail-tab-overview"]').text()).toBe('概览')
+    expect(wrapper.get('[data-testid="enterprise-detail-tab-access"]').text()).toBe('访问与账号')
     expect(wrapper.text()).toContain('云川数据')
     expect(wrapper.text()).toContain('启用')
     expect(wrapper.text()).not.toContain('2026-01-05T08:00:00Z')
 
-    await wrapper.findAll('.el-tabs__item').find((el) => el.text() === '访问与账号')?.trigger('click')
+    expect(wrapper.find('[data-testid="enterprise-detail-access"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('admin@yunchuan.example.com')
+
+    await wrapper.get('[data-testid="enterprise-detail-tab-access"]').trigger('click')
     await flushPromises()
-    const accessPane = wrapper.findAll('.el-tab-pane').find((el) => el.text().includes('admin@yunchuan.example.com'))
-    expect(accessPane?.attributes('style')).not.toContain('display: none')
+    expect(wrapper.get('[data-testid="enterprise-detail-access"]').text()).toContain('admin@yunchuan.example.com')
+    expect(wrapper.find('[data-testid="enterprise-detail-overview"]').exists()).toBe(false)
+
     i18n.global.locale.value = 'en'
     enterpriseTestLocale.value = 'en'
     await flushPromises()
-    expect(wrapper.text()).toContain('Enabled')
-    expect(wrapper.text()).not.toContain('创建时间')
+    expect(wrapper.text()).toContain('Active Keys')
+    expect(wrapper.text()).not.toContain('活动 Key')
   })
 
   it('订阅状态与有效期均显示为本地化文案，未知值不暴露原枚举', async () => {
@@ -82,9 +93,7 @@ describe('EnterpriseDetailView 信息结构补齐', () => {
         { id: 2, plan: 'Starter', status: 'unexpected_api_status', weekly_limit: '', expires_at: '2026-03-01T08:00:00Z' },
       ],
     })
-    const wrapper = mount(EnterpriseDetailView, {
-      global: { plugins: [ElementPlus, i18n], stubs: { PlatformEnterpriseShell: { template: '<div><slot /></div>' } } },
-    })
+    const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('Business（已暂停，周上限 100')
@@ -96,5 +105,27 @@ describe('EnterpriseDetailView 信息结构补齐', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Business (Suspended, weekly limit 100')
     expect(wrapper.text()).toContain('Starter (Unknown status, weekly limit Not configured')
+  })
+
+  it('详情来源不可用时展示失败卡片、隐藏停用入口，重试后恢复', async () => {
+    get.mockRejectedValueOnce(new Error('service unavailable'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="enterprise-detail-unavailable"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="enterprise-detail-disable"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="enterprise-detail-overview"]').exists()).toBe(false)
+
+    get.mockResolvedValueOnce({
+      id: 7, name: '云川数据', portal_host: 'yunchuan.example.com', status: 'active',
+      created_at: '2026-01-05T08:00:00Z', admin_email: '', dedicated_upstream_user_id: 9,
+      employee_count: 0, active_employee_count: 0, active_session_count: 0, active_key_count: 0,
+      subscriptions: [],
+    })
+    await wrapper.get('[data-testid="enterprise-detail-retry"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="enterprise-detail-unavailable"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="enterprise-detail-overview"]').text()).toContain('云川数据')
   })
 })

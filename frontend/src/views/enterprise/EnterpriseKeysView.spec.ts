@@ -1,7 +1,17 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EnterpriseKeysView from './EnterpriseKeysView.vue'
+
+vi.mock('vue-i18n', async () => ({
+  ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
+
+// BaseDialog 通过 Teleport 渲染到 body，就地展开后断言才能落在 wrapper 内
+const mountOptions = { global: { stubs: { teleport: true } } }
+const confirmDialog = (wrapper: ReturnType<typeof mount>) => wrapper.findComponent(ConfirmDialog)
 
 const { getCurrentKey, createKey, disableKey, rotateKey, isEnterpriseKeyMutationStateConflict, onBeforeRouteLeave } = vi.hoisted(() => ({
   getCurrentKey: vi.fn(),
@@ -31,6 +41,7 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
+    setActivePinia(createPinia())
     vi.resetAllMocks()
     getCurrentKey.mockResolvedValue(null)
     isEnterpriseKeyMutationStateConflict.mockReturnValue(false)
@@ -46,12 +57,12 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
       usage_5h: 1, usage_1d: 2, usage_7d: 3, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }
     createKey.mockResolvedValue({ key, plaintext, replayed: false })
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
     await wrapper.get('[data-testid="create-key"]').trigger('click')
     await flushPromises()
-    expect((wrapper.get('[data-testid="plaintext-key"]').element as HTMLInputElement).value).toBe(plaintext)
+    expect((wrapper.get('[data-testid="plaintext-key"] input').element as HTMLInputElement).value).toBe(plaintext)
     expect(localStorage.length).toBe(0)
     expect(sessionStorage.length).toBe(0)
     expect(JSON.stringify(log.mock.calls)).not.toContain(plaintext)
@@ -77,7 +88,7 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
       replayed: true,
       plaintext: 'sk-replayed-secret-must-not-render',
     })
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
     await wrapper.get('[data-testid="create-key"]').trigger('click')
     await flushPromises()
@@ -93,10 +104,10 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
       quota: 25, quota_used: 0, rate_limit_5h: 5, rate_limit_1d: 10, rate_limit_7d: 20,
       usage_5h: 0, usage_1d: 0, usage_7d: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('已使用 $0.00')
+    expect(wrapper.text()).toContain('已用 $0.00')
     expect(wrapper.text()).not.toContain('5 小时')
     expect(wrapper.text()).not.toContain('1 天')
     expect(wrapper.text()).not.toContain('7 天')
@@ -113,13 +124,15 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     const successor = { ...key, id: 13, masked_key: 'sk-new...abcd' }
     getCurrentKey.mockResolvedValue(key)
     rotateKey.mockResolvedValue({ key: successor, plaintext, replayed: false })
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
     await wrapper.get('[data-testid="rotate-key"]').trigger('click')
     await flushPromises()
-    expect((wrapper.get('[data-testid="plaintext-key"]').element as HTMLInputElement).value).toBe(plaintext)
+    expect(rotateKey).not.toHaveBeenCalled()
+    confirmDialog(wrapper).vm.$emit('confirm')
+    await flushPromises()
+    expect((wrapper.get('[data-testid="plaintext-key"] input').element as HTMLInputElement).value).toBe(plaintext)
 
     await wrapper.get('[data-testid="close-secret"]').trigger('click')
     await flushPromises()
@@ -137,13 +150,17 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
       quota: 25, quota_used: 7.5, rate_limit_5h: 5, rate_limit_1d: 10, rate_limit_7d: 20,
       usage_5h: 1.25, usage_1d: 2.5, usage_7d: 6.75, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
-    vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue(new Error('cancelled'))
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
     await wrapper.get('[data-testid="disable-key"]').trigger('click')
     await flushPromises()
+    expect(confirmDialog(wrapper).props('show')).toBe(true)
 
+    confirmDialog(wrapper).vm.$emit('cancel')
+    await flushPromises()
+
+    expect(confirmDialog(wrapper).props('show')).toBe(false)
     expect(disableKey).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('sk-dis...abcd')
     wrapper.unmount()
@@ -155,13 +172,17 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
       quota: 25, quota_used: 7.5, rate_limit_5h: 5, rate_limit_1d: 10, rate_limit_7d: 20,
       usage_5h: 1.25, usage_1d: 2.5, usage_7d: 6.75, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
-    vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue(new Error('cancelled'))
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
     await wrapper.get('[data-testid="rotate-key"]').trigger('click')
     await flushPromises()
+    expect(confirmDialog(wrapper).props('show')).toBe(true)
 
+    confirmDialog(wrapper).vm.$emit('cancel')
+    await flushPromises()
+
+    expect(confirmDialog(wrapper).props('show')).toBe(false)
     expect(rotateKey).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('sk-rot...abcd')
     wrapper.unmount()
@@ -173,12 +194,11 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
       quota: 25, quota_used: 0, rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0,
       usage_5h: 0, usage_1d: 0, usage_7d: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
-    vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
     expect(wrapper.find('[data-testid="keys-load-error"]').exists()).toBe(true)
-    expect(wrapper.find('.el-empty').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="keys-empty"]').exists()).toBe(false)
 
     await wrapper.get('[data-testid="keys-load-retry"]').trigger('click')
     await flushPromises()
@@ -197,8 +217,7 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     createKey
       .mockRejectedValueOnce({ message: '网络异常，请重试' })
       .mockResolvedValueOnce({ key, replayed: true })
-    vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
     const button = wrapper.get('[data-testid="create-key"]')
@@ -225,12 +244,12 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
     getCurrentKey.mockResolvedValueOnce(current).mockResolvedValueOnce(successor)
     rotateKey.mockRejectedValueOnce({ reason: 'ENTERPRISE_KEY_VERSION_CONFLICT', message: 'changed' })
     isEnterpriseKeyMutationStateConflict.mockReturnValue(true)
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
-    vi.spyOn(ElMessage, 'warning').mockImplementation(() => undefined as never)
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
 
     await wrapper.get('[data-testid="rotate-key"]').trigger('click')
+    await flushPromises()
+    confirmDialog(wrapper).vm.$emit('confirm')
     await flushPromises()
 
     expect(getCurrentKey).toHaveBeenCalledTimes(2)
@@ -249,11 +268,11 @@ describe('EnterpriseKeysView plaintext lifecycle', () => {
       plaintext,
       replayed: false,
     })
-    const wrapper = mount(EnterpriseKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseKeysView, mountOptions)
     await flushPromises()
     await wrapper.get('[data-testid="create-key"]').trigger('click')
     await flushPromises()
-    expect((wrapper.get('[data-testid="plaintext-key"]').element as HTMLInputElement).value).toBe(plaintext)
+    expect((wrapper.get('[data-testid="plaintext-key"] input').element as HTMLInputElement).value).toBe(plaintext)
 
     const routeLeave = onBeforeRouteLeave.mock.calls[0]?.[0] as (() => void) | undefined
     expect(routeLeave).toBeTypeOf('function')
