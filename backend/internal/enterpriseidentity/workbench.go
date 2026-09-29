@@ -355,9 +355,9 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		item.DepartmentID = nullableInt64(departmentID)
 		// overage 由数据库 NUMERIC 定长 ::text 输出，零值形态不固定（"0" 或 "0.00000000"），
 		// 必须按数值语义判断；解析失败视为无法确认，保留人工核对提示。
-		item.Recommendation = "当前 allocation 范围内"
+		item.Recommendation = "当前额度分配范围内"
 		if overage, err := decimal.NewFromString(item.OverageCredit); err != nil || overage.IsPositive() {
-			item.Recommendation = "核对个人超用，并按业务需要调整 allocation"
+			item.Recommendation = "核对个人超用，并按业务需要调整额度分配"
 		}
 		result.EmployeeSummaries = append(result.EmployeeSummaries, item)
 	}

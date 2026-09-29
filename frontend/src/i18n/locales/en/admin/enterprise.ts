@@ -8,6 +8,22 @@ export default {
       key: { active: 'Enabled', disabled: 'Disabled', quotaExhausted: 'Quota exhausted', expired: 'Expired' },
       source: { available: 'Available', unavailable: 'Unavailable' },
       allocation: { normal: 'Normal', overage: 'Overage' },
+      window: { week: 'Weekly', day: 'Daily', month: 'Monthly' },
+    },
+    audit: {
+      event: {
+        unknown: 'Unknown event', allocationUpdate: 'Adjust allocation', allocationCreditChanged: 'Change allocation', allocationVersionConflict: 'Allocation version conflict',
+        employeeCreated: 'Create employee', employeeUpdated: 'Update employee', employeeTerminated: 'Terminate employee', employeeUpdateRejected: 'Employee update rejected',
+        employeePasswordChanged: 'Change employee password', employeePasswordReset: 'Reset employee password', employeeCreate: 'Employee creation rejected',
+        employeeUpdate: 'Employee update rejected', employeeTerminate: 'Employee termination rejected', departmentCreated: 'Create department',
+        departmentDeleted: 'Delete department', departmentCreate: 'Department creation rejected', departmentDisable: 'Department deactivation rejected',
+        keyRevoke: 'Revoke key', keyRotate: 'Rotate key', subscriptionActivated: 'Activate subscription',
+        keyEmployeeCreate: 'Employee created key', keyEmployeeDisable: 'Employee disabled key', keyEmployeeRotate: 'Employee rotated key'
+      },
+      reason: { rejected: 'Rejected', invalidRequest: 'Invalid request', invalidToken: 'Invalid credential', notFound: 'Object not found', weakPassword: 'Weak password', versionConflict: 'Version conflict' },
+      actor: { employee: 'Enterprise employee', admin: 'Enterprise admin', publicEntry: 'Enterprise public entry', system: 'Enterprise actor' },
+      entity: { unknown: 'Unknown entity', employee: 'Employee', department: 'Department', apiKey: 'API key', allocation: 'Employee allocation', subscription: 'Enterprise subscription', enterprise: 'Enterprise' },
+      result: { success: 'Success', failure: 'Failure', rejected: 'Rejected', unknown: 'Unknown result' }
     },
     terms: { allocation: 'Allocation', weeklyAllocation: 'Weekly allocation', weeklyLimit: 'Weekly limit', remaining: 'Remaining allocation', overage: 'Overage', used: 'Used', total: 'Total', quota: 'Quota', actualCost: 'Actual cost', pool: 'Enterprise pool' },
     shell: { switchLight: 'Switch to light mode', switchDark: 'Switch to dark mode', lightMode: 'Light mode', darkMode: 'Dark mode', expandSidebar: 'Expand sidebar', collapseSidebar: 'Collapse sidebar', toggleMenu: 'Toggle menu' },

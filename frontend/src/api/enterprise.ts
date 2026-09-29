@@ -292,7 +292,7 @@ export const enterpriseAPI = {
   getEmployeeProfile: () => data<EnterpriseEmployee>(enterpriseClient.get('/enterprise/profile')),
   setAllocation: (subscriptionId: number, employeeId: number, input: { enterprise_id: number; window_type: 'week'; window_anchor: string; credit: string; expected_version: number; reason: string }) => data<{ id: number; version: number }>(enterpriseClient.put(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, input)),
   getAllocationSummary: (subscriptionId: number, employeeId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationSummary>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, { params })),
-  listSubscriptionAllocations: (subscriptionId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationListResult>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations`, { params })),
+  listSubscriptionAllocations: (subscriptionId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseAllocationListResult>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations`, { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
   createKey: () => withEnterpriseKeyMutation('create', 0, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
     enterpriseClient.post('/enterprise/keys', undefined, idempotencyHeaders(idempotencyKey)),
   )),
@@ -307,7 +307,7 @@ export const enterpriseAPI = {
   deleteDepartment: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/departments/${id}`)),
   getDepartmentDeletionImpact: (id: number) => data<EnterpriseDepartmentDeletionImpact>(enterpriseClient.get(`/enterprise/admin/departments/${id}/deletion-impact`)),
   listEmployees: (options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseEmployee[]>(enterpriseClient.get('/enterprise/admin/employees', options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)),
-  getEmployee: (id: number) => data<EnterpriseEmployeeDetail>(enterpriseClient.get(`/enterprise/admin/employees/${id}`)),
+  getEmployee: (id: number, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseEmployeeDetail>(enterpriseClient.get(`/enterprise/admin/employees/${id}`, options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)),
   createEmployee: (input: EmployeeCreateInput) => data<EnterpriseEmployee>(enterpriseClient.post('/enterprise/admin/employees', input)),
   resetEmployeePassword: (id: number) => data<{ initial_password: string; must_change_password: boolean }>(enterpriseClient.post(`/enterprise/admin/employees/${id}/reset-password`)),
   updateEmployee: (id: number, input: EmployeeUpdateInput) => data<{ success: boolean }>(enterpriseClient.patch(`/enterprise/admin/employees/${id}`, input)),
@@ -330,7 +330,7 @@ export const enterpriseAPI = {
       enterpriseClient.post('/enterprise/admin/brand/background', form, { headers: { 'Content-Type': 'multipart/form-data' } }),
     )
   },
-  listAdminKeys: () => data<EnterpriseKeySummary[]>(enterpriseClient.get('/enterprise/admin/keys')),
+  listAdminKeys: (options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseKeySummary[]>(enterpriseClient.get('/enterprise/admin/keys', options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)),
   revokeAdminKey: (id: number, idempotencyKey: string) => data<EnterpriseEmployeeKeyMutationResult>(enterpriseClient.post(`/enterprise/admin/keys/${id}/revoke`, undefined, idempotencyHeaders(idempotencyKey))),
   getWorkbenchSummary: (params?: Record<string, string | number>, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseWorkbenchSummary>(enterpriseClient.get('/enterprise/admin/workbench/summary', { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
   listWorkbenchUsage: (params?: Record<string, string | number>, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterprisePaginated<EnterpriseWorkbenchUsageRow>>(enterpriseClient.get('/enterprise/admin/workbench/usage', { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),

@@ -123,9 +123,9 @@ func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
 	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
 	require.NoError(t, err)
 	require.Len(t, result.EmployeeSummaries, 2)
-	require.Equal(t, "当前 allocation 范围内", result.EmployeeSummaries[0].Recommendation,
+	require.Equal(t, "当前额度分配范围内", result.EmployeeSummaries[0].Recommendation,
 		"overage 定长零值 0.00000000 必须判为零，不得误标核对个人超用")
-	require.Equal(t, "核对个人超用，并按业务需要调整 allocation", result.EmployeeSummaries[1].Recommendation)
+	require.Equal(t, "核对个人超用，并按业务需要调整额度分配", result.EmployeeSummaries[1].Recommendation)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

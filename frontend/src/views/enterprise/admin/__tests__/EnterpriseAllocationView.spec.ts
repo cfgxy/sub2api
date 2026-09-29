@@ -1,9 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EnterpriseAllocationView from '../EnterpriseAllocationView.vue'
 import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const { getWorkbenchSummary, listSubscriptionAllocations, getAllocationSummary, setAllocation, listDepartments, listEmployees } = vi.hoisted(() => ({
   getWorkbenchSummary: vi.fn(),
@@ -18,6 +22,18 @@ vi.mock('@/api/enterprise', () => ({
   enterpriseAPI: { getWorkbenchSummary, listSubscriptionAllocations, getAllocationSummary, setAllocation, listDepartments, listEmployees },
   onEnterpriseAuthSession: vi.fn(() => () => {}),
 }))
+
+// BaseDialog / Select 都 Teleport 到 body，测试里就地渲染以便在 wrapper 内查询
+function mountView() {
+  return mount(EnterpriseAllocationView, { global: { stubs: { teleport: true } } })
+}
+
+const clickText = async (wrapper: ReturnType<typeof mountView>, text: string) => {
+  const button = wrapper.findAll('button').find((item) => item.text() === text)
+  expect(button, `未找到按钮：${text}`).toBeDefined()
+  await button!.trigger('click')
+  await flushPromises()
+}
 
 describe('EnterpriseAllocationView', () => {
   beforeEach(() => {
@@ -47,8 +63,27 @@ describe('EnterpriseAllocationView', () => {
     listEmployees.mockResolvedValue([{ id: 1, email: 'a@example.com', status: 'active', must_change_password: false }, { id: 2, email: 'b@example.com', status: 'active', must_change_password: false }])
   })
 
+  it('does not flash the no-subscription empty state on the first frame while data is loading (SHAN-392 rework)', async () => {
+    let release: (value: unknown) => void = () => {}
+    getWorkbenchSummary.mockReturnValue(new Promise((resolve) => { release = resolve }))
+    const wrapper = mountView()
+
+    expect(wrapper.text()).not.toContain('暂无生效订阅')
+
+    release({
+      total_usage_credit: '0', total_requests: 0, employee_count: 0, active_employee_count: 0,
+      subscription_id: 0, subscription_status: 'none', subscription_plan: '',
+      enterprise_pool_limit: '0', enterprise_pool_used: '0', enterprise_pool_remaining: '0', enterprise_pool_exhausted: false,
+      pool_source_status: 'available', pool_source: '', pool_window_type: 'week', pool_window_anchor: '2026-09-14T00:00:00Z',
+      employee_summaries: [], usage_trend: [],
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无生效订阅')
+    wrapper.unmount()
+  })
+
   it('renders pool stats, per-employee status and overallocation warning', async () => {
-    const wrapper = mount(EnterpriseAllocationView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('2400')
@@ -57,27 +92,35 @@ describe('EnterpriseAllocationView', () => {
     expect(wrapper.text()).toContain('企业池已超分配')
     expect(wrapper.text()).toContain('a@example.com')
     expect(wrapper.text()).toContain('研发中心')
-    expect(wrapper.text()).toContain('有超用')
+    expect(wrapper.text()).toContain('超用量')
     expect(wrapper.text()).toContain('正常')
     wrapper.unmount()
   })
 
+  it('renders the glossary-mapped column headers instead of raw English enum words', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    // 表头必须走 S5 术语层，不得残留后端英文枚举词（后端 warning 原文不在此断言范围内）
+    const headers = wrapper.findAll('th').map((header) => header.text())
+    expect(headers).toContain('额度')
+    expect(headers).toContain('剩余额度')
+    expect(headers).toContain('超用量')
+    expect(headers.join(' ')).not.toMatch(/allocation|overage|remaining/i)
+    expect(wrapper.text()).toContain('企业总池')
+    wrapper.unmount()
+  })
+
   it('submits an allocation adjustment carrying expected_version and reason', async () => {
-    const wrapper = mount(EnterpriseAllocationView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
-    const buttons = wrapper.findAll('button').filter((button) => button.text() === '调整')
-    await buttons[0]!.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '调整')
 
-    const creditInput = wrapper.find('.el-dialog input[placeholder="非负数值字符串"]')
-    await creditInput.setValue('260')
-    const reasonInput = wrapper.find('.el-dialog textarea')
-    await reasonInput.setValue('季度调薪后调整')
+    await wrapper.get('input[placeholder="非负数值字符串"]').setValue('260')
+    await wrapper.get('#allocation-reason').setValue('季度调薪后调整')
 
-    const saveButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '保存')
-    await saveButton!.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '保存')
 
     expect(setAllocation).toHaveBeenCalledWith(9, 1, expect.objectContaining({
       enterprise_id: 7,
@@ -98,7 +141,7 @@ describe('EnterpriseAllocationView', () => {
       pool_source_status: 'unavailable', pool_source: '', pool_window_type: 'week',
       employee_summaries: [], usage_trend: [],
     })
-    const wrapper = mount(EnterpriseAllocationView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('暂无生效订阅')
@@ -108,7 +151,7 @@ describe('EnterpriseAllocationView', () => {
 
   it('marks the source unavailable when the summary request fails', async () => {
     getWorkbenchSummary.mockRejectedValueOnce(new Error('source unavailable'))
-    const wrapper = mount(EnterpriseAllocationView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('数据来源暂时不可用')

@@ -1,9 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import { createPinia } from 'pinia'
 import type { AxiosRequestConfig } from 'axios'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enterpriseClient } from '@/api/enterprise'
 import EnterpriseAdminAuditView from '../EnterpriseAdminAuditView.vue'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 // 不 mock '@/api/enterprise'，理由同 EnterpriseAdminUsageView.unavailable.spec.ts：
 // 审计页与用量页同根因（listWorkbenchAuditEvents 封装层未透传豁免参数），Review
@@ -46,7 +51,7 @@ describe('EnterpriseAdminAuditView — 真实 axios 拦截器路径下的分区�
 
   it('审计数据源真实 5xx 时只显示分区提示，不整页跳转', async () => {
     installAdapter({ '/enterprise/admin/workbench/audit-events': () => ({ status: 500 }) })
-    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(window.location.href).not.toContain('/enterprise/session-states')
@@ -56,7 +61,7 @@ describe('EnterpriseAdminAuditView — 真实 axios 拦截器路径下的分区�
 
   it('身份/会话类错误（401）仍整页跳转到全局会话状态页，不放宽既有边界', async () => {
     installAdapter({ '/enterprise/admin/workbench/audit-events': () => ({ status: 401, data: {} }) })
-    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(window.location.href).toContain('/enterprise/session-states?state=session-expired')
@@ -67,7 +72,7 @@ describe('EnterpriseAdminAuditView — 真实 axios 拦截器路径下的分区�
     installAdapter({
       '/enterprise/admin/workbench/audit-events': () => ({ status: 403, data: { reason: 'ENTERPRISE_DISABLED' } }),
     })
-    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(window.location.href).toContain('/enterprise/session-states?state=enterprise-disabled')
@@ -77,12 +82,12 @@ describe('EnterpriseAdminAuditView — 真实 axios 拦截器路径下的分区�
   it('数据源恢复后重新查询能清除降级提示', async () => {
     let fail = true
     installAdapter({ '/enterprise/admin/workbench/audit-events': () => (fail ? { status: 500 } : { status: 200, data: auditPayload }) })
-    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminAuditView, { global: { plugins: [createPinia()] } })
     await flushPromises()
     expect(wrapper.text()).toContain('审计数据源暂时不可用')
 
     fail = false
-    await wrapper.find('button.el-button--primary').trigger('click')
+    await wrapper.findAll('button').find(item => item.text() === '查询')!.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('审计数据源暂时不可用')

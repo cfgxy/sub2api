@@ -1,126 +1,87 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useAppStore } from '@/stores/app'
 import EnterpriseAdminKeysView from './EnterpriseAdminKeysView.vue'
 
-const { listAdminKeys, revokeAdminKey } = vi.hoisted(() => ({
-  listAdminKeys: vi.fn(),
-  revokeAdminKey: vi.fn(),
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
-vi.mock('@/api/enterprise', () => ({
-  enterpriseAPI: { listAdminKeys, revokeAdminKey },
-}))
+const { listAdminKeys, revokeAdminKey } = vi.hoisted(() => ({ listAdminKeys: vi.fn(), revokeAdminKey: vi.fn() }))
+vi.mock('@/api/enterprise', () => ({ enterpriseAPI: { listAdminKeys, revokeAdminKey } }))
 
-const row = {
-  api_key_id: 1,
-  employee_id: 9,
-  employee_email: 'employee@example.com',
-  generation: 2,
-  status: 'active' as const,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
+const row = { api_key_id: 1, employee_id: 9, employee_email: 'employee@example.com', generation: 2, status: 'active' as const, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+
+function mountView() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  return mount(EnterpriseAdminKeysView, { global: { plugins: [pinia], stubs: { teleport: true } } })
 }
 
 describe('EnterpriseAdminKeysView', () => {
-  beforeEach(() => {
-    vi.resetAllMocks()
+  beforeEach(() => { vi.resetAllMocks(); listAdminKeys.mockResolvedValue([row]) })
+
+  it('shows employee identity and mapped key status without exposing credentials', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.text()).toContain('employee@example.com')
+    expect(wrapper.text()).toContain('启用')
+    expect(wrapper.text()).not.toContain('generation')
+    expect(wrapper.text()).toContain('查看员工 Key 的归属与状态，可撤销已启用的 Key')
+    expect(wrapper.text()).not.toMatch(/查看.*掩码|代轮换/)
+    expect(wrapper.findAll('button').map(button => button.text()).join(' ')).not.toContain('轮换')
+    wrapper.unmount()
   })
 
-  it('shows a distinct load-error state (not the empty state) when the key source is unavailable, and recovers on retry', async () => {
-    listAdminKeys.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce([row])
-    vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    const wrapper = mount(EnterpriseAdminKeysView, { global: { plugins: [ElementPlus] } })
+  it('shows a distinct load error and recovers on retry', async () => {
+    listAdminKeys.mockRejectedValueOnce(new Error('network'))
+    const wrapper = mountView()
     await flushPromises()
-
-    expect(wrapper.find('[data-testid="admin-keys-load-error"]').exists()).toBe(true)
-    expect(wrapper.find('.el-empty').exists()).toBe(false)
-
-    await wrapper.get('[data-testid="admin-keys-load-retry"]').trigger('click')
+    expect(wrapper.get('[data-testid="admin-keys-load-error"]').text()).toContain('暂时不可用')
+    await wrapper.get('[data-testid="admin-keys-load-error"] button').trigger('click')
     await flushPromises()
-
-    expect(wrapper.find('[data-testid="admin-keys-load-error"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('employee@example.com')
     wrapper.unmount()
   })
 
-  it('shows the empty state (not the load-error state) when there are simply no keys', async () => {
+  it('renders the empty state without revoke actions', async () => {
     listAdminKeys.mockResolvedValueOnce([])
-    const wrapper = mount(EnterpriseAdminKeysView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
-
-    expect(wrapper.find('.el-empty').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="admin-keys-load-error"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('暂无员工 Key')
+    expect(wrapper.find('[data-testid="admin-key-revoke"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('does not call revoke when the admin cancels the confirmation', async () => {
-    listAdminKeys.mockResolvedValueOnce([row])
-    vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce(new Error('cancel'))
-    const wrapper = mount(EnterpriseAdminKeysView, { global: { plugins: [ElementPlus] } })
+  it('cancels confirmation without revoking and reloads after successful confirmation', async () => {
+    const wrapper = mountView()
     await flushPromises()
-
     await wrapper.get('[data-testid="admin-key-revoke"]').trigger('click')
-    await flushPromises()
-
+    expect(wrapper.text()).toContain('撤销后该 Key 将立即无法调用')
+    const buttons = wrapper.findAll('[role="dialog"] button')
+    await buttons.find(item => item.text() === '取消')!.trigger('click')
     expect(revokeAdminKey).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('shows a per-row revoking (processing) state while the revoke request is in flight, then reloads', async () => {
-    listAdminKeys.mockResolvedValueOnce([row]).mockResolvedValueOnce([{ ...row, status: 'disabled' as const }])
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce('confirm' as never)
-    vi.spyOn(ElMessage, 'success').mockImplementation(() => undefined as never)
-    let resolveRevoke: (() => void) | undefined
-    revokeAdminKey.mockReturnValueOnce(new Promise<void>((resolve) => { resolveRevoke = resolve }))
-    const wrapper = mount(EnterpriseAdminKeysView, { global: { plugins: [ElementPlus] } })
-    await flushPromises()
-
-    const button = wrapper.get('[data-testid="admin-key-revoke"]')
-    await button.trigger('click')
-    await flushPromises()
-
-    expect(button.classes()).toContain('is-loading')
-
-    resolveRevoke?.()
-    await flushPromises()
-
-    expect(revokeAdminKey).toHaveBeenCalledTimes(1)
-    expect(listAdminKeys).toHaveBeenCalledTimes(2)
-    wrapper.unmount()
-  })
-
-  it('blocks a second revoke click while one is already in flight', async () => {
-    listAdminKeys.mockResolvedValueOnce([row])
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
-    vi.spyOn(ElMessage, 'success').mockImplementation(() => undefined as never)
-    revokeAdminKey.mockReturnValueOnce(new Promise<void>(() => {}))
-    const wrapper = mount(EnterpriseAdminKeysView, { global: { plugins: [ElementPlus] } })
-    await flushPromises()
-
-    const button = wrapper.get('[data-testid="admin-key-revoke"]')
-    await button.trigger('click')
-    await flushPromises()
-    await button.trigger('click')
-    await flushPromises()
-
-    expect(revokeAdminKey).toHaveBeenCalledTimes(1)
-    wrapper.unmount()
-  })
-
-  it('reports failure and clears the revoking state when the revoke call fails', async () => {
-    listAdminKeys.mockResolvedValueOnce([row])
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce('confirm' as never)
-    vi.spyOn(ElMessage, 'error').mockImplementation(() => undefined as never)
-    revokeAdminKey.mockRejectedValueOnce(new Error('failed'))
-    const wrapper = mount(EnterpriseAdminKeysView, { global: { plugins: [ElementPlus] } })
-    await flushPromises()
-
     await wrapper.get('[data-testid="admin-key-revoke"]').trigger('click')
+    await wrapper.findAll('[role="dialog"] button').find(item => item.text() === '确认')!.trigger('click')
     await flushPromises()
+    expect(revokeAdminKey).toHaveBeenCalledWith(1, expect.any(String))
+    expect(listAdminKeys).toHaveBeenCalledTimes(2)
+    expect(useAppStore().toasts.map(toast => toast.message)).toContain('Key 已撤销')
+    wrapper.unmount()
+  })
 
-    expect(ElMessage.error).toHaveBeenCalledWith('Key 撤销失败')
-    expect(wrapper.get('[data-testid="admin-key-revoke"]').classes()).not.toContain('is-loading')
+  it('reports a rejected revoke without showing the raw server error', async () => {
+    revokeAdminKey.mockRejectedValueOnce(new Error('sensitive message'))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="admin-key-revoke"]').trigger('click')
+    await wrapper.findAll('[role="dialog"] button').find(item => item.text() === '确认')!.trigger('click')
+    await flushPromises()
+    const messages = useAppStore().toasts.map(toast => toast.message)
+    expect(messages).toContain('Key 撤销失败')
+    expect(messages.join(' ')).not.toContain('sensitive message')
     wrapper.unmount()
   })
 })
