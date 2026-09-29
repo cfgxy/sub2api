@@ -1,9 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import { createPinia } from 'pinia'
 import type { AxiosRequestConfig } from 'axios'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enterpriseClient } from '@/api/enterprise'
 import EnterpriseAdminUsageView from '../EnterpriseAdminUsageView.vue'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 // 本文件不 mock '@/api/enterprise'：EnterpriseAdminUsageView.spec.ts 里那份整体模块
 // mock 的用例在 SHAN-241 Review 中被判定为无效证据——它绕过了全局 axios 拦截器，
@@ -65,7 +70,7 @@ describe('EnterpriseAdminUsageView — 真实 axios 拦截器路径下的分区�
 
   it('汇总/趋势数据源真实 5xx 时只降级该分区，不整页跳转，明细表格分区仍正常渲染', async () => {
     installAdapter({ ...okRoutes, '/enterprise/admin/workbench/summary': () => ({ status: 500 }) })
-    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(window.location.href).not.toContain('/enterprise/session-states')
@@ -76,7 +81,7 @@ describe('EnterpriseAdminUsageView — 真实 axios 拦截器路径下的分区�
 
   it('用量明细数据源真实 5xx 时只降级明细表格，不整页跳转，汇总分区仍正常渲染', async () => {
     installAdapter({ ...okRoutes, '/enterprise/admin/workbench/usage': () => ({ status: 500 }) })
-    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(window.location.href).not.toContain('/enterprise/session-states')
@@ -87,7 +92,7 @@ describe('EnterpriseAdminUsageView — 真实 axios 拦截器路径下的分区�
 
   it('组织目录数据源真实 5xx 时不整页跳转，汇总与明细分区仍正常渲染', async () => {
     installAdapter({ ...okRoutes, '/enterprise/admin/departments': () => ({ status: 500 }) })
-    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(window.location.href).not.toContain('/enterprise/session-states')
@@ -98,7 +103,7 @@ describe('EnterpriseAdminUsageView — 真实 axios 拦截器路径下的分区�
 
   it('身份/会话类错误（401）在同一批端点上仍整页跳转到全局会话状态页，不放宽既有边界', async () => {
     installAdapter({ ...okRoutes, '/enterprise/admin/workbench/summary': () => ({ status: 401, data: {} }) })
-    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mount(EnterpriseAdminUsageView, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
     expect(window.location.href).toContain('/enterprise/session-states?state=session-expired')

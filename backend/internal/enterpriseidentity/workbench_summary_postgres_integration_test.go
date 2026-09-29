@@ -181,11 +181,11 @@ func TestGetWorkbenchSummaryPostgreSQLResolvesPoolLimitAndOverageRecommendation(
 		// 非零值输出为定长小数字符串（"50.0000000000"）——零值形态依赖类型推导，字符串比较不可靠，
 		// Recommendation 必须按数值语义判断；该断言同时防止未来把输出归一成定长形态后回退为字符串比较。
 		require.Equal(t, "0", zeroOverage.OverageCredit)
-		require.Equal(t, "当前 allocation 范围内", zeroOverage.Recommendation)
+		require.Equal(t, "当前额度分配范围内", zeroOverage.Recommendation)
 
 		overaged, ok := byEmployee[23]
 		require.True(t, ok, "employee 23 (allocation 100 / usage 150) 应出现在员工摘要中")
 		require.Equal(t, "50.0000000000", overaged.OverageCredit)
-		require.Equal(t, "核对个人超用，并按业务需要调整 allocation", overaged.Recommendation)
+		require.Equal(t, "核对个人超用，并按业务需要调整额度分配", overaged.Recommendation)
 	})
 }

@@ -189,9 +189,9 @@ const existingEnterprises = ref<PlatformEnterprise[]>([])
 const candidates = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser>()
 let searchSequence = 0
-const form = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: 0, reason: '' })
+const form = reactive<{ name: string; portal_host: string; dedicated_upstream_user_id: number | ''; reason: string }>({ name: '', portal_host: '', dedicated_upstream_user_id: '', reason: '' })
 const errors = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: '', reason: '' })
-const userOptions = computed(() => candidates.value.map((user) => ({ user, reason: ineligibleReason(user) })))
+const userOptions = computed(() => candidates.value.filter((user) => Number.isInteger(user.id) && user.id > 0).map((user) => ({ user, reason: ineligibleReason(user) })))
 const accountOptions = computed<SelectOption[]>(() => userOptions.value.map((option) => ({
   value: option.user.id,
   label: optionLabel(option),
@@ -245,8 +245,8 @@ async function searchUsers(query: string) {
 
 function selectUser(value: SelectOption['value']) {
   const id = typeof value === 'number' ? value : Number(value)
-  form.dedicated_upstream_user_id = Number.isFinite(id) && id > 0 ? id : 0
-  selectedUser.value = candidates.value.find((user) => user.id === form.dedicated_upstream_user_id)
+  form.dedicated_upstream_user_id = Number.isInteger(id) && id > 0 ? id : ''
+  selectedUser.value = userOptions.value.find((option) => option.user.id === form.dedicated_upstream_user_id)?.user
 }
 
 function validate() {
@@ -254,7 +254,7 @@ function validate() {
   errors.portal_host = !form.portal_host.trim()
     ? t('admin.enterprise.create.hostRequired')
     : /^[a-z0-9.-]+$/.test(form.portal_host.trim()) ? '' : t('admin.enterprise.create.hostInvalid')
-  errors.dedicated_upstream_user_id = form.dedicated_upstream_user_id >= 1 ? '' : t('admin.enterprise.create.accountRequired')
+  errors.dedicated_upstream_user_id = Number(form.dedicated_upstream_user_id) >= 1 ? '' : t('admin.enterprise.create.accountRequired')
   errors.reason = form.reason.trim() ? '' : t('admin.enterprise.create.reasonRequired')
   return !Object.values(errors).some(Boolean)
 }
@@ -269,7 +269,7 @@ async function submit() {
   saving.value = true
   success.value = false
   try {
-    created.value = await enterprisePlatformAPI.create({ ...form })
+    created.value = await enterprisePlatformAPI.create({ ...form, dedicated_upstream_user_id: selectedUser.value.id })
     success.value = true
     appStore.showSuccess(t('admin.enterprise.create.createSuccess'))
     window.scrollTo({ top: 0, behavior: 'smooth' })

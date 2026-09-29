@@ -8,6 +8,22 @@ export default {
       key: { active: '启用', disabled: '停用', quotaExhausted: '额度耗尽', expired: '已过期' },
       source: { available: '可用', unavailable: '不可用' },
       allocation: { normal: '正常', overage: '超用量' },
+      window: { week: '按周', day: '按天', month: '按月' },
+    },
+    audit: {
+      event: {
+        unknown: '未知事件', allocationUpdate: '调整额度', allocationCreditChanged: '变更额度', allocationVersionConflict: '额度版本冲突',
+        employeeCreated: '创建员工', employeeUpdated: '更新员工资料', employeeTerminated: '标记离职', employeeUpdateRejected: '员工更新被拒绝',
+        employeePasswordChanged: '员工修改密码', employeePasswordReset: '管理员重置密码', employeeCreate: '创建员工被拒绝',
+        employeeUpdate: '更新员工被拒绝', employeeTerminate: '离职操作被拒绝', departmentCreated: '创建部门',
+        departmentDeleted: '删除部门', departmentCreate: '创建部门被拒绝', departmentDisable: '停用部门被拒绝',
+        keyRevoke: '撤销 Key', keyRotate: '轮换 Key', subscriptionActivated: '激活订阅',
+        keyEmployeeCreate: '员工创建 Key', keyEmployeeDisable: '员工停用 Key', keyEmployeeRotate: '员工轮换 Key'
+      },
+      reason: { rejected: '被拒绝', invalidRequest: '请求无效', invalidToken: '凭证无效', notFound: '对象不存在', weakPassword: '密码强度不足', versionConflict: '版本冲突' },
+      actor: { employee: '企业员工', admin: '企业管理员', publicEntry: '企业公开入口', system: '企业操作者' },
+      entity: { unknown: '未知对象', employee: '员工', department: '部门', apiKey: 'API Key', allocation: '员工额度', subscription: '企业订阅', enterprise: '企业' },
+      result: { success: '成功', failure: '失败', rejected: '被拒绝', unknown: '未知结果' }
     },
     terms: { allocation: '额度', weeklyAllocation: '每周额度', weeklyLimit: '周上限', remaining: '剩余额度', overage: '超用量', used: '已用', total: '合计', quota: '配额', actualCost: '实际费用', pool: '企业总池' },
     shell: { switchLight: '切换为亮色', switchDark: '切换为暗色', lightMode: '亮色模式', darkMode: '暗色模式', expandSidebar: '展开侧边栏', collapseSidebar: '收起侧边栏', toggleMenu: '切换菜单' },

@@ -1,7 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useAppStore } from '@/stores/app'
 import EnterpriseEmployeesView from '../EnterpriseEmployeesView.vue'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const { listEmployees, listDepartments, updateEmployee, createEmployee, resetEmployeePassword, pushMock } = vi.hoisted(() => ({
   listEmployees: vi.fn(),
@@ -29,16 +35,32 @@ const baseEmployees = [
 const baseDepartments = [{ id: 7, name: '研发中心', created_at: '2026-01-01T00:00:00Z' }]
 const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
 
+// BaseDialog / Select 都 Teleport 到 body，测试里就地渲染以便在 wrapper 内查询
+function mountView() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  return mount(EnterpriseEmployeesView, {
+    attachTo: document.body,
+    global: { plugins: [pinia], stubs: { teleport: true } },
+  })
+}
+
+const toastMessages = () => useAppStore().toasts.map((toast) => toast.message).join('\n')
+const clickText = async (wrapper: ReturnType<typeof mountView>, text: string) => {
+  const button = wrapper.findAll('button').find((item) => item.text() === text)
+  expect(button, `未找到按钮：${text}`).toBeDefined()
+  await button!.trigger('click')
+  await flushPromises()
+}
+
 async function createDeliveryCard() {
-  const wrapper = mount(EnterpriseEmployeesView, { attachTo: document.body, global: { plugins: [ElementPlus] } })
+  const wrapper = mountView()
   await flushPromises()
-  await wrapper.findAll('button').find((button) => button.text() === '创建员工')?.trigger('click')
-  await flushPromises()
-  await wrapper.find('.el-dialog input.el-input__inner').setValue('new-hire@example.com')
-  await wrapper.find('.el-dialog input[type="password"]').setValue('abcdefgh')
+  await clickText(wrapper, '创建员工')
+  await wrapper.get('#create-email').setValue('new-hire@example.com')
+  await wrapper.get('#create-password').setValue('abcdefgh')
   createEmployee.mockResolvedValueOnce({ id: 11, email: 'new-hire@example.com', status: 'active', must_change_password: true })
-  await wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '创建')?.trigger('click')
-  await flushPromises()
+  await clickText(wrapper, '创建')
   expect(createEmployee).toHaveBeenCalledTimes(1)
   return wrapper
 }
@@ -57,67 +79,72 @@ describe('EnterpriseEmployeesView', () => {
   })
 
   it('keeps the edit dialog open and refills it with the latest department on a version conflict, instead of closing it', async () => {
-    const wrapper = mount(EnterpriseEmployeesView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
-    const editButton = wrapper.findAll('button').find((button) => button.text() === '编辑')
-    await editButton?.trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+    await clickText(wrapper, '编辑')
+    expect(wrapper.find('#edit-department').exists()).toBe(true)
 
     updateEmployee.mockRejectedValueOnce({ reason: 'EMPLOYEE_VERSION_CONFLICT' })
     listEmployees.mockResolvedValueOnce([{ ...baseEmployees[0], department_id: 9, version: 4 }])
     listDepartments.mockResolvedValueOnce([...baseDepartments, { id: 9, name: '市场中心', created_at: '2026-01-01T00:00:00Z' }])
 
-    const saveButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '保存')
-    await saveButton?.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '保存')
 
-    const dialog = wrapper.find('.el-dialog')
-    expect(dialog.exists()).toBe(true)
-    expect(dialog.find('.el-select__selected-item.el-select__placeholder').text()).toBe('市场中心')
+    const department = wrapper.find('#edit-department')
+    expect(department.exists()).toBe(true)
+    expect(department.get('.select-value').text()).toBe('市场中心')
     wrapper.unmount()
   })
 
   it('keeps the edit dialog open with a readable error when the selected department is invalid, so the admin can pick another department without reopening the dialog', async () => {
-    const wrapper = mount(EnterpriseEmployeesView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
-    const editButton = wrapper.findAll('button').find((button) => button.text() === '编辑')
-    await editButton?.trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.el-dialog').exists()).toBe(true)
+    await clickText(wrapper, '编辑')
+    expect(wrapper.find('#edit-department').exists()).toBe(true)
 
     updateEmployee.mockRejectedValueOnce({ status: 400, reason: 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID', message: 'selected department is invalid' })
 
-    const saveButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '保存')
-    await saveButton?.trigger('click')
+    await clickText(wrapper, '保存')
+
+    expect(wrapper.find('#edit-department').exists()).toBe(true)
+    expect(listEmployees).toHaveBeenCalledTimes(1)
+    expect(toastMessages()).toContain('所选部门无效')
+    wrapper.unmount()
+  })
+
+  it('keeps the create dialog open with a visible duplicate-email hint on a 409, instead of an unhandled rejection (SHAN-392 rework)', async () => {
+    const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.find('.el-dialog').exists()).toBe(true)
-    expect(listEmployees).toHaveBeenCalledTimes(1)
-    expect(document.body.textContent).toContain('所选部门无效')
+    await clickText(wrapper, '创建员工')
+    await wrapper.get('[data-testid="generate-initial-password"]').trigger('click')
+    await wrapper.get('#create-email').setValue('dup@example.com')
+
+    createEmployee.mockRejectedValueOnce({ status: 409, code: 'ENTERPRISE_CONFLICT', message: 'conflict' })
+    await clickText(wrapper, '创建')
+
+    expect(createEmployee).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('#create-email').exists()).toBe(true)
+    expect(wrapper.text()).toContain('该邮箱已被使用，请更换邮箱')
+    expect(toastMessages()).toContain('该邮箱已被使用，请更换邮箱')
+    expect(wrapper.text()).not.toContain('复制交付信息')
     wrapper.unmount()
   })
 
   it('generates a 12-character initial password and shows a one-time delivery card with email, password and entry URL after creation', async () => {
-    const wrapper = mount(EnterpriseEmployeesView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
-    const createButton = wrapper.findAll('button').find((button) => button.text() === '创建员工')
-    await createButton?.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '创建员工')
 
     expect(wrapper.find('[data-testid="generate-initial-password"]').exists()).toBe(true)
-    await wrapper.find('[data-testid="generate-initial-password"]').trigger('click')
-
-    const emailInput = wrapper.find('.el-dialog input.el-input__inner')
-    await emailInput.setValue('new-hire@example.com')
+    await wrapper.get('[data-testid="generate-initial-password"]').trigger('click')
+    await wrapper.get('#create-email').setValue('new-hire@example.com')
 
     createEmployee.mockResolvedValueOnce({ id: 11, email: 'new-hire@example.com', status: 'active', must_change_password: true })
-    const confirmButton = wrapper.findAll('.el-dialog__footer button').find((button) => button.text() === '创建')
-    await confirmButton?.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '创建')
 
     expect(createEmployee).toHaveBeenCalledTimes(1)
     const payload = createEmployee.mock.calls[0][0] as { email: string; initial_password: string }
@@ -127,19 +154,17 @@ describe('EnterpriseEmployeesView', () => {
 
     const delivery = wrapper.find('[data-testid="initial-password-delivery"]')
     expect(delivery.exists()).toBe(true)
-    expect(delivery.text()).toContain('new-hire@example.com')
-    expect(delivery.text()).toContain(payload.initial_password)
-    expect(delivery.text()).toContain(window.location.origin)
+    expect(delivery.get('[data-testid="delivery-email"]').text()).toBe('new-hire@example.com')
+    expect(delivery.get('[data-testid="delivery-password"]').text()).toBe(payload.initial_password)
+    expect(delivery.get('[data-testid="delivery-origin"]').text()).toBe(window.location.origin)
     expect(delivery.text()).toContain('不会自动发送邮件')
 
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
-    const copyButton = delivery.findAll('button').find((button) => button.text() === '复制交付信息')
-    await copyButton?.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '复制交付信息')
     const copied = (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
     expect(copied).toBe(`邮箱：new-hire@example.com\n初始密码：${payload.initial_password}\n入口域名：${window.location.origin}`)
-    expect(document.body.textContent).toContain('交付信息已复制')
-    expect(delivery.find('[data-testid="manual-copy-text"]').exists()).toBe(false)
+    expect(toastMessages()).toContain('交付信息已复制')
+    expect(wrapper.find('[data-testid="manual-copy-text"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -149,13 +174,10 @@ describe('EnterpriseEmployeesView', () => {
   ])('%s 时提示并选中完整交付信息供手动复制', async (_scenario, rejects) => {
     const clipboard = rejects ? { writeText: vi.fn().mockRejectedValue(new Error('not allowed')) } : undefined
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
-    const errorMessage = vi.spyOn(ElMessage, 'error')
     const wrapper = await createDeliveryCard()
-    const delivery = wrapper.find('[data-testid="initial-password-delivery"]')
-    await delivery.findAll('button').find((button) => button.text() === '复制交付信息')?.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '复制交付信息')
 
-    const manualCopy = delivery.find<HTMLTextAreaElement>('[data-testid="manual-copy-text"]')
+    const manualCopy = wrapper.find<HTMLTextAreaElement>('[data-testid="manual-copy-text"]')
     expect(manualCopy.exists()).toBe(true)
     expect(manualCopy.element.value).toContain('邮箱：new-hire@example.com')
     expect(manualCopy.element.value).toContain('初始密码：abcdefgh')
@@ -163,29 +185,28 @@ describe('EnterpriseEmployeesView', () => {
     expect(document.activeElement).toBe(manualCopy.element)
     expect(manualCopy.element.selectionStart).toBe(0)
     expect(manualCopy.element.selectionEnd).toBe(manualCopy.element.value.length)
-    expect(delivery.text()).toContain('手动复制')
-    expect(errorMessage).toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="initial-password-delivery"]').text()).toContain('手动复制')
+    expect(toastMessages()).toContain('无法自动复制')
     wrapper.unmount()
   })
 
   it('resets an active employee password from the row action and delivers the new initial password without any email claim', async () => {
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm')
-    const wrapper = mount(EnterpriseEmployeesView, { global: { plugins: [ElementPlus] } })
+    const wrapper = mountView()
     await flushPromises()
 
     resetEmployeePassword.mockResolvedValueOnce({ initial_password: 'Rk7mPx2qWz94', must_change_password: true })
-    const resetButton = wrapper.findAll('button').find((button) => button.text() === '重置密码')
-    expect(resetButton).toBeDefined()
-    await resetButton?.trigger('click')
-    await flushPromises()
+    await clickText(wrapper, '重置密码')
+    // 行内动作只打开确认对话框，确认前不得调用接口
+    expect(resetEmployeePassword).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('重置员工密码')
 
-    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1)
+    await clickText(wrapper, '确认')
     expect(resetEmployeePassword).toHaveBeenCalledWith(10)
 
     const delivery = wrapper.find('[data-testid="initial-password-delivery"]')
     expect(delivery.exists()).toBe(true)
-    expect(delivery.text()).toContain('employee-a@example.com')
-    expect(delivery.text()).toContain('Rk7mPx2qWz94')
+    expect(delivery.get('[data-testid="delivery-email"]').text()).toBe('employee-a@example.com')
+    expect(delivery.get('[data-testid="delivery-password"]').text()).toBe('Rk7mPx2qWz94')
     expect(delivery.text()).toContain('不会自动发送邮件')
     wrapper.unmount()
   })

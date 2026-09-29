@@ -1,8 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EnterpriseDepartmentsView from '../EnterpriseDepartmentsView.vue'
 import EnterpriseEmployeesView from '../EnterpriseEmployeesView.vue'
+
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-i18n')>()),
+  useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
+}))
 
 const { listDepartments, listEmployees, pushMock } = vi.hoisted(() => ({
   listDepartments: vi.fn(),
@@ -39,7 +45,9 @@ describe('EnterpriseEmployeesView list load error state', () => {
 
   it('shows an error state with retry when the employees list fails to load, and reloads on retry', async () => {
     listEmployees.mockRejectedValueOnce({ message: '员工列表暂不可用' })
-    const wrapper = mount(EnterpriseEmployeesView, { global: { plugins: [ElementPlus] } })
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(EnterpriseEmployeesView, { global: { plugins: [pinia], stubs: { teleport: true } } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('员工列表暂不可用')
