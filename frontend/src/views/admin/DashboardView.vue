@@ -1,8 +1,8 @@
 <template>
-  <PlatformEnterpriseShell>
+  <AppLayout>
     <div class="space-y-6">
-      <header class="flex flex-wrap items-center justify-between gap-4">
-        <div>
+      <header class="flex flex-wrap items-center justify-between gap-4 lg:justify-end">
+        <div class="lg:hidden">
           <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('admin.dashboard.title') }}</h1>
           <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('admin.dashboard.description') }}</p>
         </div>
@@ -355,7 +355,7 @@
         </div>
       </template>
     </div>
-  </PlatformEnterpriseShell>
+  </AppLayout>
 </template>
 
 <script setup lang="ts">
@@ -373,7 +373,7 @@ import type {
   UserUsageTrendPoint,
   UserSpendingRankingItem
 } from '@/types'
-import PlatformEnterpriseShell from '@/components/admin/PlatformEnterpriseShell.vue'
+import AppLayout from '@/components/layout/AppLayout.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'

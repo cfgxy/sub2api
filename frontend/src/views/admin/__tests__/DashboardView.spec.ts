@@ -92,7 +92,7 @@ describe('admin DashboardView', () => {
     global: {
       stubs: {
         PlatformEnterpriseShell: { template: '<div data-testid="platform-shell"><slot /></div>' },
-        AppLayout: { template: '<div data-testid="old-shell"><slot /></div>' },
+        AppLayout: { template: '<div data-testid="standard-layout"><slot /></div>' },
         LoadingSpinner: true,
         Icon: true,
         DateRangePicker: true,
@@ -148,14 +148,14 @@ describe('admin DashboardView', () => {
     }))
   })
 
-  it('uses the platform shell and distinguishes loading, empty and normal states', async () => {
+  it('uses the standard layout and distinguishes loading, empty and normal states', async () => {
     let resolveSnapshot!: (value: unknown) => void
     getSnapshotV2.mockReturnValueOnce(new Promise((resolve) => { resolveSnapshot = resolve }))
     const wrapper = render()
     await nextTick()
 
-    expect(wrapper.find('[data-testid="platform-shell"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="old-shell"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="standard-layout"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="platform-shell"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="dashboard-loading"]').exists()).toBe(true)
     resolveSnapshot({ stats: createDashboardStats(), trend: [], models: [] })
     await flushPromises()
