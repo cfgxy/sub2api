@@ -291,7 +291,7 @@ function setRange(index: 0 | 1, value: string) {
 async function loadHome() {
   sourceStates.usage = 'loading'
   try {
-    const home = await enterpriseAPI.getEmployeeUsage()
+    const home = await enterpriseAPI.getEmployeeUsage({ suppressUnavailableRedirect: true })
     usage.value = home.usage
     enterprisePool.value = home.enterprise_pool
     sourceStates.usage = 'ready'
@@ -304,7 +304,7 @@ async function loadDetail() {
   detailLoading.value = true
   sourceStates.detail = 'loading'
   try {
-    Object.assign(records, await enterpriseAPI.listEmployeeUsage({ ...filterParams(), page: page.value, page_size: pageSize.value }))
+    Object.assign(records, await enterpriseAPI.listEmployeeUsage({ ...filterParams(), page: page.value, page_size: pageSize.value }, { suppressUnavailableRedirect: true }))
     sourceStates.detail = 'ready'
   } catch {
     sourceStates.detail = 'unavailable'
@@ -317,7 +317,7 @@ async function loadTrend() {
   trendLoading.value = true
   sourceStates.trend = 'loading'
   try {
-    trend.value = await enterpriseAPI.getEmployeeUsageTrend(filterParams())
+    trend.value = await enterpriseAPI.getEmployeeUsageTrend(filterParams(), { suppressUnavailableRedirect: true })
     sourceStates.trend = 'ready'
   } catch {
     sourceStates.trend = 'unavailable'

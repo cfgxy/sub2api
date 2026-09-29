@@ -134,7 +134,7 @@
                             : 'bg-gray-100 text-gray-600 dark:bg-dark-600 dark:text-gray-400'
                         ]"
                       >
-                        {{ entry.user_status }}
+                        {{ entry.user_status === 'active' ? t('common.active') : t('admin.users.disabled') }}
                       </span>
                     </td>
                     <td class="whitespace-nowrap px-3 py-2">

@@ -573,7 +573,7 @@
 
   .sidebar-link-active {
     @apply bg-primary-50 dark:bg-primary-900/20;
-    @apply text-primary-600 dark:text-primary-400;
+    @apply text-primary-700 dark:text-primary-400;
     @apply hover:bg-primary-100 dark:hover:bg-primary-900/30;
   }
 
@@ -584,7 +584,7 @@
   .sidebar-section-title {
     @apply mb-2 px-3;
     @apply text-xs font-semibold uppercase tracking-wider;
-    @apply text-gray-400 dark:text-dark-500;
+    @apply text-gray-500 dark:text-dark-400;
   }
 
   /* ============ 页面头部 ============ */

@@ -66,6 +66,7 @@ export function enterpriseSessionStateForError(error: unknown): EnterpriseSessio
   if (reason === 'ENTERPRISE_DISABLED') return 'enterprise-disabled'
   if (reason === 'ENTERPRISE_PRINCIPAL_INACTIVE') return 'employee-disabled'
   if (reason === 'ENTERPRISE_KEY_NOT_FOUND') return null
+  if (reason === 'INVALID_CREDENTIALS') return null
 
   const status = typeof response?.status === 'number' ? response.status : 0
   if (status === 401) return 'session-expired'
@@ -126,7 +127,8 @@ enterpriseClient.interceptors.response.use(
     if (request?.enterprisePublicBrandProbe) return Promise.reject(error)
     const refreshToken = localStorage.getItem(REFRESH_KEY)
     const isAuthRequest = request?.url?.includes('/enterprise/auth/')
-    if (error.response?.status === 401 && request && !request._enterpriseRetry && refreshToken && !isAuthRequest) {
+    const isCredentialRejection = isRecord(error.response?.data) && (error.response?.data as Record<string, unknown>).reason === 'INVALID_CREDENTIALS'
+    if (error.response?.status === 401 && request && !request._enterpriseRetry && refreshToken && !isAuthRequest && !isCredentialRejection) {
       request._enterpriseRetry = true
       refreshPromise ||= enterpriseAPI.refresh(refreshToken).finally(() => { refreshPromise = null })
       try {
@@ -158,6 +160,8 @@ enterpriseClient.interceptors.response.use(
 )
 
 const data = <T>(request: Promise<{ data: T }>) => request.then((response) => response.data)
+type EnterpriseReadOptions = { suppressUnavailableRedirect?: boolean }
+const suppressUnavailable = (options?: EnterpriseReadOptions) => (options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)
 const newIdempotencyKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 type EnterpriseKeyMutationOperation = 'create' | 'disable' | 'rotate'
 
@@ -278,20 +282,20 @@ export const enterpriseAPI = {
   forgotPassword: (email: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/auth/forgot-password', { email })),
   resetPassword: (token: string, password: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/auth/reset-password', { token, password })),
   changeInitialPassword: (new_password: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/password/first-change', { new_password })),
-  changePassword: (current_password: string, new_password: string) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/password/change', { current_password, new_password })),
-  listSessions: () => data<EnterpriseSession[]>(enterpriseClient.get('/enterprise/sessions')),
+  changePassword: (current_password: string, new_password: string, options?: EnterpriseReadOptions) => data<{ success: boolean }>(enterpriseClient.post('/enterprise/password/change', { current_password, new_password }, suppressUnavailable(options))),
+  listSessions: (options?: EnterpriseReadOptions) => data<EnterpriseSession[]>(enterpriseClient.get('/enterprise/sessions', suppressUnavailable(options))),
   revokeSession: (id: string) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/sessions/${id}`)),
   revokeAllSessions: () => data<{ success: boolean }>(enterpriseClient.delete('/enterprise/sessions')),
-  getCurrentKey: () => data<EnterpriseEmployeeKey | null>(enterpriseClient.get('/enterprise/keys/current')),
-  getEmployeeHome: () => data<EnterpriseEmployeeHome>(enterpriseClient.get('/enterprise/home')),
-  getEmployeeUsage: () => data<EnterpriseEmployeeUsagePage>(enterpriseClient.get('/enterprise/usage/me')),
+  getCurrentKey: (options?: EnterpriseReadOptions) => data<EnterpriseEmployeeKey | null>(enterpriseClient.get('/enterprise/keys/current', suppressUnavailable(options))),
+  getEmployeeHome: (options?: EnterpriseReadOptions) => data<EnterpriseEmployeeHome>(enterpriseClient.get('/enterprise/home', suppressUnavailable(options))),
+  getEmployeeUsage: (options?: EnterpriseReadOptions) => data<EnterpriseEmployeeUsagePage>(enterpriseClient.get('/enterprise/usage/me', suppressUnavailable(options))),
   listEmployeeUsage: (params?: { start_at?: string; end_at?: string; page?: number; page_size?: number }, options?: { suppressUnavailableRedirect?: boolean }) =>
     data<EnterprisePaginated<EnterpriseEmployeeUsageRecord>>(enterpriseClient.get('/enterprise/usage/me/details', { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
-  getEmployeeUsageTrend: (params?: { start_at?: string; end_at?: string }) =>
-    data<EnterpriseEmployeeUsageTrendPoint[]>(enterpriseClient.get('/enterprise/usage/me/trend', { params })),
-  getEmployeeProfile: () => data<EnterpriseEmployee>(enterpriseClient.get('/enterprise/profile')),
+  getEmployeeUsageTrend: (params?: { start_at?: string; end_at?: string }, options?: EnterpriseReadOptions) =>
+    data<EnterpriseEmployeeUsageTrendPoint[]>(enterpriseClient.get('/enterprise/usage/me/trend', { params, ...(suppressUnavailable(options) ?? {}) })),
+  getEmployeeProfile: (options?: EnterpriseReadOptions) => data<EnterpriseEmployee>(enterpriseClient.get('/enterprise/profile', suppressUnavailable(options))),
   setAllocation: (subscriptionId: number, employeeId: number, input: { enterprise_id: number; window_type: 'week'; window_anchor: string; credit: string; expected_version: number; reason: string }) => data<{ id: number; version: number }>(enterpriseClient.put(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, input)),
-  getAllocationSummary: (subscriptionId: number, employeeId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }) => data<EnterpriseAllocationSummary>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, { params })),
+  getAllocationSummary: (subscriptionId: number, employeeId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }, options?: EnterpriseReadOptions) => data<EnterpriseAllocationSummary>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations/${employeeId}`, { params, ...(suppressUnavailable(options) ?? {}) })),
   listSubscriptionAllocations: (subscriptionId: number, params: { enterprise_id: number; window_type: 'week'; window_anchor: string }, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseAllocationListResult>(enterpriseClient.get(`/enterprise/subscriptions/${subscriptionId}/allocations`, { params, ...(options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : {}) })),
   createKey: () => withEnterpriseKeyMutation('create', 0, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
     enterpriseClient.post('/enterprise/keys', undefined, idempotencyHeaders(idempotencyKey)),
@@ -312,7 +316,7 @@ export const enterpriseAPI = {
   resetEmployeePassword: (id: number) => data<{ initial_password: string; must_change_password: boolean }>(enterpriseClient.post(`/enterprise/admin/employees/${id}/reset-password`)),
   updateEmployee: (id: number, input: EmployeeUpdateInput) => data<{ success: boolean }>(enterpriseClient.patch(`/enterprise/admin/employees/${id}`, input)),
   terminateEmployee: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/employees/${id}`)),
-  getAdminBrand: () => data<EnterpriseBrand>(enterpriseClient.get('/enterprise/admin/brand')),
+  getAdminBrand: (options?: EnterpriseReadOptions) => data<EnterpriseBrand>(enterpriseClient.get('/enterprise/admin/brand', suppressUnavailable(options))),
   updateBrand: (input: EnterpriseBrandUpdate) => data<EnterpriseBrand>(enterpriseClient.put('/enterprise/admin/brand', input)),
   uploadBrandBackground: async (file: File) => {
     const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {

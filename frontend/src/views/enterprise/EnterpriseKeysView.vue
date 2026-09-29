@@ -134,7 +134,7 @@ async function load() {
   loading.value = true
   loadError.value = false
   try {
-    key.value = await enterpriseAPI.getCurrentKey()
+    key.value = await enterpriseAPI.getCurrentKey({ suppressUnavailableRedirect: true })
   } catch {
     loadError.value = true
     appStore.showError(t('enterprise.keys.loadFailed'), 5000)

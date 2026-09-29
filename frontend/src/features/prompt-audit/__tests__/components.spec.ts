@@ -3,10 +3,11 @@ import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import EndpointPool from '../components/EndpointPool.vue'
 import PolicyPanel from '../components/PolicyPanel.vue'
+import RuntimeOverview from '../components/RuntimeOverview.vue'
 import EventWorkspace from '../components/EventWorkspace.vue'
 import EventDetailDialog from '../components/EventDetailDialog.vue'
 import FilterDeleteDialog from '../components/FilterDeleteDialog.vue'
-import type { PromptAuditDraft, PromptAuditEndpointDraft, PromptAuditEvent, PromptEventFilters } from '../types'
+import type { PromptAuditRuntime, PromptAuditDraft, PromptAuditEndpointDraft, PromptAuditEvent, PromptEventFilters } from '../types'
 import { emptyEventFilters, resolveDeleteRangeFilters, SCANNER_CATALOG } from '../viewModel'
 
 vi.mock('vue-i18n', async () => {
@@ -74,6 +75,9 @@ describe('Prompt Audit components', () => {
     const wrapper = mount(PolicyPanel, {
       props: { draft, groups: [{ id: 1, name: 'Alpha', platform: 'openai', status: 'active' }, { id: 2, name: 'Beta', platform: 'claude', status: 'inactive' }] },
     })
+    expect(wrapper.text()).toContain('openai · common.active')
+    expect(wrapper.text()).toContain('claude · common.inactive')
+    expect(wrapper.text()).not.toMatch(/·\s*(active|inactive)\b/)
     expect(wrapper.text()).toContain('99')
     expect(wrapper.findAll('input[type="checkbox"]').filter((input) => SCANNER_CATALOG.some((scanner) => input.attributes('aria-label') === `admin.promptAudit.scanners.${scanner.id}`))).toHaveLength(9)
     await wrapper.get('[aria-label="admin.promptAudit.policy.searchGroups"]').setValue('Beta')
@@ -267,5 +271,20 @@ describe('Prompt Audit components', () => {
     const riskTab = wrapper.findAll('[role="tab"]').find((tab) => tab.text().includes('admin.promptAudit.events.tabs.risks'))
     await riskTab!.trigger('click')
     expect(wrapper.get('[data-test="risk-prompt-full"]').text()).toContain('legacy redacted preview')
+  })
+
+  it('maps runtime dependency and probe statuses to i18n keys instead of raw enums', () => {
+    const runtime = {
+      process_status: 'running', effective_mode: 'async_audit', expected_config_version: 1, active_config_version: 1,
+      worker_total: 1, worker_active: 0, queue_capacity: 10, queue: { active: 0 },
+      database_status: 'ok', redis_status: 'error',
+      endpoints: { 'guard-1': { ok: true, status: 'healthy', message: '', latency_ms: 12, http_status: 200, retryable: false, checked_at: '', token_applied: true } },
+      guard_metrics: { total: 0, allowed: 0, flagged: 0, blocked: 0, unavailable: 0, timeouts: 0, failovers: 0 },
+    } as unknown as PromptAuditRuntime
+    const wrapper = mount(RuntimeOverview, { props: { runtime, loading: false, error: '' } })
+    const text = wrapper.text()
+    expect(text).toContain('DB admin.promptAudit.status.ok · Redis admin.promptAudit.status.error')
+    expect(text).toContain('guard-1 · admin.promptAudit.status.healthy · 12 ms')
+    expect(text).not.toMatch(/DB ok|Redis error|· healthy ·/)
   })
 })

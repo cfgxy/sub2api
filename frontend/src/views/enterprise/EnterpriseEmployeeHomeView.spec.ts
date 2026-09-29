@@ -109,6 +109,7 @@ describe('EnterpriseEmployeeHomeView', () => {
     const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
+    expect(getEmployeeHome).toHaveBeenCalledWith({ suppressUnavailableRedirect: true })
     expect(listEmployeeUsage).toHaveBeenCalledWith({ page: 1, page_size: 5 }, { suppressUnavailableRedirect: true })
     expect(wrapper.text()).toContain('sk-***abcd')
     expect(wrapper.text()).toContain('0.25')

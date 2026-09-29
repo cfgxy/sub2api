@@ -320,7 +320,7 @@ async function save() {
       enterprise_id: enterpriseId.value,
       window_type: 'week',
       window_anchor: windowAnchor.value,
-    }).catch(() => undefined)
+    }, { suppressUnavailableRedirect: true }).catch(() => undefined)
     await enterpriseAPI.setAllocation(subscriptionId.value, form.employee_id, {
       enterprise_id: enterpriseId.value,
       window_type: 'week',

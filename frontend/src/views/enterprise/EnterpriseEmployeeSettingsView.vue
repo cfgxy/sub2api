@@ -113,10 +113,10 @@
             </span>
             <div class="min-w-0">
               <b class="block truncate text-sm text-gray-900 dark:text-white">
-                {{ session.current ? t('enterprise.settings.currentBrowser') : describeUserAgent(session.user_agent) }}
+                {{ session.current ? t('enterprise.settings.currentBrowser') : describeUserAgent(session.user_agent, t) }}
               </b>
               <p class="mt-1 truncate text-xs text-gray-500 dark:text-dark-400">
-                {{ session.current ? t('enterprise.settings.currentSession') : maskIpAddress(session.ip_address) }} ·
+                {{ session.current ? t('enterprise.settings.currentSession') : maskIpAddress(session.ip_address, t) }} ·
                 {{ t('enterprise.settings.lastSeen', { time: relativeTime(session.last_seen_at) }) }}
               </p>
             </div>
@@ -264,7 +264,7 @@ function relativeTime(iso: string): string {
 
 async function loadProfile() {
   try {
-    profile.value = await enterpriseAPI.getEmployeeProfile()
+    profile.value = await enterpriseAPI.getEmployeeProfile({ suppressUnavailableRedirect: true })
   } catch {
     // 只提示固定文案，不回显后端原始错误或内部标识
     appStore.showError(t('enterprise.settings.profileFailed'), 5000)
@@ -275,7 +275,7 @@ async function loadSessions() {
   sessionsLoading.value = true
   sessionsError.value = false
   try {
-    sessions.value = await enterpriseAPI.listSessions()
+    sessions.value = await enterpriseAPI.listSessions({ suppressUnavailableRedirect: true })
   } catch {
     sessionsError.value = true
   } finally {
@@ -287,7 +287,7 @@ async function submitPasswordChange() {
   if (!isPasswordFormFillable.value || passwordValidationMessage.value) return
   saving.value = true
   try {
-    await enterpriseAPI.changePassword(form.current_password, form.new_password)
+    await enterpriseAPI.changePassword(form.current_password, form.new_password, { suppressUnavailableRedirect: true })
     form.current_password = ''
     form.new_password = ''
     form.confirm_password = ''

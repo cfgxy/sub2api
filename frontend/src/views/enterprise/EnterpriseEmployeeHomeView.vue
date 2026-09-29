@@ -299,7 +299,7 @@ async function load() {
   loading.value = true
   loadError.value = false
   try {
-    home.value = await enterpriseAPI.getEmployeeHome()
+    home.value = await enterpriseAPI.getEmployeeHome({ suppressUnavailableRedirect: true })
     usage.value = home.value.usage
     pool.value = home.value.enterprise_pool
     recentTrend.value = home.value.recent_trend

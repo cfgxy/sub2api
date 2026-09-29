@@ -56,3 +56,20 @@ describe('GroupRPMOverridesModal new override validation', () => {
     expect(mocks.batchSetGroupRPMOverrides).toHaveBeenCalledWith(1, [{ user_id: 7, rpm_override: value }])
   })
 })
+
+describe('GroupRPMOverridesModal user status labels', () => {
+  it('maps user_status to i18n keys instead of rendering the raw enum', async () => {
+    mocks.getGroupRPMOverrides.mockResolvedValue([
+      { user_id: 1, user_name: 'a', user_email: 'a@example.com', user_notes: '', user_status: 'active', rpm_override: 100 },
+      { user_id: 2, user_name: 'b', user_email: 'b@example.com', user_notes: '', user_status: 'disabled', rpm_override: 100 },
+    ])
+    const wrapper = mount(GroupRPMOverridesModal, {
+      props: { show: false, group: { id: 1, name: 'Group', platform: 'openai' } as AdminGroup },
+      global: { stubs: { BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /></div>' }, Icon: true, PlatformIcon: true, Pagination: true } }
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const badges = wrapper.findAll('tbody tr span.rounded-full').map(span => span.text())
+    expect(badges).toEqual(['common.active', 'admin.users.disabled'])
+  })
+})

@@ -15,6 +15,8 @@ const OS_PATTERNS: Array<[RegExp, string]> = [
   [/linux/i, 'Linux'],
 ]
 
+type Translate = (key: string) => string
+
 function matchFirst(source: string, patterns: Array<[RegExp, string]>, fallback: string): string {
   for (const [pattern, label] of patterns) {
     if (pattern.test(source)) return label
@@ -23,18 +25,18 @@ function matchFirst(source: string, patterns: Array<[RegExp, string]>, fallback:
 }
 
 /** 从原始 User-Agent 中提取白名单浏览器/系统标签，不回显原始字符串。 */
-export function describeUserAgent(userAgent: string | undefined | null): string {
+export function describeUserAgent(userAgent: string | undefined | null, t: Translate): string {
   const source = (userAgent ?? '').trim()
-  if (!source) return '未知设备'
-  const browser = matchFirst(source, BROWSER_PATTERNS, '未知浏览器')
-  const os = matchFirst(source, OS_PATTERNS, '未知系统')
+  if (!source) return t('enterprise.settings.deviceUnknown')
+  const browser = matchFirst(source, BROWSER_PATTERNS, t('enterprise.settings.browserUnknown'))
+  const os = matchFirst(source, OS_PATTERNS, t('enterprise.settings.osUnknown'))
   return `${browser} · ${os}`
 }
 
 /** 掩码 IP 地址：IPv4 仅保留首段，IPv6 仅保留首个分组，其余替换为 ***。 */
-export function maskIpAddress(ip: string | undefined | null): string {
+export function maskIpAddress(ip: string | undefined | null, t: Translate): string {
   const source = (ip ?? '').trim()
-  if (!source) return '来源不可用'
+  if (!source) return t('enterprise.settings.ipUnavailable')
   if (source.includes('.')) {
     const parts = source.split('.')
     if (parts.length === 4) return `${parts[0]}.***.***.**`

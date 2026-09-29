@@ -36,6 +36,7 @@
         <template #cell-created_at="{ value }">{{ formatDate(value) }}</template>
         <template #cell-actor_ref="{ value }"><span class="break-all">{{ displayActorRef(value) }}</span></template>
         <template #cell-event_type="{ row }">
+          <!-- REVIEW NOTE (SHAN-410/B-5)：title 有意保留原始事件技术标识（如 employee.created）供审计追溯定位，展示文案经 auditEventLabel 走 i18n；SHAN-392 已裁定保留，不修复。 -->
           <span :title="row.event_type">{{ auditEventLabel(row.event_type, t) }}</span>
         </template>
         <template #cell-entity_type="{ row }">

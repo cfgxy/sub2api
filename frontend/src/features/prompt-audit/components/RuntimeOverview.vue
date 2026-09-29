@@ -62,7 +62,7 @@
           </p>
           <div v-if="Object.keys(runtime.endpoints).length" class="mt-3 flex flex-wrap gap-2">
             <span v-for="(probe, id) in runtime.endpoints" :key="id" class="rounded-md px-2 py-1 text-xs" :class="probe.ok ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'">
-              {{ id }} · {{ probe.status }} · {{ probe.latency_ms }} ms
+              {{ id }} · {{ statusLabel(probe.status) }} · {{ probe.latency_ms }} ms
             </span>
           </div>
         </div>
@@ -79,17 +79,18 @@ import type { PromptAuditRuntime } from '../types'
 const props = defineProps<{ runtime: PromptAuditRuntime | null; loading: boolean; error: string }>()
 defineEmits<{ (event: 'refresh'): void }>()
 const { t, locale } = useI18n()
+const KNOWN_STATUSES = new Set(['ok', 'disabled', 'running', 'degraded', 'error', 'healthy', 'failed', 'stale'])
 
 const statusItems = computed(() => {
   const runtime = props.runtime
   if (!runtime) return []
   return [
-    { label: t('admin.promptAudit.runtime.process'), value: t(`admin.promptAudit.status.${runtime.process_status}`), dot: statusDot(runtime.process_status) },
+    { label: t('admin.promptAudit.runtime.process'), value: statusLabel(runtime.process_status), dot: statusDot(runtime.process_status) },
     { label: t('admin.promptAudit.runtime.mode'), value: t(`admin.promptAudit.mode.${runtime.effective_mode}`) },
     { label: t('admin.promptAudit.runtime.version'), value: `${runtime.active_config_version} / ${runtime.expected_config_version}` },
     { label: t('admin.promptAudit.runtime.workers'), value: `${runtime.worker_active} / ${runtime.worker_total}` },
     { label: t('admin.promptAudit.runtime.queue'), value: `${runtime.queue.active} / ${runtime.queue_capacity}` },
-    { label: t('admin.promptAudit.runtime.dependencies'), value: `DB ${runtime.database_status} · Redis ${runtime.redis_status}` },
+    { label: t('admin.promptAudit.runtime.dependencies'), value: `DB ${statusLabel(runtime.database_status)} · Redis ${statusLabel(runtime.redis_status)}` },
   ]
 })
 
@@ -110,6 +111,11 @@ const guardMetricItems = computed(() => {
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))
+}
+
+function statusLabel(status: string): string {
+  const key = `admin.promptAudit.status.${status}`
+  return KNOWN_STATUSES.has(status) ? t(key) : status
 }
 
 function statusDot(status: string): string {

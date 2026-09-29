@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EnterpriseEmployeeSettingsView from './EnterpriseEmployeeSettingsView.vue'
+import { enterpriseTestLocale } from '@/views/admin/__tests__/enterpriseTestI18n'
+import { useAppStore } from '@/stores/app'
 
 vi.mock('vue-i18n', async () => ({
   ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')),
@@ -51,6 +53,7 @@ describe('EnterpriseEmployeeSettingsView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.resetAllMocks()
+    enterpriseTestLocale.value = 'zh'
     getEmployeeProfile.mockResolvedValue({ id: 1, email: 'employee@example.com', status: 'active', must_change_password: false, version: 1 })
     listSessions.mockResolvedValue([currentSession, otherSession])
   })
@@ -67,6 +70,19 @@ describe('EnterpriseEmployeeSettingsView', () => {
     expect(wrapper.find('[data-testid="session-current-tag"]').exists()).toBe(true)
     const revokeButtons = wrapper.findAll('[data-testid="revoke-session"]')
     expect(revokeButtons).toHaveLength(1)
+  })
+
+  it('renders unknown-device and unavailable-source fallbacks in English without any Chinese under the en locale', async () => {
+    enterpriseTestLocale.value = 'en'
+    listSessions.mockResolvedValue([currentSession, { ...otherSession, id: 'sess-blank', user_agent: '', ip_address: '' }])
+    const wrapper = mount(EnterpriseEmployeeSettingsView, mountOptions)
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="session-row"]')
+    expect(rows[1].text()).toContain('Unknown device')
+    expect(rows[1].text()).toContain('Source unavailable')
+    expect(rows[1].text()).not.toMatch(/[\u3400-\u9fff]/)
+    expect(wrapper.text()).not.toContain('未知设备')
   })
 
   it('shows an explicit error state with retry when the session list fails, never a blank empty state', async () => {
@@ -104,9 +120,26 @@ describe('EnterpriseEmployeeSettingsView', () => {
     expect(wrapper.get('[data-testid="submit-password"]').attributes('disabled')).toBeUndefined()
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(changePassword).toHaveBeenCalledWith('old-password-1', 'longenough12345')
+    expect(changePassword).toHaveBeenCalledWith('old-password-1', 'longenough12345', { suppressUnavailableRedirect: true })
     expect(clear).toHaveBeenCalled()
     expect(replace).toHaveBeenCalledWith('/enterprise/login')
+  })
+
+  it('keeps the fixed wrong-password message reachable: no logout or redirect after INVALID_CREDENTIALS', async () => {
+    changePassword.mockRejectedValue({ status: 401, reason: 'INVALID_CREDENTIALS', message: 'invalid email or password' })
+    const wrapper = mount(EnterpriseEmployeeSettingsView, mountOptions)
+    await flushPromises()
+    await wrapper.get('[data-testid="current-password"] input').setValue('wrong-password')
+    await wrapper.get('[data-testid="new-password"] input').setValue('longenough12345')
+    await wrapper.get('[data-testid="confirm-password"] input').setValue('longenough12345')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(changePassword).toHaveBeenCalledWith('wrong-password', 'longenough12345', { suppressUnavailableRedirect: true })
+    expect(clear).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="submit-password"]').attributes('disabled')).toBeUndefined()
+    expect(useAppStore().toasts.map((toast) => toast.message)).toContain('密码更新失败，请确认当前密码是否正确')
   })
 
   it('revokes a single non-current session after confirmation and reloads the list', async () => {

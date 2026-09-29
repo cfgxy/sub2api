@@ -25,7 +25,7 @@
         </RouterLink>
       </div>
 
-      <form v-else class="space-y-5" :aria-busy="loading" @submit.prevent="submit">
+      <form v-else class="space-y-5" novalidate :aria-busy="loading" @submit.prevent="submit">
         <p v-if="error" role="alert" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
           {{ error }}
         </p>

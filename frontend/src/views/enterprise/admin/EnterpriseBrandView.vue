@@ -163,7 +163,7 @@ async function load() {
   validationError.value = ''
   savedSummary.value = ''
   try {
-    applyBrand(await enterpriseAPI.getAdminBrand())
+    applyBrand(await enterpriseAPI.getAdminBrand({ suppressUnavailableRedirect: true }))
   } catch {
     validationError.value = '品牌信息加载失败，已显示平台默认值'
   } finally {
