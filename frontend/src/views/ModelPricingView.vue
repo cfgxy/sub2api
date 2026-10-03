@@ -10,18 +10,42 @@
         <span class="model-pricing-badge">静态参考价</span>
       </section>
 
-      <section class="apinoria-pricing" v-html="content" aria-label="模型价格参考表"></section>
+      <section v-if="loading" class="apinoria-pricing" role="status">正在加载价格内容…</section>
+      <section v-else-if="loadFailed" class="apinoria-pricing" role="alert">
+        价格内容加载失败。<button type="button" @click="loadContent">重试</button>
+      </section>
+      <section v-else class="apinoria-pricing" v-html="content" aria-label="模型价格参考表"></section>
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import { getModelPricingContent } from '@/api/modelPricing'
 import '@/styles/model-pricing.css'
 import { renderModelPricingMarkdown } from './modelPricingContent'
 
-const content = computed(() => renderModelPricingMarkdown())
+const content = ref('')
+const loading = ref(true)
+const loadFailed = ref(false)
+let controller: AbortController | undefined
+
+async function loadContent() {
+  controller = new AbortController()
+  loading.value = true
+  loadFailed.value = false
+  try {
+    content.value = renderModelPricingMarkdown(await getModelPricingContent(controller.signal))
+  } catch {
+    if (!controller.signal.aborted) loadFailed.value = true
+  } finally {
+    if (!controller.signal.aborted) loading.value = false
+  }
+}
+
+onMounted(() => { void loadContent() })
+onBeforeUnmount(() => controller?.abort())
 </script>
 
 <style scoped>
