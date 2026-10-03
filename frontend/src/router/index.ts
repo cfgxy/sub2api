@@ -21,7 +21,7 @@ import { enterpriseAPI } from '@/api/enterprise'
 /**
  * Route definitions with lazy loading
  */
-const routes: RouteRecordRaw[] = [
+export const routes: RouteRecordRaw[] = [
   ...enterpriseRoutes,
   // ==================== Setup Routes ====================
   {
@@ -198,6 +198,17 @@ const routes: RouteRecordRaw[] = [
       requiresAuth: false,
       title: 'Model Plaza',
       titleKey: 'modelPlaza.title'
+    }
+  },
+  {
+    path: '/model-pricing',
+    name: 'ModelPricing',
+    component: () => import('@/views/ModelPricingView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: '模型与价格',
+      titleKey: 'nav.modelPricing'
     }
   },
 

@@ -1,0 +1,308 @@
+/* Optional theme: apply this class to the container of rendered Markdown. */
+.apinoria-pricing {
+  color-scheme: dark;
+  --ap-bg: #0b1422;
+  --ap-text: #edf3f8;
+  --ap-muted: #9baac0;
+  --ap-line: #25364b;
+  --ap-accent: #34d5db;
+  box-sizing: border-box;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 40px 36px 30px;
+  background: var(--ap-bg);
+  color: var(--ap-text);
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.8;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.apinoria-pricing *,
+.apinoria-pricing *::before,
+.apinoria-pricing *::after {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+
+.apinoria-pricing h1,
+.apinoria-pricing h2,
+.apinoria-pricing h3 {
+  border: 0;
+  color: var(--ap-text);
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.apinoria-pricing h1 {
+  margin: 0 0 6px;
+  font-size: 30px;
+}
+
+.apinoria-pricing h1 + p {
+  margin: 0 0 24px;
+  color: var(--ap-muted);
+  font-size: 13px;
+}
+
+.apinoria-pricing h2 {
+  margin: 32px 0 6px;
+  padding-top: 22px;
+  border-top: 1px solid var(--ap-line);
+  font-size: 19px;
+}
+
+.apinoria-pricing h2::before {
+  display: inline-block;
+  width: 3px;
+  height: 16px;
+  margin-right: 10px;
+  background: var(--ap-accent);
+  content: "";
+  vertical-align: -1px;
+}
+
+.apinoria-pricing h3 {
+  margin: 24px 0 10px;
+  font-size: 15px;
+}
+
+.apinoria-pricing p {
+  margin: 8px 0 14px;
+  color: var(--ap-muted);
+}
+
+.apinoria-pricing h2 + p {
+  margin: 0 0 16px 13px;
+  font-size: 13px;
+}
+
+.apinoria-pricing blockquote {
+  margin: 0;
+  padding: 2px 0 2px 18px;
+  border: 0;
+  border-left: 2px solid var(--ap-accent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.apinoria-pricing blockquote p {
+  margin: 3px 0;
+  font-size: 13px;
+}
+
+.apinoria-pricing strong {
+  color: var(--ap-text);
+  font-weight: 650;
+}
+
+.apinoria-pricing blockquote > p:first-child strong {
+  color: var(--ap-accent);
+}
+
+.apinoria-pricing table {
+  display: table;
+  width: 100%;
+  margin: 0 0 14px;
+  border: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.apinoria-pricing th,
+.apinoria-pricing td {
+  padding: 14px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--ap-line);
+  vertical-align: middle;
+}
+
+.apinoria-pricing th {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  background: #101f31;
+  color: #c4d0df;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.apinoria-pricing td {
+  background: transparent;
+  color: var(--ap-muted);
+}
+
+.apinoria-pricing tr {
+  border: 0;
+  background: transparent;
+}
+
+.apinoria-pricing th:first-child,
+.apinoria-pricing td:first-child {
+  width: 30%;
+  text-align: left;
+}
+
+.apinoria-pricing td:not(:first-child) {
+  white-space: nowrap;
+}
+
+.apinoria-pricing tbody tr:hover td {
+  background: #102334;
+}
+
+.apinoria-pricing td strong {
+  color: var(--ap-accent);
+  font-weight: 650;
+}
+
+.apinoria-pricing .pricing-reference {
+  display: inline-block;
+  margin-right: 0.35rem;
+  border: 1px solid rgb(52 213 219 / 0.45);
+  border-radius: 999px;
+  padding: 0 0.35rem;
+  color: var(--ap-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: 0.08em;
+}
+
+.apinoria-pricing code {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #e3edf6;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: normal;
+}
+
+.apinoria-pricing code::before,
+.apinoria-pricing code::after {
+  content: none;
+}
+
+.apinoria-pricing table:last-of-type th:first-child,
+.apinoria-pricing table:last-of-type td:first-child {
+  width: 25%;
+}
+
+.apinoria-pricing table:last-of-type th:last-child,
+.apinoria-pricing table:last-of-type td:last-child {
+  width: 33%;
+  white-space: normal;
+}
+
+.apinoria-pricing table:last-of-type th:nth-child(3),
+.apinoria-pricing table:last-of-type td:nth-child(3) {
+  width: 10%;
+}
+
+.apinoria-pricing table:last-of-type + p {
+  font-size: 12px;
+}
+
+.apinoria-pricing hr {
+  height: 1px;
+  margin: 28px 0 0;
+  border: 0;
+  background: var(--ap-line);
+}
+
+.apinoria-pricing ul {
+  margin: 0 0 20px;
+  padding-left: 18px;
+  color: var(--ap-muted);
+  font-size: 12px;
+}
+
+.apinoria-pricing li {
+  margin: 4px 0;
+}
+
+.apinoria-pricing li::marker {
+  color: #657c98;
+}
+
+.apinoria-pricing ul ~ p {
+  margin: 6px 0;
+  color: #8296af;
+  font-size: 12px;
+}
+
+.apinoria-pricing a {
+  color: #70bdff;
+  text-decoration: none;
+  text-underline-offset: 3px;
+}
+
+.apinoria-pricing a:hover {
+  color: var(--ap-accent);
+  text-decoration: underline;
+}
+
+.apinoria-pricing a:focus-visible {
+  outline: 2px solid var(--ap-accent);
+  outline-offset: 4px;
+}
+
+@media (max-width: 700px) {
+  .apinoria-pricing {
+    padding: 26px 16px;
+  }
+
+  .apinoria-pricing h1 {
+    font-size: 25px;
+  }
+
+  .apinoria-pricing h2 {
+    margin-top: 26px;
+    font-size: 18px;
+  }
+
+  .apinoria-pricing table {
+    display: block;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-color: #3d5b77 var(--ap-bg);
+    scrollbar-width: thin;
+  }
+
+  .apinoria-pricing th,
+  .apinoria-pricing td {
+    min-width: 150px;
+    padding: 12px 10px;
+  }
+
+  .apinoria-pricing th:first-child,
+  .apinoria-pricing td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: auto;
+    min-width: 154px;
+    max-width: 154px;
+    background: var(--ap-bg);
+    box-shadow: 1px 0 0 var(--ap-line);
+  }
+
+  .apinoria-pricing th:first-child {
+    background: #101f31;
+  }
+
+  .apinoria-pricing table:last-of-type th:last-child,
+  .apinoria-pricing table:last-of-type td:last-child {
+    min-width: 180px;
+  }
+
+  .apinoria-pricing code {
+    font-size: 12px;
+  }
+}
