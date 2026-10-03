@@ -23,5 +23,9 @@ describe('production bundle', () => {
       .map((importedFileName) => [chunk.fileName, importedFileName].sort().join(' <-> ')))
 
     expect([...new Set(mutualImports)]).toEqual([])
+    expect(outputs.flatMap((output) => output.output).some((item) => {
+      const content = item.type === 'chunk' ? item.code : String(item.source)
+      return content.includes('充值 ¥1 = $1 站内 API 额度')
+    })).toBe(false)
   }, 120_000)
 })
