@@ -99,6 +99,27 @@ func TestOIDCParseAndValidateIDToken(t *testing.T) {
 
 	_, err = oidcParseAndValidateIDToken(context.Background(), cfg, signed, "bad-nonce")
 	require.Error(t, err)
+
+	for _, tc := range []struct {
+		name   string
+		change func(*oidcIDTokenClaims)
+	}{
+		{name: "issuer不一致", change: func(c *oidcIDTokenClaims) { c.Issuer = "https://other.example.com" }},
+		{name: "audience不一致", change: func(c *oidcIDTokenClaims) { c.Audience = jwt.ClaimStrings{"other-client"} }},
+		{name: "授权方不一致", change: func(c *oidcIDTokenClaims) { c.Azp = "other-client" }},
+		{name: "令牌过期", change: func(c *oidcIDTokenClaims) { c.ExpiresAt = jwt.NewNumericDate(now.Add(-10 * time.Minute)) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invalidClaims := claims
+			tc.change(&invalidClaims)
+			token := jwt.NewWithClaims(jwt.SigningMethodRS256, invalidClaims)
+			token.Header["kid"] = kid
+			invalidToken, err := token.SignedString(priv)
+			require.NoError(t, err)
+			_, err = oidcParseAndValidateIDToken(context.Background(), cfg, invalidToken, "nonce-ok")
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestOIDCParseUserInfoIncludesSuggestedProfile(t *testing.T) {
