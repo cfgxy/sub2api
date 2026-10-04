@@ -269,14 +269,10 @@
 
   .apinoria-pricing th:first-child,
   .apinoria-pricing td:first-child {
-    position: sticky;
-    left: 0;
-    z-index: 1;
     width: auto;
     min-width: 154px;
     max-width: 154px;
     background: var(--ap-bg);
-    box-shadow: 1px 0 0 var(--ap-line);
   }
 
   .apinoria-pricing th:first-child {
