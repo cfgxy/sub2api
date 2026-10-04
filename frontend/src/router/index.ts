@@ -188,6 +188,16 @@ const routes: RouteRecordRaw[] = [
 
   // ==================== User Routes ====================
   {
+    path: '/model-pricing',
+    name: 'ModelPricing',
+    component: () => import('@/views/ModelPricingView.vue'),
+    meta: {
+      requiresAuth: true,
+      title: '模型与价格',
+      titleKey: 'modelPricing.title'
+    }
+  },
+  {
     path: '/',
     redirect: '/home'
   },
