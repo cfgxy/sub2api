@@ -357,6 +357,9 @@ type UpdateSettingsRequest struct {
 	// Plugin management menu visibility switch; plugin runtime is unaffected.
 	PluginManagementEnabled *bool `json:"plugin_management_enabled"`
 
+	// Auto update check switch: gates automatic (non-forced) release checks.
+	AutoUpdateCheckEnabled *bool `json:"auto_update_check_enabled"`
+
 	// Affiliate (邀请返利) feature switch
 	AffiliateEnabled *bool `json:"affiliate_enabled"`
 
@@ -1995,6 +1998,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.PluginManagementEnabled
 			}
 			return previousSettings.PluginManagementEnabled
+		}(),
+		AutoUpdateCheckEnabled: func() bool {
+			if req.AutoUpdateCheckEnabled != nil {
+				return *req.AutoUpdateCheckEnabled
+			}
+			return previousSettings.AutoUpdateCheckEnabled
 		}(),
 		AffiliateEnabled: func() bool {
 			if req.AffiliateEnabled != nil {

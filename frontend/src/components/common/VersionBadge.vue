@@ -911,8 +911,12 @@ function handleClickOutside(event: MouseEvent) {
 
 onMounted(() => {
   if (isAdmin.value) {
-    // Use cached version if available, otherwise fetch
-    appStore.fetchVersion(false)
+    // Automatic (non-forced) probe only while the auto-update-check switch is
+    // not explicitly off; manual refresh (force=true) is unaffected.
+    if (appStore.cachedPublicSettings?.auto_update_check_enabled !== false) {
+      // Use cached version if available, otherwise fetch
+      appStore.fetchVersion(false)
+    }
   }
   document.addEventListener('click', handleClickOutside)
 })

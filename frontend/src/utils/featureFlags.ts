@@ -119,6 +119,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Plugin Management',
   }),
+  autoUpdateCheck: defineFlag({
+    key: 'auto_update_check_enabled',
+    mode: 'opt-out',
+    label: 'Auto Update Check',
+  }),
   payment: defineFlag({
     key: 'payment_enabled',
     mode: 'opt-out',

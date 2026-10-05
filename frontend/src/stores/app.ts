@@ -253,6 +253,13 @@ export const useAppStore = defineStore('app', () => {
       }
     }
 
+    // Auto update check switch (opt-out): an explicit false stops automatic
+    // (non-forced) probes so the UI never surfaces an unprompted update badge.
+    // Manual checks (force=true) always pass. Mirrors the backend gate.
+    if (!force && cachedPublicSettings.value?.auto_update_check_enabled === false) {
+      return null
+    }
+
     // Prevent duplicate requests
     if (versionLoading.value) {
       return null
@@ -376,6 +383,7 @@ export const useAppStore = defineStore('app', () => {
         model_plaza_enabled: false,
         model_plaza_require_auth: false,
         plugin_management_enabled: false,
+        auto_update_check_enabled: true,
         risk_control_enabled: false,
         service_quota_enabled: false,
         affiliate_enabled: false,
