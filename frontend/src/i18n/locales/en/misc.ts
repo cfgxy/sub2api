@@ -1,4 +1,8 @@
 export default {
+  modelPricing: {
+    title: 'Models & Prices',
+    loadFailed: 'Unable to load reference prices. Please sign in again or try later.'
+  },
 
   // Subscription Progress (Header component)
   subscriptionProgress: {
