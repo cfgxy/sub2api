@@ -983,6 +983,13 @@ linuxdo_connect:
 # Generic OIDC OAuth Login (SSO)
 # 通用 OIDC OAuth 登录（用于 Sub2API 用户登录）
 # =============================================================================
+# NodeLoc 可复用本段，登录按钮名称设为 provider_name: "NodeLoc"。
+# 接入步骤、身份键与 callback 清单见 docs/NODELOC_LINUXDO_LOGIN.md。
+# Discovery 必须由后端获取；按实际 metadata 确认 issuer_url，不在浏览器拉取。
+# 候选 Discovery 路径（启用前须在部署环境验证返回 JSON）：
+# - https://www.nodeloc.com/.well-known/openid-configuration
+# - https://www.nodeloc.com/oauth-provider/.well-known/openid-configuration
+# 无真实 Client ID / Secret 时保持 disabled，禁止为通过联调关闭 ID Token 校验。
 oidc_connect:
   enabled: false
   provider_name: "OIDC"
