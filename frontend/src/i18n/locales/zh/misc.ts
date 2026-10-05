@@ -1,4 +1,8 @@
 export default {
+  modelPricing: {
+    title: '模型与价格',
+    loadFailed: '参考价格加载失败，请重新登录或稍后重试。'
+  },
 
   // Subscription Progress (Header component)
   subscriptionProgress: {
