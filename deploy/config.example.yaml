@@ -947,14 +947,16 @@ totp:
 # =============================================================================
 linuxdo_connect:
   enabled: false
+  # client_secret 仅允许写入服务端 Secret 或环境配置，不进入前端、日志或 Git
   client_id: ""
   client_secret: ""
   authorize_url: "https://connect.linux.do/oauth2/authorize"
   token_url: "https://connect.linux.do/oauth2/token"
   userinfo_url: "https://connect.linux.do/api/user"
   scopes: "user"
-  # 示例: "https://your-domain.com/api/v1/auth/oauth/linuxdo/callback"
+  # 需在 Linux DO 应用后台登记："https://your-domain.com/api/v1/auth/oauth/linuxdo/callback"
   redirect_url: ""
+  # 外部身份使用 provider 返回的不可变 id，不使用 username/name 作为唯一键
   # 安全提示：
   # - 建议使用同源相对路径（以 / 开头），避免把 token 重定向到意外的第三方域名
   # - 该地址不应包含 #fragment（本实现使用 URL fragment 传递 access_token）
@@ -968,16 +970,19 @@ linuxdo_connect:
 
 # =============================================================================
 # Generic OIDC OAuth Login (SSO)
-# 通用 OIDC OAuth 登录（用于 Sub2API 用户登录）
+# 通用 OIDC OAuth 登录（NodeLoc 等 OIDC provider 均复用此入口）
 # =============================================================================
 oidc_connect:
   enabled: false
-  provider_name: "OIDC"
+  # NodeLoc 配置示例：provider_name="NodeLoc"，其他 OIDC provider 可改为实际名称
+  provider_name: "NodeLoc"
+  # client_secret 仅允许写入服务端 Secret 或环境配置，不进入前端、日志或 Git
   client_id: ""
   client_secret: ""
-  # 例如: "https://keycloak.example.com/realms/myrealm"
+  # NodeLoc："https://www.nodeloc.com"；其他 provider 填写 Discovery 返回的 issuer
   issuer_url: ""
-  # 可选: OIDC Discovery URL。为空时可手动填写 authorize/token/userinfo/jwks
+  # NodeLoc："https://www.nodeloc.com/.well-known/openid-configuration"
+  # 为空时按 issuer_url 推导；也可填写 provider 提供的其他 Discovery URL
   discovery_url: ""
   authorize_url: ""
   token_url: ""
@@ -985,16 +990,19 @@ oidc_connect:
   userinfo_url: ""
   # validate_id_token=true 时必填
   jwks_url: ""
-  scopes: "openid email profile"
-  # 示例: "https://your-domain.com/api/v1/auth/oauth/oidc/callback"
+  # NodeLoc 推荐 "openid profile"；需要 email 时按 Discovery/claims 实际支持情况添加
+  scopes: "openid profile"
+  # 需在 NodeLoc 应用后台登记："https://your-domain.com/api/v1/auth/oauth/oidc/callback"
   redirect_url: ""
+  # 外部身份使用 issuer + OIDC sub，不使用 preferred_username/name/email 作为唯一键
+  # Discovery 必须由后端获取，避免浏览器直接请求 well-known 产生 CORS 问题
   # 安全提示：
   # - 建议使用同源相对路径（以 / 开头），避免把 token 重定向到意外的第三方域名
   # - 该地址不应包含 #fragment（本实现使用 URL fragment 传递 access_token）
   frontend_redirect_url: "/auth/oidc/callback"
   token_auth_method: "client_secret_post" # client_secret_post | client_secret_basic | none
   # 注意：当 token_auth_method=none（public client）时，必须启用 PKCE
-  use_pkce: false
+  use_pkce: true
   # 开启后强制校验 id_token 的签名和 claims（推荐）
   validate_id_token: true
   allowed_signing_algs: "RS256,ES256,PS256"
