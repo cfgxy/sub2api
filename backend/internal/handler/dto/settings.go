@@ -331,6 +331,9 @@ type SystemSettings struct {
 	ModelPlazaDescription   string `json:"model_plaza_description"`
 	PluginManagementEnabled bool   `json:"plugin_management_enabled"`
 
+	// Auto update check switch: gates automatic (non-forced) release checks.
+	AutoUpdateCheckEnabled bool `json:"auto_update_check_enabled"`
+
 	// 风控中心功能开关
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
@@ -439,6 +442,8 @@ type PublicSettings struct {
 	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth   bool `json:"model_plaza_require_auth"`
 	PluginManagementEnabled bool `json:"plugin_management_enabled"`
+
+	AutoUpdateCheckEnabled bool `json:"auto_update_check_enabled"`
 
 	AffiliateEnabled bool `json:"affiliate_enabled"`
 

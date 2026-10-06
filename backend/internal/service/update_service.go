@@ -59,12 +59,19 @@ type GitHubReleaseClient interface {
 	FetchChecksumFile(ctx context.Context, url string) ([]byte, error)
 }
 
+// AutoUpdateCheckGate reports whether automatic (non-forced) version checks are
+// enabled. Implemented by SettingService; nil gate means "always enabled".
+type AutoUpdateCheckGate interface {
+	IsAutoUpdateCheckEnabled(ctx context.Context) bool
+}
+
 // UpdateService handles software updates
 type UpdateService struct {
 	cache          UpdateCache
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
+	autoCheckGate  AutoUpdateCheckGate
 }
 
 // NewUpdateService creates a new UpdateService
@@ -75,6 +82,12 @@ func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, versi
 		currentVersion: version,
 		buildType:      buildType,
 	}
+}
+
+// SetAutoUpdateCheckGate wires the settings-backed gate consulted before
+// non-forced checks. Used by the DI provider; tests may pass a stub.
+func (s *UpdateService) SetAutoUpdateCheckGate(gate AutoUpdateCheckGate) {
+	s.autoCheckGate = gate
 }
 
 // UpdateInfo contains update information
@@ -132,6 +145,18 @@ type GitHubAsset struct {
 // CheckUpdate checks for available updates
 func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInfo, error) {
 	// Try cache first
+	// Auto update check toggle: when disabled, non-forced checks stop entirely —
+	// no cache reads, no outbound GitHub requests. Manual (force) checks and the
+	// update/rollback flows still go through.
+	if !force && s.autoCheckGate != nil && !s.autoCheckGate.IsAutoUpdateCheckEnabled(ctx) {
+		return &UpdateInfo{
+			CurrentVersion: s.currentVersion,
+			LatestVersion:  s.currentVersion,
+			HasUpdate:      false,
+			BuildType:      s.buildType,
+		}, nil
+	}
+
 	if !force {
 		if cached, err := s.getFromCache(ctx); err == nil && cached != nil {
 			return cached, nil

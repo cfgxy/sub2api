@@ -224,6 +224,11 @@ type SystemSettings struct {
 	ModelPlazaDescription   string `json:"model_plaza_description"`
 	PluginManagementEnabled bool   `json:"plugin_management_enabled"`
 
+	// Auto update check switch: gates automatic (non-forced) release checks.
+	// See SettingKeyAutoUpdateCheckEnabled; default enabled (opt-out) so legacy
+	// deployments without this key keep the pre-toggle behavior.
+	AutoUpdateCheckEnabled bool `json:"auto_update_check_enabled"`
+
 	// Claude Code version check
 	MinClaudeCodeVersion string
 	MaxClaudeCodeVersion string
@@ -410,6 +415,9 @@ type PublicSettings struct {
 	ModelPlazaEnabled       bool `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth   bool `json:"model_plaza_require_auth"`
 	PluginManagementEnabled bool `json:"plugin_management_enabled"`
+
+	// Auto update check switch (see SystemSettings.AutoUpdateCheckEnabled)
+	AutoUpdateCheckEnabled bool `json:"auto_update_check_enabled"`
 
 	// Affiliate (邀请返利) feature toggle
 	AffiliateEnabled bool `json:"affiliate_enabled"`

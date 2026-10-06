@@ -563,6 +563,14 @@ const (
 	// not stop or otherwise change already loaded plugin runtimes.
 	SettingKeyPluginManagementEnabled = "plugin_management_enabled"
 
+	// SettingKeyAutoUpdateCheckEnabled controls whether the system automatically
+	// probes for new releases. When false the backend skips non-forced version
+	// checks (no outbound release requests) and the admin UI suppresses the
+	// automatic "new version" badge; a manual check (force=true) still works.
+	// Defaults to true (opt-out): legacy deployments without this key must keep
+	// the pre-toggle behavior, so absent/unreadable values read as enabled.
+	SettingKeyAutoUpdateCheckEnabled = "auto_update_check_enabled"
+
 	// SettingKeyUpstreamBillingProbeSettings stores the global enable switch and interval
 	// for probing remote Sub2API API-key billing metadata.
 	SettingKeyUpstreamBillingProbeSettings = "upstream_billing_probe_settings"

@@ -63,3 +63,21 @@ describe('resolveFeatureFlag', () => {
     expect(isFeatureFlagEnabled(FeatureFlags.subscription)).toBe(false)
   })
 })
+
+describe('FeatureFlags.autoUpdateCheck', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('registers as an opt-out flag on auto_update_check_enabled', () => {
+    expect(FeatureFlags.autoUpdateCheck.key).toBe('auto_update_check_enabled')
+    expect(FeatureFlags.autoUpdateCheck.mode).toBe('opt-out')
+  })
+
+  it('resolves three toggle states: absent/enabled default on, explicit false off', () => {
+    expect(resolveFeatureFlag(undefined, FeatureFlags.autoUpdateCheck)).toBe(true)
+    expect(resolveFeatureFlag({} as PublicSettings, FeatureFlags.autoUpdateCheck)).toBe(true)
+    expect(resolveFeatureFlag({ auto_update_check_enabled: true } as PublicSettings, FeatureFlags.autoUpdateCheck)).toBe(true)
+    expect(resolveFeatureFlag({ auto_update_check_enabled: false } as PublicSettings, FeatureFlags.autoUpdateCheck)).toBe(false)
+  })
+})

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
+import { checkUpdates } from '@/api/admin/system'
 import { getPublicSettings } from '@/api/auth'
 import type { PublicSettings } from '@/types'
 
@@ -60,6 +61,7 @@ function createPublicSettings(overrides: Partial<PublicSettings> = {}): PublicSe
     model_plaza_enabled: false,
     model_plaza_require_auth: false,
     plugin_management_enabled: false,
+    auto_update_check_enabled: true,
     service_quota_enabled: false,
     affiliate_enabled: false,
     ...overrides,
@@ -477,5 +479,49 @@ describe('useAppStore', () => {
       expect(localStorage.getItem('table-page-size')).toBeNull()
       expect(localStorage.getItem('table-page-size-source')).toBeNull()
     })
+  })
+})
+
+describe('useAppStore.fetchVersion 自动检查更新开关', () => {
+  const versionPayload = {
+    current_version: '1.0.0',
+    latest_version: '1.1.0',
+    has_update: true,
+    cached: false,
+    build_type: 'source'
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(checkUpdates).mockReset()
+  })
+
+  it('开关关闭时不发起自动（非强制）检查', async () => {
+    const store = useAppStore()
+    store.cachedPublicSettings = createPublicSettings({ auto_update_check_enabled: false })
+
+    await expect(store.fetchVersion(false)).resolves.toBeNull()
+    expect(checkUpdates).not.toHaveBeenCalled()
+  })
+
+  it('开关关闭时手动检查（force=true）仍放行', async () => {
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    const store = useAppStore()
+    store.cachedPublicSettings = createPublicSettings({ auto_update_check_enabled: false })
+
+    const result = await store.fetchVersion(true)
+    expect(checkUpdates).toHaveBeenCalledWith(true)
+    expect(result?.has_update).toBe(true)
+  })
+
+  it('开关开启或未配置（legacy 缺省）时自动检查照常发起', async () => {
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    for (const enabled of [true, undefined]) {
+      const store = useAppStore()
+      store.cachedPublicSettings = createPublicSettings({ auto_update_check_enabled: enabled })
+
+      await store.fetchVersion(false)
+      expect(checkUpdates).toHaveBeenCalledWith(false)
+    }
   })
 })
