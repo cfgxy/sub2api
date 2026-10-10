@@ -1,6 +1,10 @@
-# Automated image build: every merge (push) into offcial-base publishes
-# ghcr.io/cfgxy/sub2api:<YYYYMMDD-N> plus the moving tag "offcial-base".
-# N increments per day based on existing ghcr tags (fallback: run number).
+# Automated image build: every merge (push) into main or offcial-base publishes
+# ghcr.io/cfgxy/sub2api:<YYYYMMDD-N> plus the moving tag named after the source
+# branch (github.ref_name), so main and offcial-base never overwrite each
+# other's moving tag. <YYYYMMDD-N> shares one daily sequence across both
+# branches; N increments per day based on existing ghcr tags (fallback: run
+# number). A single branch-agnostic concurrency group serializes builds to
+# avoid tag-sequence races.
 # Frontend and Go toolchain run natively on the amd64 runner
 # (BUILDPLATFORM stages + CGO_ENABLED=0 cross-compile); QEMU covers the
 # target-platform alpine layers only.
@@ -8,11 +12,11 @@ name: docker-image
 
 on:
   push:
-    branches: [offcial-base]
+    branches: [main, offcial-base]
   workflow_dispatch:
 
 concurrency:
-  group: docker-image-offcial-base
+  group: docker-image
   cancel-in-progress: false
 
 permissions:
@@ -55,7 +59,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/cfgxy/sub2api:${{ steps.version.outputs.tag }}
-            ghcr.io/cfgxy/sub2api:offcial-base
+            ghcr.io/cfgxy/sub2api:${{ github.ref_name }}
           build-args: |
             VERSION=${{ steps.version.outputs.tag }}
             COMMIT=${{ github.sha }}
