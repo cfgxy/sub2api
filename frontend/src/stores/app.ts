@@ -43,6 +43,8 @@ export const useAppStore = defineStore('app', () => {
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
+  let automaticVersionGeneration = 0
+  let versionResultIsManual = false
 
   // Auto-incrementing ID for toasts
   let toastIdCounter = 0
@@ -241,6 +243,15 @@ export const useAppStore = defineStore('app', () => {
    * @param force - Force refresh from API
    */
   async function fetchVersion(force = false): Promise<VersionInfo | null> {
+    // 未注水时先等待配置，避免首次挂载在关闭态发起自动检查。
+    if (!force && !cachedPublicSettings.value) {
+      await fetchPublicSettings()
+    }
+    // 门控先于缓存；手动检查及其已展示的结果不受自动开关限制。
+    if (!force && cachedPublicSettings.value?.auto_update_check_enabled === false) {
+      return null
+    }
+
     // Return cached data if available and not forcing refresh
     if (versionLoaded.value && !force) {
       return {
@@ -253,21 +264,21 @@ export const useAppStore = defineStore('app', () => {
       }
     }
 
-    // Auto update check switch (opt-out): an explicit false stops automatic
-    // (non-forced) probes so the UI never surfaces an unprompted update badge.
-    // Manual checks (force=true) always pass. Mirrors the backend gate.
-    if (!force && cachedPublicSettings.value?.auto_update_check_enabled === false) {
-      return null
-    }
-
     // Prevent duplicate requests
     if (versionLoading.value) {
       return null
     }
 
+    const generation = automaticVersionGeneration
     versionLoading.value = true
     try {
       const data = await checkUpdatesAPI(force)
+      // 开关转换使旧自动请求失效，包括开→关→开；手动结果仍可回写。
+      if (!force && (generation !== automaticVersionGeneration ||
+          cachedPublicSettings.value?.auto_update_check_enabled === false)) {
+        return null
+      }
+      versionResultIsManual = force
       currentVersion.value = data.current_version
       latestVersion.value = data.latest_version
       hasUpdate.value = data.has_update
@@ -287,8 +298,12 @@ export const useAppStore = defineStore('app', () => {
    * Clear version cache (e.g., after update)
    */
   function clearVersionCache(): void {
+    automaticVersionGeneration++
+    versionResultIsManual = false
     versionLoaded.value = false
     hasUpdate.value = false
+    latestVersion.value = ''
+    releaseInfo.value = null
   }
 
   // ==================== Public Settings Management ====================
@@ -297,6 +312,14 @@ export const useAppStore = defineStore('app', () => {
    * Apply settings to store state (internal helper to avoid code duplication)
    */
   function applySettings(config: PublicSettings): void {
+    const wasEnabled = cachedPublicSettings.value?.auto_update_check_enabled !== false
+    const enabled = config.auto_update_check_enabled !== false
+    if (wasEnabled !== enabled) {
+      automaticVersionGeneration++
+    }
+    if (!enabled && !versionResultIsManual) {
+      clearVersionCache()
+    }
     if (typeof window !== 'undefined') {
       window.__APP_CONFIG__ = { ...config }
     }
