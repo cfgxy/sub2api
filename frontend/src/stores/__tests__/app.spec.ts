@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
+import { checkUpdates } from '@/api/admin/system'
 import { getPublicSettings } from '@/api/auth'
 import type { PublicSettings } from '@/types'
 
@@ -60,6 +61,7 @@ function createPublicSettings(overrides: Partial<PublicSettings> = {}): PublicSe
     model_plaza_enabled: false,
     model_plaza_require_auth: false,
     plugin_management_enabled: false,
+    auto_update_check_enabled: true,
     service_quota_enabled: false,
     affiliate_enabled: false,
     ...overrides,
@@ -477,5 +479,296 @@ describe('useAppStore', () => {
       expect(localStorage.getItem('table-page-size')).toBeNull()
       expect(localStorage.getItem('table-page-size-source')).toBeNull()
     })
+  })
+})
+
+describe('useAppStore.fetchVersion 自动检查更新开关', () => {
+  const versionPayload = {
+    current_version: '1.0.0',
+    latest_version: '1.1.0',
+    has_update: true,
+    cached: false,
+    build_type: 'source'
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(checkUpdates).mockReset()
+    vi.mocked(getPublicSettings).mockReset()
+    delete window.__APP_CONFIG__
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    delete window.__APP_CONFIG__
+  })
+
+  async function applyAutoCheck(enabled: boolean | undefined) {
+    vi.mocked(getPublicSettings).mockResolvedValue(
+      createPublicSettings({ auto_update_check_enabled: enabled })
+    )
+    await useAppStore().fetchPublicSettings(true)
+  }
+
+  it('开关关闭时不发起自动（非强制）检查', async () => {
+    const store = useAppStore()
+    store.cachedPublicSettings = createPublicSettings({ auto_update_check_enabled: false })
+
+    await expect(store.fetchVersion(false)).resolves.toBeNull()
+    expect(checkUpdates).not.toHaveBeenCalled()
+  })
+
+  it('开关关闭时手动检查（force=true）仍放行', async () => {
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    const store = useAppStore()
+    store.cachedPublicSettings = createPublicSettings({ auto_update_check_enabled: false })
+
+    const result = await store.fetchVersion(true)
+    expect(checkUpdates).toHaveBeenCalledWith(true)
+    expect(result?.has_update).toBe(true)
+  })
+
+  it.each([true, undefined])('开关为 %s 时独立发起自动检查', async (enabled) => {
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    const store = useAppStore()
+    await applyAutoCheck(enabled)
+
+    await expect(store.fetchVersion(false)).resolves.toEqual(versionPayload)
+    expect(checkUpdates).toHaveBeenCalledTimes(1)
+    expect(checkUpdates).toHaveBeenCalledWith(false)
+    expect(store.hasUpdate).toBe(true)
+    expect(store.versionLoading).toBe(false)
+  })
+
+  it('发现新版本后关闭会清除自动提示及版本缓存', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    await store.fetchVersion()
+    expect(store.hasUpdate).toBe(true)
+
+    await applyAutoCheck(false)
+
+    expect(store.hasUpdate).toBe(false)
+    expect(store.versionLoaded).toBe(false)
+    expect(store.latestVersion).toBe('')
+    expect(store.releaseInfo).toBeNull()
+    await expect(store.fetchVersion()).resolves.toBeNull()
+    expect(checkUpdates).toHaveBeenCalledTimes(1)
+  })
+
+  it('关闭后不再从已有版本缓存返回自动结果', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    await store.fetchVersion()
+    store.cachedPublicSettings = createPublicSettings({ auto_update_check_enabled: false })
+
+    await expect(store.fetchVersion()).resolves.toBeNull()
+    expect(checkUpdates).toHaveBeenCalledTimes(1)
+  })
+
+  it('自动请求期间关闭会丢弃迟到响应并收尾 loading', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    const pending = createDeferred<typeof versionPayload>()
+    vi.mocked(checkUpdates).mockReturnValue(pending.promise)
+    const request = store.fetchVersion()
+    expect(store.versionLoading).toBe(true)
+
+    await applyAutoCheck(false)
+    pending.resolve(versionPayload)
+
+    await expect(request).resolves.toBeNull()
+    expect(store.hasUpdate).toBe(false)
+    expect(store.versionLoaded).toBe(false)
+    expect(store.latestVersion).toBe('')
+    expect(store.versionLoading).toBe(false)
+  })
+
+  it('开关开关开后不接受旧响应并能重新检查', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    const pending = createDeferred<typeof versionPayload>()
+    vi.mocked(checkUpdates).mockReturnValueOnce(pending.promise)
+    const request = store.fetchVersion()
+
+    await applyAutoCheck(false)
+    await applyAutoCheck(true)
+    pending.resolve(versionPayload)
+
+    await expect(request).resolves.toBeNull()
+    expect(store.versionLoaded).toBe(false)
+    expect(store.hasUpdate).toBe(false)
+    const fresh = { ...versionPayload, latest_version: '1.2.0' }
+    vi.mocked(checkUpdates).mockResolvedValueOnce(fresh)
+    await expect(store.fetchVersion()).resolves.toEqual(fresh)
+    expect(checkUpdates).toHaveBeenCalledTimes(2)
+    expect(store.latestVersion).toBe('1.2.0')
+  })
+
+  it('开关开关开后不复用关闭前已完成的自动缓存', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    await store.fetchVersion()
+    await applyAutoCheck(false)
+    await applyAutoCheck(true)
+
+    await store.fetchVersion()
+
+    expect(checkUpdates).toHaveBeenCalledTimes(2)
+    expect(store.hasUpdate).toBe(true)
+  })
+
+  it('关闭态手动结果在再次加载关闭配置后仍可显示', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(false)
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    await store.fetchVersion(true)
+    await applyAutoCheck(false)
+
+    expect(store.hasUpdate).toBe(true)
+    expect(store.versionLoaded).toBe(true)
+    expect(store.latestVersion).toBe(versionPayload.latest_version)
+    await expect(store.fetchVersion()).resolves.toBeNull()
+    expect(checkUpdates).toHaveBeenCalledTimes(1)
+    expect(checkUpdates).toHaveBeenCalledWith(true)
+  })
+
+  it('手动请求期间开关变化不丢弃主动结果', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    const pending = createDeferred<typeof versionPayload>()
+    vi.mocked(checkUpdates).mockReturnValue(pending.promise)
+    const request = store.fetchVersion(true)
+    await applyAutoCheck(false)
+    pending.resolve(versionPayload)
+
+    await expect(request).resolves.toEqual(versionPayload)
+    expect(store.hasUpdate).toBe(true)
+    expect(store.versionLoading).toBe(false)
+  })
+
+  it('关闭后的自动迟到响应不妨碍后续手动检查', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    const pending = createDeferred<typeof versionPayload>()
+    vi.mocked(checkUpdates).mockReturnValueOnce(pending.promise)
+    const automatic = store.fetchVersion()
+    await applyAutoCheck(false)
+    pending.resolve(versionPayload)
+    await automatic
+    vi.mocked(checkUpdates).mockResolvedValueOnce(versionPayload)
+
+    await expect(store.fetchVersion(true)).resolves.toEqual(versionPayload)
+    expect(checkUpdates).toHaveBeenLastCalledWith(true)
+    expect(store.hasUpdate).toBe(true)
+  })
+
+  it('无注水时等待延迟配置，关闭态首次检查不出站', async () => {
+    const store = useAppStore()
+    const settings = createDeferred<PublicSettings>()
+    vi.mocked(getPublicSettings).mockReturnValue(settings.promise)
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    const first = store.fetchVersion()
+    const second = store.fetchVersion()
+
+    expect(getPublicSettings).toHaveBeenCalledTimes(1)
+    expect(checkUpdates).not.toHaveBeenCalled()
+    settings.resolve(createPublicSettings({ auto_update_check_enabled: false }))
+
+    await expect(first).resolves.toBeNull()
+    await expect(second).resolves.toBeNull()
+    expect(checkUpdates).not.toHaveBeenCalled()
+    expect(store.hasUpdate).toBe(false)
+    expect(store.versionLoading).toBe(false)
+  })
+
+  it('无注水时等待开启配置且并发调用仅发起一次检查', async () => {
+    const store = useAppStore()
+    const settings = createDeferred<PublicSettings>()
+    const version = createDeferred<typeof versionPayload>()
+    vi.mocked(getPublicSettings).mockReturnValue(settings.promise)
+    vi.mocked(checkUpdates).mockReturnValue(version.promise)
+    const first = store.fetchVersion()
+    const second = store.fetchVersion()
+    expect(checkUpdates).not.toHaveBeenCalled()
+    settings.resolve(createPublicSettings())
+    await store.fetchPublicSettings()
+    version.resolve(versionPayload)
+
+    await first
+    await second
+    expect(checkUpdates).toHaveBeenCalledTimes(1)
+    expect(checkUpdates).toHaveBeenCalledWith(false)
+    expect(store.hasUpdate).toBe(true)
+    expect(store.versionLoading).toBe(false)
+  })
+
+  it('注水关闭配置首次挂载不发起设置或版本请求', async () => {
+    window.__APP_CONFIG__ = createPublicSettings({ auto_update_check_enabled: false })
+    const store = useAppStore()
+    expect(store.initFromInjectedConfig()).toBe(true)
+
+    await expect(store.fetchVersion()).resolves.toBeNull()
+    expect(getPublicSettings).not.toHaveBeenCalled()
+    expect(checkUpdates).not.toHaveBeenCalled()
+  })
+
+  it('自动检查失败后可重试并正确收尾 loading', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    vi.mocked(checkUpdates).mockRejectedValueOnce(new Error('检查失败'))
+    await expect(store.fetchVersion()).resolves.toBeNull()
+    expect(store.versionLoading).toBe(false)
+    expect(store.versionLoaded).toBe(false)
+    vi.mocked(checkUpdates).mockResolvedValueOnce(versionPayload)
+
+    await expect(store.fetchVersion()).resolves.toEqual(versionPayload)
+    expect(checkUpdates).toHaveBeenCalledTimes(2)
+    expect(store.versionLoading).toBe(false)
+  })
+
+  it('关闭态手动检查失败后可重试', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const store = useAppStore()
+    await applyAutoCheck(false)
+    vi.mocked(checkUpdates).mockRejectedValueOnce(new Error('手动检查失败'))
+    await expect(store.fetchVersion(true)).resolves.toBeNull()
+    expect(store.versionLoading).toBe(false)
+    vi.mocked(checkUpdates).mockResolvedValueOnce(versionPayload)
+
+    await expect(store.fetchVersion(true)).resolves.toEqual(versionPayload)
+    expect(store.hasUpdate).toBe(true)
+    expect(store.versionLoading).toBe(false)
+  })
+
+  it('设置刷新失败保留原开关与有效结果', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+    await store.fetchVersion()
+    vi.mocked(getPublicSettings).mockRejectedValueOnce(new Error('刷新失败'))
+
+    await expect(store.fetchPublicSettings(true)).resolves.toBeNull()
+    expect(store.cachedPublicSettings?.auto_update_check_enabled).toBe(true)
+    expect(store.hasUpdate).toBe(true)
+    await store.fetchVersion()
+    expect(checkUpdates).toHaveBeenCalledTimes(1)
+  })
+
+  it('首次设置读取失败保留现有默认开启语义', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const store = useAppStore()
+    vi.mocked(getPublicSettings).mockRejectedValueOnce(new Error('设置读取失败'))
+    vi.mocked(checkUpdates).mockResolvedValue(versionPayload)
+
+    await expect(store.fetchVersion()).resolves.toEqual(versionPayload)
+    expect(checkUpdates).toHaveBeenCalledTimes(1)
+    expect(checkUpdates).toHaveBeenCalledWith(false)
+    expect(store.versionLoading).toBe(false)
   })
 })

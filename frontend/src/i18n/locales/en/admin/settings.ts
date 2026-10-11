@@ -76,6 +76,12 @@ export default {
           enabled: 'Show Plugin Management',
           enabledHint: 'Turning this off only hides the sidebar entry; loaded or running plugins are not stopped.',
         },
+        autoUpdateCheck: {
+          title: 'Auto Update Check',
+          description: 'Controls whether the system probes for new releases automatically. Enabled by default; when off, no automatic version checks are made and no automatic "new version" hints or badges appear. Manual checks keep working.',
+          enabled: 'Automatically check for updates',
+          enabledHint: 'When off, the backend stops probing for new releases automatically; manual check and upgrade from the header version menu still work. Persisted across restarts.',
+        },
         riskControl: {
           title: 'Risk Control',
           description: 'Enable the content moderation menu and gateway audit entry point. Disabled by default.',
