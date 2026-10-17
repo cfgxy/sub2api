@@ -247,6 +247,7 @@ func (s *apiKeyRepoStub) GetRateLimitData(ctx context.Context, id int64) (*APIKe
 // 用于验证删除操作时缓存清理逻辑是否被正确调用。
 type apiKeyCacheStub struct {
 	deleteAuthKeys []string // 记录调用 DeleteAuthCache 时传入的缓存 key
+	invalidated    []string // 记录跨实例认证缓存失效通知
 }
 
 // GetCreateAttemptCount 返回 0，表示用户未超过创建次数限制
@@ -288,6 +289,7 @@ func (s *apiKeyCacheStub) DeleteAuthCache(ctx context.Context, key string) error
 }
 
 func (s *apiKeyCacheStub) PublishAuthCacheInvalidation(ctx context.Context, cacheKey string) error {
+	s.invalidated = append(s.invalidated, cacheKey)
 	return nil
 }
 
