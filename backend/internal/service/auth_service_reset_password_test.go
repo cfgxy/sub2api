@@ -15,12 +15,20 @@ type passwordResetCacheStub struct {
 }
 
 func (s *passwordResetCacheStub) GetPasswordResetToken(context.Context, string) (*PasswordResetTokenData, error) {
-	return &PasswordResetTokenData{Token: "reset-token"}, nil
+	return &PasswordResetTokenData{Token: hashPasswordResetToken("reset-token")}, nil
 }
 
 func (s *passwordResetCacheStub) DeletePasswordResetToken(context.Context, string) error {
 	s.consumed++
 	return nil
+}
+
+func (s *passwordResetCacheStub) ConsumePasswordResetToken(_ context.Context, _ string, tokenHash string) (bool, error) {
+	if tokenHash != hashPasswordResetToken("reset-token") || s.consumed > 0 {
+		return false, nil
+	}
+	s.consumed++
+	return true, nil
 }
 
 func TestAuthService_ResetPassword_RequiresEightCharactersBeforeConsumingToken(t *testing.T) {
