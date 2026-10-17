@@ -53,6 +53,49 @@ func (s *settingHandlerPublicRepoStub) Delete(ctx context.Context, key string) e
 	panic("unexpected Delete call")
 }
 
+func TestSettingHandler_GetPublicSettings_AutoUpdateCheckMatchesInjection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tt := range []struct {
+		name    string
+		values  map[string]string
+		enabled bool
+	}{
+		{name: "缺省开启", values: map[string]string{}, enabled: true},
+		{name: "显式开启", values: map[string]string{service.SettingKeyAutoUpdateCheckEnabled: "true"}, enabled: true},
+		{name: "显式关闭", values: map[string]string{service.SettingKeyAutoUpdateCheckEnabled: "false"}, enabled: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := service.NewSettingService(&settingHandlerPublicRepoStub{values: tt.values}, &config.Config{})
+			h := NewSettingHandler(settings, "test-version")
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+			h.GetPublicSettings(c)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var resp struct {
+				Code int `json:"code"`
+				Data struct {
+					AutoUpdateCheckEnabled *bool `json:"auto_update_check_enabled"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+			require.Equal(t, 0, resp.Code)
+			require.NotNil(t, resp.Data.AutoUpdateCheckEnabled, "公开接口必须返回开关字段")
+			require.Equal(t, tt.enabled, *resp.Data.AutoUpdateCheckEnabled)
+
+			payload, err := settings.GetPublicSettingsForInjection(context.Background())
+			require.NoError(t, err)
+			encoded, err := json.Marshal(payload)
+			require.NoError(t, err)
+			var injection map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &injection))
+			require.Equal(t, tt.enabled, injection["auto_update_check_enabled"])
+		})
+	}
+}
+
 func TestSettingHandler_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

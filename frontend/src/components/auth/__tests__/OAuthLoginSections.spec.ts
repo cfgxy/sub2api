@@ -14,7 +14,7 @@ vi.mock('vue-router', () => ({
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
-    t: (key: string) => key
+    t: (key: string, params?: { providerName?: string }) => params?.providerName ? `${key}:${params.providerName}` : key
   })
 }))
 
@@ -40,6 +40,27 @@ describe('OAuth login sections', () => {
     })
     expect(window.sessionStorage.getItem('oauth_aff_code')).toBe('AFF456')
     expect(window.location.href).toBe(originalHref)
+  })
+
+  it('通过原生 OIDC 入口显示 NodeLoc 并保留 callback 路由', async () => {
+    const wrapper = mount(OidcOAuthSection, { props: { providerName: 'NodeLoc' } })
+
+    expect(wrapper.get('button').text()).toContain('auth.oidc.signIn:NodeLoc')
+    await wrapper.get('button').trigger('click')
+
+    expect(wrapper.emitted('start')?.[0]?.[0]).toEqual({
+      provider: 'oidc',
+      params: { redirect: '/billing?plan=pro' }
+    })
+  })
+
+  it('NodeLoc 禁用时不发起授权请求', async () => {
+    const wrapper = mount(OidcOAuthSection, { props: { providerName: 'NodeLoc', disabled: true } })
+
+    expect(wrapper.get('button').attributes('disabled')).toBeDefined()
+    await wrapper.get('button').trigger('click')
+
+    expect(wrapper.emitted('start')).toBeUndefined()
   })
 
   it('includes a trimmed promo code in the LinuxDo OAuth request', async () => {
