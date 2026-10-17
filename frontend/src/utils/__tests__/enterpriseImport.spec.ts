@@ -49,7 +49,10 @@ describe('enterprise Base URL and import URIs', () => {
     const openai = new URL(buildEnterpriseCcsImportUri(address, { id: 'gpt-5', platform: 'openai' }, fakeKey))
     expect(openai.protocol).toBe('ccswitch:')
     expect(openai.searchParams.get('app')).toBe('codex')
-    expect(openai.searchParams.get('endpoint')).toBe('https://tenant.example.test/v1')
+    // CC Switch 的 Codex 客户端自行追加 /v1，企业入口不能重复携带版本段。
+    expect(openai.searchParams.get('endpoint')).toBe('https://tenant.example.test')
+    expect(`${openai.searchParams.get('endpoint')}/v1/responses`).toBe('https://tenant.example.test/v1/responses')
+    expect(atob(openai.searchParams.get('usageScript')!)).toContain('{{baseUrl}}/v1/usage')
     expect(openai.searchParams.get('model')).toBe('gpt-5')
     const anthropic = new URL(buildEnterpriseCcsImportUri(address, { id: 'claude-x', platform: 'anthropic' }, fakeKey))
     expect(anthropic.searchParams.get('app')).toBe('claude')

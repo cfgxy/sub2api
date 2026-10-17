@@ -198,16 +198,17 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.BalanceOverdrafted = !sufficient
 	}
 
+	// Key 已不存在时跳过其自身的额度/限速计数，其余结算项不受影响。
 	if cmd.APIKeyQuotaCost > 0 {
 		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, apiKeyID, cmd.APIKeyQuotaCost)
-		if err != nil {
+		if err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
 		result.APIKeyQuotaExhausted = exhausted
 	}
 
 	if cmd.APIKeyRateLimitCost > 0 {
-		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, apiKeyID, cmd.APIKeyRateLimitCost); err != nil {
+		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, apiKeyID, cmd.APIKeyRateLimitCost); err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
 	}
@@ -240,7 +241,8 @@ func resolveUsageBillingAPIKeyID(ctx context.Context, tx *sql.Tx, apiKeyID int64
 	}
 
 	targetAPIKeyID := apiKeyID
-	if err == nil {
+	enterpriseKey := err == nil
+	if enterpriseKey {
 		var lockedEmployeeID int64
 		if err := tx.QueryRowContext(ctx, `
 			SELECT id
@@ -275,6 +277,10 @@ func resolveUsageBillingAPIKeyID(ctx context.Context, tx *sql.Tx, apiKeyID int64
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR UPDATE`, targetAPIKeyID).Scan(&lockedAPIKeyID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			// 普通 Key 删除后仍结算已完成请求；企业 Key 必须保留后继目标及员工锁校验。
+			if !enterpriseKey {
+				return apiKeyID, nil
+			}
 			return 0, service.ErrAPIKeyNotFound
 		}
 		return 0, err

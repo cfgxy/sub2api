@@ -77,12 +77,16 @@ func TestAsyncUsagePricingAtRemainsRequestScopedAfterDetach(t *testing.T) {
 
 	var gotOpenAIAt time.Time
 	var gotGatewayAt time.Time
-	wrapUsageRecordTaskContext(openAICtx, func(context.Context) {
+	openAITask, cancelOpenAI := wrapUsageRecordTaskContext(openAICtx, func(context.Context) {
 		gotOpenAIAt = openAIAt
-	})(context.Background())
-	wrapUsageRecordTaskContext(gatewayCtx, func(context.Context) {
+	})
+	defer cancelOpenAI()
+	openAITask(context.Background())
+	gatewayTask, cancelGateway := wrapUsageRecordTaskContext(gatewayCtx, func(context.Context) {
 		gotGatewayAt = gatewayAt
-	})(context.Background())
+	})
+	defer cancelGateway()
+	gatewayTask(context.Background())
 
 	require.Equal(t, openAIAt, gotOpenAIAt)
 	require.Equal(t, gatewayAt, gotGatewayAt)

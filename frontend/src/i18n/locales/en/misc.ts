@@ -1,4 +1,8 @@
 export default {
+  modelPricing: {
+    title: 'Models & Prices',
+    loadFailed: 'Unable to load reference prices. Please sign in again or try later.'
+  },
 
   // Subscription Progress (Header component)
   subscriptionProgress: {
@@ -291,6 +295,13 @@ export default {
     amountLabel: 'Amount',
     paymentAmount: 'Payment Amount',
     creditedBalance: 'Credited Balance',
+    rechargeBonus: {
+      creditedShort: 'Get {amount}',
+      payShort: 'Pay {amount}',
+      amountLabel: 'Bonus',
+      amountLabelWithPercent: 'Bonus (+{percent}%)',
+      discountLabelWithPercent: 'Discount ({percent}% OFF)',
+    },
     quickAmounts: 'Quick Amounts',
     customAmount: 'Custom Amount',
     enterAmount: 'Enter amount',
@@ -357,6 +368,8 @@ export default {
       amount: 'Amount',
       payAmount: 'Paid',
       creditedAmount: 'Credited Amount',
+      bonusAmount: 'Bonus',
+      bonusIncluded: 'incl. bonus {amount}',
       fee: 'Fee',
       baseAmount: 'Base Amount',
       includedInPayAmount: 'included in paid amount',
