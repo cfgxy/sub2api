@@ -4,7 +4,7 @@
 
 ## 上游来源
 
-`backend/scripts/resolve-version.sh` 优先读取当前提交的精确发布 tag，否则读取 `backend/cmd/server/VERSION`。当前两条基线的版本文件及最近上游 tag 都是 `0.2.17`；Owner 的 `v2.0.4` 仅为格式示例。`VERSION` 保持上游版本，不把打包后缀回写进去，以免下一次打包重复追加。`backend/cmd/server/EDITION` 分别记录 `ent` 和 `ob`。
+`backend/scripts/resolve-version.sh` 优先读取当前提交的精确发布 tag，否则读取 `backend/cmd/server/VERSION`。企业版基线的版本文件及最近上游 tag 是 `0.2.17`；公众版基线两者都是 `0.2.15`，且不包含 `v0.2.17` 祖先；Owner 的 `v2.0.4` 仅为格式示例。`VERSION` 保持上游版本，不把打包后缀回写进去，以免下一次打包重复追加。`backend/cmd/server/EDITION` 分别记录 `ent` 和 `ob`。
 
 ## 打包事实与序号
 
