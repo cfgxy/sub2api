@@ -282,6 +282,15 @@ export const useAppStore = defineStore('app', () => {
       }
       versionResultIsManual = force
       currentVersion.value = data.current_version
+      // HTTP 成功不代表上游检查成功；降级缓存不作为更新结论，也不阻止重试。
+      if (data.warning) {
+        versionError.value = true
+        versionLoaded.value = false
+        hasUpdate.value = false
+        latestVersion.value = ''
+        releaseInfo.value = null
+        return null
+      }
       latestVersion.value = data.latest_version
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'

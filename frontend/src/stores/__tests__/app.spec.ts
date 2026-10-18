@@ -756,6 +756,54 @@ describe('useAppStore.fetchVersion 自动检查更新开关', () => {
     expect(store.versionLoading).toBe(false)
   })
 
+  it.each([
+    { cached: false, has_update: false, warning: '测试上游不可用' },
+    { cached: true, has_update: false, warning: 'Using cached data: 测试上游不可用' },
+    { cached: true, has_update: true, warning: 'Using cached data: 测试上游不可用' }
+  ])('带 warning 的响应不成为有效缓存且允许重试：$cached/$has_update', async (fallback) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    vi.mocked(checkUpdates).mockResolvedValueOnce(versionPayload)
+    await store.fetchVersion()
+    vi.mocked(checkUpdates).mockResolvedValueOnce({ ...versionPayload, ...fallback })
+
+    await expect(store.fetchVersion(true)).resolves.toBeNull()
+    expect(store.currentVersion).toBe(versionPayload.current_version)
+    expect(store.versionError).toBe(true)
+    expect(store.versionLoaded).toBe(false)
+    expect(store.versionLoading).toBe(false)
+    expect(store.hasUpdate).toBe(false)
+    expect(store.latestVersion).toBe('')
+    expect(store.releaseInfo).toBeNull()
+    expect(consoleError).not.toHaveBeenCalled()
+    expect(consoleWarn).not.toHaveBeenCalled()
+
+    const fresh = { ...versionPayload, has_update: false }
+    vi.mocked(checkUpdates).mockResolvedValueOnce(fresh)
+    await expect(store.fetchVersion()).resolves.toEqual(fresh)
+    expect(checkUpdates).toHaveBeenCalledTimes(3)
+    expect(store.versionError).toBe(false)
+    expect(store.versionLoaded).toBe(true)
+  })
+
+  it('关闭开关后丢弃带 warning 的迟到自动响应', async () => {
+    const store = useAppStore()
+    await applyAutoCheck(true)
+    const pending = createDeferred<typeof versionPayload & { warning: string }>()
+    vi.mocked(checkUpdates).mockReturnValueOnce(pending.promise)
+    const request = store.fetchVersion()
+    await applyAutoCheck(false)
+    pending.resolve({ ...versionPayload, warning: '测试上游不可用' })
+
+    await expect(request).resolves.toBeNull()
+    expect(store.versionError).toBe(false)
+    expect(store.versionLoaded).toBe(false)
+    expect(store.hasUpdate).toBe(false)
+    expect(store.versionLoading).toBe(false)
+  })
+
   it('设置刷新失败保留原开关与有效结果', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const store = useAppStore()
