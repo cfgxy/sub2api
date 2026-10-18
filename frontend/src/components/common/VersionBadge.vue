@@ -678,7 +678,9 @@ const versionStatus = computed(() => {
   return hasUpdate.value ? t('version.updateAvailable') : t('version.upToDate')
 })
 const latestVersion = computed(() => appStore.latestVersion)
-const hasUpdate = computed(() => appStore.hasUpdate)
+const hasUpdate = computed(() =>
+  appStore.versionLoaded && !appStore.versionError && appStore.hasUpdate
+)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
 
