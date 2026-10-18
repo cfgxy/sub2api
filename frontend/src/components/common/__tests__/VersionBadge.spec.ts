@@ -17,7 +17,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 }))
 
 function settings(enabled: boolean) {
-  return { version: '0.2.17-ob.20261018-1', auto_update_check_enabled: enabled }
+  return { version: '0.2.15-ob.20261018-1', auto_update_check_enabled: enabled }
 }
 
 describe('版本徽标', () => {
@@ -32,7 +32,7 @@ describe('版本徽标', () => {
     window.__APP_CONFIG__ = settings(false) as NonNullable<typeof window.__APP_CONFIG__>
     const wrapper = mount(VersionBadge)
     await flushPromises()
-    expect(wrapper.get('button').text()).toContain('v0.2.17-ob.20261018-1')
+    expect(wrapper.get('button').text()).toContain('v0.2.15-ob.20261018-1')
     expect(wrapper.find('.animate-pulse').exists()).toBe(false)
     expect(wrapper.get('button').attributes('title')).toBe('version.notChecked')
     expect(checkUpdates).not.toHaveBeenCalled()
@@ -45,10 +45,10 @@ describe('版本徽标', () => {
     vi.mocked(checkUpdates).mockRejectedValueOnce(new Error('测试错误'))
     const wrapper = mount(VersionBadge)
     await flushPromises()
-    expect(wrapper.get('button').text()).toContain('v0.2.17-ob.20261018-1')
+    expect(wrapper.get('button').text()).toContain('v0.2.15-ob.20261018-1')
     expect(wrapper.get('button').attributes('title')).toBe('version.checkFailed')
     vi.mocked(checkUpdates).mockResolvedValueOnce({
-      current_version: '0.2.17-ob.20261018-1', latest_version: '0.2.17',
+      current_version: '0.2.15-ob.20261018-1', latest_version: '0.2.15',
       has_update: false, cached: false, build_type: 'release'
     })
     await wrapper.get('button').trigger('click')
