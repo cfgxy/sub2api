@@ -1,10 +1,14 @@
 .PHONY: build generate test test-unit test-integration test-e2e
 
-VERSION ?= $(shell ./scripts/resolve-version.sh)
-LDFLAGS ?= -s -w -X main.Version=$(VERSION)
+LDFLAGS ?= -s -w
+BUILD_SEQUENCE ?=
 
 build:
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -trimpath -o bin/server ./cmd/server
+	@mkdir -p bin
+	@VERSION_VALUE=$$(python3 scripts/package-version.py $(if $(BUILD_SEQUENCE),--sequence $(BUILD_SEQUENCE)) --output bin/build-info.json) && \
+	COMMIT_VALUE=$$(python3 -c 'import json; print(json.load(open("bin/build-info.json"))["source_sha"])') && \
+	DATE_VALUE=$$(python3 -c 'import json; print(json.load(open("bin/build-info.json"))["built_at"])') && \
+	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS) -X main.Version=$$VERSION_VALUE -X main.Commit=$$COMMIT_VALUE -X main.Date=$$DATE_VALUE" -trimpath -o bin/server ./cmd/server
 
 generate:
 	go generate ./ent

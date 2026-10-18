@@ -23,6 +23,11 @@ export default {
 
   // Version Badge
   version: {
+    unknown: 'Unknown version',
+    notChecked: 'Updates not checked',
+    checking: 'Checking for updates',
+    checkFailed: 'Update check failed; retry manually',
+
     currentVersion: 'Current Version',
     latestVersion: 'Latest Version',
     upToDate: "You're running the latest version.",

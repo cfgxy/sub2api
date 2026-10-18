@@ -38,6 +38,7 @@ export const useAppStore = defineStore('app', () => {
   // Version cache state
   const versionLoaded = ref<boolean>(false)
   const versionLoading = ref<boolean>(false)
+  const versionError = ref<boolean>(false)
   const currentVersion = ref<string>('')
   const latestVersion = ref<string>('')
   const hasUpdate = ref<boolean>(false)
@@ -271,6 +272,7 @@ export const useAppStore = defineStore('app', () => {
 
     const generation = automaticVersionGeneration
     versionLoading.value = true
+    versionError.value = false
     try {
       const data = await checkUpdatesAPI(force)
       // 开关转换使旧自动请求失效，包括开→关→开；手动结果仍可回写。
@@ -280,6 +282,15 @@ export const useAppStore = defineStore('app', () => {
       }
       versionResultIsManual = force
       currentVersion.value = data.current_version
+      // HTTP 成功不代表上游检查成功；降级缓存不作为更新结论，也不阻止重试。
+      if (data.warning) {
+        versionError.value = true
+        versionLoaded.value = false
+        hasUpdate.value = false
+        latestVersion.value = ''
+        releaseInfo.value = null
+        return null
+      }
       latestVersion.value = data.latest_version
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
@@ -287,6 +298,9 @@ export const useAppStore = defineStore('app', () => {
       versionLoaded.value = true
       return data
     } catch (error) {
+      if (force || generation === automaticVersionGeneration) {
+        versionError.value = true
+      }
       console.error('Failed to fetch version:', error)
       return null
     } finally {
@@ -301,6 +315,7 @@ export const useAppStore = defineStore('app', () => {
     automaticVersionGeneration++
     versionResultIsManual = false
     versionLoaded.value = false
+    versionError.value = false
     hasUpdate.value = false
     latestVersion.value = ''
     releaseInfo.value = null
@@ -488,6 +503,7 @@ export const useAppStore = defineStore('app', () => {
     // Version state
     versionLoaded,
     versionLoading,
+    versionError,
     currentVersion,
     latestVersion,
     hasUpdate,
