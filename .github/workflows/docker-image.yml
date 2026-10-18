@@ -1,13 +1,4 @@
-# Automated image build: every merge (push) into main or offcial-base publishes
-# ghcr.io/cfgxy/sub2api:<YYYYMMDD-N> plus the moving tag named after the source
-# branch (github.ref_name), so main and offcial-base never overwrite each
-# other's moving tag. <YYYYMMDD-N> shares one daily sequence across both
-# branches; N increments per day based on existing ghcr tags (fallback: run
-# number). A single branch-agnostic concurrency group serializes builds to
-# avoid tag-sequence races.
-# Frontend and Go toolchain run natively on the amd64 runner
-# (BUILDPLATFORM stages + CGO_ENABLED=0 cross-compile); QEMU covers the
-# target-platform alpine layers only.
+# 两个版本分支在外层分配打包标识，多架构构建复用同一事实清单。
 name: docker-image
 
 on:
@@ -28,18 +19,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - id: version
         env:
-          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
         run: |
-          DATE=$(date -u +%Y%m%d)
-          MAXN=$(gh api "/user/packages/container/sub2api/versions?per_page=100" \
-            --jq '.[].metadata.container.tags[]' 2>/dev/null \
-            | grep -E "^${DATE}-[0-9]+$" | cut -d- -f2 | sort -n | tail -1)
-          if [ -z "${MAXN}" ]; then N=${{ github.run_number }}; else N=$((MAXN+1)); fi
-          echo "tag=${DATE}-${N}" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          case "$SOURCE_BRANCH" in
+            main) EDITION=ent ;;
+            offcial-base) EDITION=ob ;;
+            *) echo '只允许打包 main 或 offcial-base'; exit 1 ;;
+          esac
+          test "$RUN_ATTEMPT" -lt 1000
+          SEQUENCE=$((RUN_ID * 1000 + RUN_ATTEMPT))
+          VERSION=$(python3 backend/scripts/package-version.py --edition "$EDITION" --sequence "$SEQUENCE" --output build-info.json)
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          python3 -c 'import json, os; d=json.load(open("build-info.json")); f=open(os.environ["GITHUB_OUTPUT"], "a"); f.write("date=" + d["built_at"] + "\nupstream=" + d["upstream_version"] + "\n")'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-build-info
+          path: build-info.json
 
       - uses: docker/setup-qemu-action@v3
 
@@ -61,8 +65,9 @@ jobs:
             ghcr.io/cfgxy/sub2api:${{ steps.version.outputs.tag }}
             ghcr.io/cfgxy/sub2api:${{ github.ref_name }}
           build-args: |
-            VERSION=${{ steps.version.outputs.tag }}
+            VERSION=${{ steps.version.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ steps.version.outputs.date }}
+            UPSTREAM_VERSION=${{ steps.version.outputs.upstream }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
