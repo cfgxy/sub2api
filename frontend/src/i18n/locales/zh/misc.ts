@@ -23,6 +23,11 @@ export default {
 
   // Version Badge
   version: {
+    unknown: '版本未知',
+    notChecked: '尚未检查更新',
+    checking: '正在检查更新',
+    checkFailed: '检查更新失败，可手动重试',
+
     currentVersion: '当前版本',
     latestVersion: '最新版本',
     upToDate: '已是最新版本',

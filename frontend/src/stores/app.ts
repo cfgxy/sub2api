@@ -38,6 +38,7 @@ export const useAppStore = defineStore('app', () => {
   // Version cache state
   const versionLoaded = ref<boolean>(false)
   const versionLoading = ref<boolean>(false)
+  const versionError = ref<boolean>(false)
   const currentVersion = ref<string>('')
   const latestVersion = ref<string>('')
   const hasUpdate = ref<boolean>(false)
@@ -264,13 +265,6 @@ export const useAppStore = defineStore('app', () => {
       }
     }
 
-    // Auto update check switch (opt-out): an explicit false stops automatic
-    // (non-forced) probes so the UI never surfaces an unprompted update badge.
-    // Manual checks (force=true) always pass. Mirrors the backend gate.
-    if (!force && cachedPublicSettings.value?.auto_update_check_enabled === false) {
-      return null
-    }
-
     // Prevent duplicate requests
     if (versionLoading.value) {
       return null
@@ -278,6 +272,7 @@ export const useAppStore = defineStore('app', () => {
 
     const generation = automaticVersionGeneration
     versionLoading.value = true
+    versionError.value = false
     try {
       const data = await checkUpdatesAPI(force)
       // 开关转换使旧自动请求失效，包括开→关→开；手动结果仍可回写。
@@ -294,6 +289,9 @@ export const useAppStore = defineStore('app', () => {
       versionLoaded.value = true
       return data
     } catch (error) {
+      if (force || generation === automaticVersionGeneration) {
+        versionError.value = true
+      }
       console.error('Failed to fetch version:', error)
       return null
     } finally {
@@ -308,6 +306,7 @@ export const useAppStore = defineStore('app', () => {
     automaticVersionGeneration++
     versionResultIsManual = false
     versionLoaded.value = false
+    versionError.value = false
     hasUpdate.value = false
     latestVersion.value = ''
     releaseInfo.value = null
@@ -495,6 +494,7 @@ export const useAppStore = defineStore('app', () => {
     // Version state
     versionLoaded,
     versionLoading,
+    versionError,
     currentVersion,
     latestVersion,
     hasUpdate,
