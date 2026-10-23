@@ -25,4 +25,8 @@ describe('AuditLogView（平台审计页清空入口移除）', () => {
     expect(source).toContain('admin.audit.filters')
     expect(source).toContain('fetchLogs')
   })
+
+  it('allows filter fields to wrap within the page content width', () => {
+    expect(source).toContain('flex min-w-0 flex-1 flex-wrap items-end gap-4')
+  })
 })
