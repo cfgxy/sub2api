@@ -16,6 +16,7 @@ import (
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -77,6 +78,7 @@ type employeeKeyStoreStub struct {
 	createResult  *enterprise.EmployeeKeyMutationResult
 	disableResult *enterprise.EmployeeKeyMutationResult
 	rotateResult  *enterprise.EmployeeKeyMutationResult
+	revokeCalls   int
 }
 
 func (s *employeeKeyStoreStub) GetEmployeeCurrentKey(_ context.Context, enterpriseID, employeeID int64) (*enterprise.EmployeeKey, error) {
@@ -101,6 +103,15 @@ func (s *employeeKeyStoreStub) DisableEmployeeKey(_ context.Context, params ente
 func (s *employeeKeyStoreStub) RotateEmployeeKey(_ context.Context, params enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error) {
 	s.rotateParams = append(s.rotateParams, params)
 	return s.rotateResult, nil
+}
+
+func (*employeeKeyStoreStub) ListEnterpriseKeys(context.Context, int64) ([]enterprise.EnterpriseKeySummary, error) {
+	return nil, nil
+}
+
+func (s *employeeKeyStoreStub) RevokeEnterpriseKey(context.Context, int64, int64, string, string) (*enterprise.EmployeeKeyMutationResult, error) {
+	s.revokeCalls++
+	return nil, nil
 }
 
 type employeeKeyGeneratorStub struct {
@@ -399,6 +410,49 @@ func TestEmployeeKeyMutationRateLimitFailsClosedBeforeGeneratorAndRepository(t *
 			require.Zero(t, generator.calls)
 		})
 	}
+}
+
+func TestRegisteredAdminKeyRevokeRateLimitFailsClosedBeforeStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, mock := newMockService(t)
+	const email = "admin@example.com"
+	const passwordHash = "admin-password-hash"
+	claims := Claims{
+		EnterpriseID: 1, PrincipalType: "admin", PrincipalID: 5,
+		AuthVersion: expectedUserTokenVersion(email, passwordHash), Role: "enterprise_admin", SessionID: "session-1",
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	}
+	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(svc.secret)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT id, name, LOWER.*FROM enterprises").WithArgs("acme.example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "admin_user_id", "status"}).AddRow(1, "Acme", "acme.example.com", 5, "active"))
+	mock.ExpectQuery("SELECT users.email, users.password_hash, users.status").WithArgs(int64(1), int64(5)).
+		WillReturnRows(sqlmock.NewRows([]string{"email", "password_hash", "status"}).AddRow(email, passwordHash, "active"))
+	mock.ExpectQuery("SELECT EXISTS").WithArgs(int64(1), "session-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  25 * time.Millisecond,
+		ReadTimeout:  25 * time.Millisecond,
+		WriteTimeout: 25 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store := &employeeKeyStoreStub{}
+	h := NewHandler(svc, store, nil, rdb)
+	router := gin.New()
+	h.RegisterRoutes(router.Group("/api/v1"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/enterprise/admin/keys/67/revoke", nil)
+	req.Host = "acme.example.com"
+	req.Header.Set("Authorization", "Bearer "+raw)
+	req.Header.Set("Idempotency-Key", "must-not-reach-store")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Zero(t, store.revokeCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestEmployeeKeyMutationRateLimitIsolatesPrincipalTypesWithSameID(t *testing.T) {

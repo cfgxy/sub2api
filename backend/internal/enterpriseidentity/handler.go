@@ -140,7 +140,7 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.PUT("/brand", h.putBrand)
 	admin.POST("/brand/background", h.uploadBrandBackground)
 	admin.GET("/keys", h.listAdminKeys)
-	admin.POST("/keys/:id/revoke", h.revokeAdminKey)
+	admin.POST("/keys/:id/revoke", h.employeeKeyMutationRateLimit(), h.revokeAdminKey)
 	if h.workbench != nil {
 		h.workbench.registerRoutes(admin)
 	}
@@ -1152,7 +1152,7 @@ func (h *Handler) revokeAdminKey(c *gin.Context) {
 	store, ok := h.keyRepository.(enterpriseAdminKeyStore)
 	if !ok {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
-		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, "rejected")
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, employeeKeyAuditReasonServiceUnavailable)
 		return
 	}
 	id, ok := pathID(c)
@@ -1168,12 +1168,15 @@ func (h *Handler) revokeAdminKey(c *gin.Context) {
 	}
 	result, err := store.RevokeEnterpriseKey(ctx, claims.EnterpriseID, id, idempotencyKey, auditActor(ctx))
 	if response.ErrorFrom(c, err) {
-		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, "rejected")
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, employeeKeyRejectedAuditReason(err))
 		return
 	}
-	if result != nil {
-		result.Plaintext = ""
+	if result == nil || result.Key == nil {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, employeeKeyAuditReasonNoAvailableResult)
+		return
 	}
+	result.Plaintext = ""
 	response.Success(c, result)
 }
 

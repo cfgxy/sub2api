@@ -17,7 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type adminKeyStoreForRejectedAudit struct{}
+type adminKeyStoreForRejectedAudit struct {
+	revokeResult *enterprise.EmployeeKeyMutationResult
+	revokeErr    error
+}
 
 func (adminKeyStoreForRejectedAudit) GetEmployeeCurrentKey(context.Context, int64, int64) (*enterprise.EmployeeKey, error) {
 	return nil, enterprise.ErrEmployeeKeyNotFound
@@ -39,7 +42,10 @@ func (adminKeyStoreForRejectedAudit) ListEnterpriseKeys(context.Context, int64) 
 	return nil, nil
 }
 
-func (adminKeyStoreForRejectedAudit) RevokeEnterpriseKey(context.Context, int64, int64, string, string) (*enterprise.EmployeeKeyMutationResult, error) {
+func (s adminKeyStoreForRejectedAudit) RevokeEnterpriseKey(context.Context, int64, int64, string, string) (*enterprise.EmployeeKeyMutationResult, error) {
+	if s.revokeResult != nil || s.revokeErr != nil {
+		return s.revokeResult, s.revokeErr
+	}
 	return nil, enterprise.ErrEmployeeKeyNotFound
 }
 
@@ -99,7 +105,7 @@ func TestUploadBrandBackgroundRecordsRejectedAuditBeforeParsingFile(t *testing.T
 
 func TestRevokeAdminKeyRecordsRejectedAuditForMissingIdempotencyKey(t *testing.T) {
 	svc, mock := newMockService(t)
-	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), "key.revoke", "api_key", int64(31), sqlmock.AnyArg(), "enterprise_admin:9").
+	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), "key.revoke", "api_key", int64(31), auditPayloadWithReason("invalid_request"), "enterprise_admin:9").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	h := NewHandler(svc, adminKeyStoreForRejectedAudit{}, nil, nil)
 
@@ -112,6 +118,47 @@ func TestRevokeAdminKeyRecordsRejectedAuditForMissingIdempotencyKey(t *testing.T
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRevokeAdminKeyRecordsSpecificRejectedAuditReasons(t *testing.T) {
+	tests := []struct {
+		name     string
+		store    employeeKeyStore
+		entityID any
+		want     auditPayloadWithReason
+	}{
+		{name: "unsupported store", store: employeeKeyStoreForRejectedAudit{}, entityID: nil, want: employeeKeyAuditReasonServiceUnavailable},
+		{name: "target unavailable", store: adminKeyStoreForRejectedAudit{}, entityID: int64(31), want: employeeKeyAuditReasonTargetUnavailable},
+		{name: "already active", store: adminKeyStoreForRejectedAudit{revokeErr: enterprise.ErrEmployeeKeyAlreadyActive}, entityID: int64(31), want: employeeKeyAuditReasonKeyConflict},
+		{name: "version conflict", store: adminKeyStoreForRejectedAudit{revokeErr: enterprise.ErrEmployeeKeyVersionConflict}, entityID: int64(31), want: employeeKeyAuditReasonKeyConflict},
+		{name: "idempotency conflict", store: adminKeyStoreForRejectedAudit{revokeErr: enterprise.ErrEmployeeKeyIdempotency}, entityID: int64(31), want: employeeKeyAuditReasonIdempotency},
+		{name: "provision limit", store: adminKeyStoreForRejectedAudit{revokeErr: enterprise.ErrEmployeeKeyProvisionLimit}, entityID: int64(31), want: employeeKeyAuditReasonProvisionLimit},
+		{name: "service unavailable", store: adminKeyStoreForRejectedAudit{revokeErr: enterprise.ErrEmployeeKeyUnavailable}, entityID: int64(31), want: employeeKeyAuditReasonServiceUnavailable},
+		{name: "unknown store error", store: adminKeyStoreForRejectedAudit{revokeErr: errors.New("database unavailable")}, entityID: int64(31), want: employeeKeyAuditReasonServiceUnavailable},
+		{name: "no available result", store: adminKeyStoreForRejectedAudit{revokeResult: &enterprise.EmployeeKeyMutationResult{}}, entityID: int64(31), want: employeeKeyAuditReasonNoAvailableResult},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, mock := newMockService(t)
+			mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(
+				int64(7), "key.revoke", "api_key", tt.entityID, tt.want, "enterprise_admin:9",
+			).WillReturnResult(sqlmock.NewResult(1, 1))
+			h := NewHandler(svc, tt.store, nil, nil)
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/enterprise/admin/keys/31/revoke", nil)
+			c.Request.Header.Set("Idempotency-Key", "request-1")
+			c.Params = gin.Params{{Key: "id", Value: "31"}}
+			c.Set(claimsContextKey, &Claims{EnterpriseID: 7, PrincipalType: "admin", PrincipalID: 9})
+			h.revokeAdminKey(c)
+
+			require.GreaterOrEqual(t, recorder.Code, http.StatusBadRequest)
+			require.NotContains(t, recorder.Body.String(), `"data":null`)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestCreateAdminEmployeeKeyRecordsTargetedRejectedAudit(t *testing.T) {
