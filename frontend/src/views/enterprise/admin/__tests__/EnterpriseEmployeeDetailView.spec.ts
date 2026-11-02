@@ -9,20 +9,45 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
-const { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, listWorkbenchAuditEvents, updateEmployee, pushMock } = vi.hoisted(() => ({
+const {
+  getEmployee,
+  listDepartments,
+  listWorkbenchUsage,
+  getWorkbenchSummary,
+  listWorkbenchAuditEvents,
+  updateEmployee,
+  createEmployeeKeyAsAdmin,
+  rotateEmployeeKeyAsAdmin,
+  revokeEmployeeKeyAsAdmin,
+  pushMock,
+} = vi.hoisted(() => ({
   getEmployee: vi.fn(),
   listDepartments: vi.fn(),
   listWorkbenchUsage: vi.fn(),
   getWorkbenchSummary: vi.fn(),
   listWorkbenchAuditEvents: vi.fn(),
   updateEmployee: vi.fn(),
+  createEmployeeKeyAsAdmin: vi.fn(),
+  rotateEmployeeKeyAsAdmin: vi.fn(),
+  revokeEmployeeKeyAsAdmin: vi.fn(),
   pushMock: vi.fn(),
 }))
 
 vi.mock('@/api/enterprise', () => ({
-  enterpriseAPI: { getEmployee, listDepartments, listWorkbenchUsage, getWorkbenchSummary, listWorkbenchAuditEvents, updateEmployee },
+  enterpriseAPI: {
+    getEmployee,
+    listDepartments,
+    listWorkbenchUsage,
+    getWorkbenchSummary,
+    listWorkbenchAuditEvents,
+    updateEmployee,
+    createEmployeeKeyAsAdmin,
+    rotateEmployeeKeyAsAdmin,
+    revokeEmployeeKeyAsAdmin,
+  },
   isEnterpriseEmployeeVersionConflict: (error: unknown) => (error as { reason?: string })?.reason === 'EMPLOYEE_VERSION_CONFLICT',
   isEnterpriseEmployeeDepartmentInvalid: (error: unknown) => (error as { reason?: string })?.reason === 'ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID',
+  isEnterpriseKeyMutationStateConflict: (error: unknown) => ['ENTERPRISE_KEY_VERSION_CONFLICT', 'ENTERPRISE_KEY_ALREADY_ACTIVE', 'ENTERPRISE_KEY_NOT_FOUND'].includes((error as { reason?: string })?.reason || ''),
 }))
 
 vi.mock('vue-router', () => ({
@@ -66,11 +91,17 @@ const clickText = async (wrapper: ReturnType<typeof mountView>, text: string) =>
 describe('EnterpriseEmployeeDetailView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    getEmployee.mockResolvedValue(baseDetail)
+    getEmployee.mockImplementation(() => Promise.resolve({
+      ...baseDetail,
+      current_key: { ...baseDetail.current_key },
+    }))
     listDepartments.mockResolvedValue([{ id: 7, name: '研发中心', created_at: '2026-01-01T00:00:00Z' }])
     listWorkbenchUsage.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
     getWorkbenchSummary.mockResolvedValue({ total_usage_credit: '0', total_requests: 0, employee_count: 1, active_employee_count: 1, employee_summaries: [] })
     listWorkbenchAuditEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
+    createEmployeeKeyAsAdmin.mockResolvedValue({ key: { ...baseDetail.current_key }, replayed: false })
+    rotateEmployeeKeyAsAdmin.mockResolvedValue({ key: { ...baseDetail.current_key, id: 2 }, replayed: false })
+    revokeEmployeeKeyAsAdmin.mockResolvedValue({ key: { ...baseDetail.current_key, status: 'disabled' }, replayed: false })
   })
 
   it('masks employee_id but shows the unique email and masked API key', async () => {
@@ -146,9 +177,76 @@ describe('EnterpriseEmployeeDetailView', () => {
     await clickText(wrapper, 'API Key')
 
     expect(wrapper.text()).toContain('该员工当前没有可用的 API Key')
-    expect(wrapper.text()).toContain('Key 轮换由员工本人在员工门户操作')
-    expect(wrapper.text()).not.toMatch(/代轮换|管理员.*轮换|分配.*Key/)
-    expect(wrapper.findAll('button').map(button => button.text()).join(' ')).not.toContain('轮换')
+    expect(wrapper.text()).toContain('可由管理员代为创建')
+    expect(wrapper.get('[data-testid="admin-create-employee-key"]').text()).toContain('代创建 Key')
+    wrapper.unmount()
+  })
+
+  it('creates a key for the active employee and clears one-time plaintext when the dialog closes', async () => {
+    const plaintext = 'sk-admin-created-one-time-secret'
+    getEmployee.mockResolvedValueOnce({ ...baseDetail, current_key: null })
+    createEmployeeKeyAsAdmin.mockResolvedValueOnce({ key: baseDetail.current_key, plaintext, replayed: false })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="admin-create-employee-key"]').trigger('click')
+    await flushPromises()
+
+    expect(createEmployeeKeyAsAdmin).toHaveBeenCalledWith(42)
+    expect((wrapper.get('[data-testid="admin-plaintext-key"] input').element as HTMLInputElement).value).toBe(plaintext)
+    expect(JSON.stringify(localStorage)).not.toContain(plaintext)
+    expect(JSON.stringify(sessionStorage)).not.toContain(plaintext)
+
+    await wrapper.get('[data-testid="close-admin-key-secret"]').trigger('click')
+    expect(wrapper.text()).not.toContain(plaintext)
+    expect(document.body.textContent).not.toContain(plaintext)
+    wrapper.unmount()
+  })
+
+  it('rotates the current key using the observed key id and never shows plaintext on a replay', async () => {
+    rotateEmployeeKeyAsAdmin.mockResolvedValueOnce({
+      key: { ...baseDetail.current_key, id: 2, masked_key: 'sk-new...0002' },
+      plaintext: 'sk-replayed-secret-must-not-render',
+      replayed: true,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="admin-rotate-employee-key"]').trigger('click')
+    await clickText(wrapper, '确认轮换')
+
+    expect(rotateEmployeeKeyAsAdmin).toHaveBeenCalledWith(42, 1)
+    expect(wrapper.text()).toContain('sk-new...0002')
+    expect(wrapper.find('[data-testid="admin-plaintext-key"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('sk-replayed-secret-must-not-render')
+    wrapper.unmount()
+  })
+
+  it('revokes the current key and returns the detail to the create state', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="admin-revoke-employee-key"]').trigger('click')
+    await clickText(wrapper, '确认撤销')
+
+    expect(revokeEmployeeKeyAsAdmin).toHaveBeenCalledWith(42, 1)
+    expect(wrapper.text()).toContain('该员工当前没有可用的 API Key')
+    expect(wrapper.find('[data-testid="admin-create-employee-key"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('does not allow key creation for a disabled employee', async () => {
+    getEmployee.mockResolvedValueOnce({ ...baseDetail, status: 'disabled', current_key: null })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickText(wrapper, 'API Key')
+
+    expect(wrapper.text()).toContain('仅启用员工可以创建 API Key')
+    expect(wrapper.get('[data-testid="admin-create-employee-key"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 

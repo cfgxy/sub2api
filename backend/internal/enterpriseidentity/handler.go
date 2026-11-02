@@ -124,6 +124,8 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.GET("/employees", h.listEmployees)
 	admin.GET("/employees/:id", h.getEmployee)
 	admin.POST("/employees", h.createEmployee)
+	admin.POST("/employees/:id/keys", h.employeeKeyMutationRateLimit(), h.createAdminEmployeeKey)
+	admin.POST("/employees/:id/keys/rotate", h.employeeKeyMutationRateLimit(), h.rotateAdminEmployeeKey)
 	admin.POST("/employees/:id/reset-password", h.resetEmployeePassword)
 	admin.PATCH("/employees/:id", h.updateEmployee)
 	admin.DELETE("/employees/:id", h.terminateEmployee)
@@ -181,7 +183,7 @@ func (h *Handler) employeeKeyMutationRateLimit() gin.HandlerFunc {
 					return hashRateLimitScope("0\x000")
 				}
 				return hashRateLimitScope(
-					strconv.FormatInt(claims.EnterpriseID, 10) + "\x00" + strconv.FormatInt(claims.PrincipalID, 10),
+					strconv.FormatInt(claims.EnterpriseID, 10) + "\x00" + claims.PrincipalType + "\x00" + strconv.FormatInt(claims.PrincipalID, 10),
 				)
 			},
 		},
@@ -759,17 +761,68 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 	if !ok {
 		return
 	}
+	h.mutateKeyForEmployee(
+		c,
+		operation,
+		claims.EnterpriseID,
+		claims.PrincipalID,
+		fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID),
+		nil,
+	)
+}
+
+func (h *Handler) createAdminEmployeeKey(c *gin.Context) {
+	h.mutateAdminEmployeeKey(c, "create")
+}
+
+func (h *Handler) rotateAdminEmployeeKey(c *gin.Context) {
+	h.mutateAdminEmployeeKey(c, "rotate")
+}
+
+func (h *Handler) mutateAdminEmployeeKey(c *gin.Context, operation string) {
+	claims := mustClaims(c)
+	if claims == nil {
+		response.Forbidden(c, "enterprise administrator permission is required")
+		return
+	}
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	employeeID, ok := pathID(c)
+	if !ok {
+		h.recordRejectedEmployeeKeyAudit(ctx, claims.EnterpriseID, operation, nil, 0, "invalid_request")
+		return
+	}
+	h.mutateKeyForEmployee(c, operation, claims.EnterpriseID, employeeID, auditActor(ctx), func(expectedAPIKeyID int64, reason string) {
+		h.recordRejectedEmployeeKeyAudit(ctx, claims.EnterpriseID, operation, &employeeID, expectedAPIKeyID, reason)
+	})
+}
+
+func (h *Handler) mutateKeyForEmployee(
+	c *gin.Context,
+	operation string,
+	enterpriseID, employeeID int64,
+	actorRef string,
+	recordRejected func(expectedAPIKeyID int64, reason string),
+) {
 	if h.keyRepository == nil || h.apiKeyService == nil {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		if recordRejected != nil {
+			recordRejected(0, "rejected")
+		}
 		return
 	}
 	var req employeeKeyMutationRequest
 	if operation != "create" && !bind(c, &req) {
+		if recordRejected != nil {
+			recordRejected(0, "invalid_request")
+		}
 		return
 	}
 	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 128 {
 		response.BadRequest(c, "Idempotency-Key header is required and must not exceed 128 characters")
+		if recordRejected != nil {
+			recordRejected(req.ExpectedAPIKeyID, "invalid_request")
+		}
 		return
 	}
 	plaintext := ""
@@ -777,13 +830,16 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 		var err error
 		plaintext, err = h.apiKeyService.GenerateKey()
 		if response.ErrorFrom(c, err) {
+			if recordRejected != nil {
+				recordRejected(req.ExpectedAPIKeyID, "rejected")
+			}
 			return
 		}
 	}
 	params := enterprise.EmployeeKeyMutationParams{
-		EnterpriseID: claims.EnterpriseID, EmployeeID: claims.PrincipalID,
+		EnterpriseID: enterpriseID, EmployeeID: employeeID,
 		ExpectedAPIKeyID: req.ExpectedAPIKeyID, IdempotencyKey: idempotencyKey,
-		Plaintext: plaintext, ActorRef: fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID),
+		Plaintext: plaintext, ActorRef: actorRef,
 	}
 	var result *enterprise.EmployeeKeyMutationResult
 	var err error
@@ -796,10 +852,16 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 		result, err = h.keyRepository.RotateEmployeeKey(c.Request.Context(), params)
 	}
 	if response.ErrorFrom(c, err) {
+		if recordRejected != nil {
+			recordRejected(req.ExpectedAPIKeyID, "rejected")
+		}
 		return
 	}
 	if result == nil || result.Key == nil {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		if recordRejected != nil {
+			recordRejected(req.ExpectedAPIKeyID, "rejected")
+		}
 		return
 	}
 	if result.Replayed {
@@ -814,6 +876,27 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 		return
 	}
 	response.Success(c, result)
+}
+
+func (h *Handler) recordRejectedEmployeeKeyAudit(
+	ctx context.Context,
+	enterpriseID int64,
+	operation string,
+	employeeID *int64,
+	expectedAPIKeyID int64,
+	reason string,
+) {
+	if h.service == nil {
+		return
+	}
+	payload := map[string]any{"result": "rejected", "reason": strings.TrimSpace(reason)}
+	if employeeID != nil {
+		payload["employee_id"] = *employeeID
+	}
+	if expectedAPIKeyID > 0 {
+		payload["api_key_id"] = expectedAPIKeyID
+	}
+	_ = h.service.recordAuditEvent(ctx, enterpriseID, "key.employee_"+operation, "employee", employeeID, payload)
 }
 
 func employeeClaims(c *gin.Context) (*Claims, bool) {

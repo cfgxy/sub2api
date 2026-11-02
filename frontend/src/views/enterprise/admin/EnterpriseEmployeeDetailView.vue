@@ -154,6 +154,46 @@
 
       <!-- API Key -->
       <div v-else-if="activeTab === 'key'" class="card">
+        <div class="flex flex-col gap-3 border-b border-gray-200 p-4 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">员工 API Key</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">仅可操作当前企业内的启用员工，创建和轮换后的明文只显示一次。</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-if="!detail.current_key"
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="detail.status !== 'active' || keyMutating"
+              data-testid="admin-create-employee-key"
+              @click="createEmployeeKey"
+            >
+              <Icon name="plus" size="sm" class="mr-1.5" />
+              代创建 Key
+            </button>
+            <template v-else>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="detail.status !== 'active' || keyMutating"
+                data-testid="admin-rotate-employee-key"
+                @click="keyPendingAction = 'rotate'"
+              >
+                <Icon name="sync" size="sm" class="mr-1.5" />
+                代轮换
+              </button>
+              <button
+                type="button"
+                class="btn btn-danger btn-sm"
+                :disabled="detail.status !== 'active' || keyMutating"
+                data-testid="admin-revoke-employee-key"
+                @click="keyPendingAction = 'revoke'"
+              >
+                撤销 Key
+              </button>
+            </template>
+          </div>
+        </div>
         <div v-if="detail.current_key" class="divide-y divide-gray-200 dark:divide-dark-700">
           <div v-for="row in keyRows" :key="row.label" class="flex gap-4 p-4">
             <span class="w-28 flex-shrink-0 text-sm text-gray-500 dark:text-dark-400">{{ row.label }}</span>
@@ -166,7 +206,7 @@
           <EmptyState
             icon="key"
             title="该员工当前没有可用的 API Key"
-            description="Key 轮换由员工本人在员工门户操作；管理员仅可查看已有 Key 掩码并撤销。"
+            :description="detail.status === 'active' ? '可由管理员代为创建，员工仍可在员工门户自助管理。' : '仅启用员工可以创建 API Key。'"
           />
         </div>
       </div>
@@ -245,11 +285,35 @@
       @confirm="terminate"
       @cancel="terminateConfirm = false"
     />
+
+    <ConfirmDialog
+      :show="keyPendingAction !== null"
+      :title="keyPendingAction === 'rotate' ? '轮换员工 Key' : '撤销员工 Key'"
+      :message="keyPendingAction === 'rotate' ? '轮换后旧 Key 将立即失效，新 Key 明文只显示一次。' : '撤销后该 Key 将立即失效，且无法恢复。'"
+      :confirm-text="keyPendingAction === 'rotate' ? '确认轮换' : '确认撤销'"
+      danger
+      @confirm="confirmKeyMutation"
+      @cancel="keyPendingAction = null"
+    />
+
+    <BaseDialog :show="keySecretVisible" title="一次性 API Key" width="normal" @close="clearKeySecret">
+      <div class="space-y-4">
+        <p class="rounded-lg bg-yellow-50 px-4 py-3 text-sm text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-500">
+          请立即安全交付给员工。关闭后无法再次查看，管理员也不能读取旧明文。
+        </p>
+        <div data-testid="admin-plaintext-key" class="font-mono">
+          <Input :model-value="keySecret" readonly />
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="btn btn-primary" data-testid="close-admin-key-secret" @click="clearKeySecret">我已保存</button>
+      </template>
+    </BaseDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import DataTable from '@/components/common/DataTable.vue'
@@ -266,7 +330,8 @@ import { useAppStore } from '@/stores/app'
 import {
   enterpriseAPI,
   isEnterpriseEmployeeDepartmentInvalid,
-  isEnterpriseEmployeeVersionConflict
+  isEnterpriseEmployeeVersionConflict,
+  isEnterpriseKeyMutationStateConflict
 } from '@/api/enterprise'
 import { auditActorLabel, auditEventLabel, employeeStatusLabel, keyStatusLabel, windowTypeLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
@@ -299,6 +364,10 @@ const editVisible = ref(false)
 const editDepartment = ref<number | null>(null)
 const saving = ref(false)
 const terminateConfirm = ref(false)
+const keyMutating = ref(false)
+const keyPendingAction = ref<'rotate' | 'revoke' | null>(null)
+const keySecret = ref('')
+const keySecretVisible = ref(false)
 const activeTab = ref('profile')
 const pageSize = ref(20)
 
@@ -512,5 +581,90 @@ async function terminate() {
   await loadDetail()
 }
 
+function showKeySecret(plaintext?: string, replayed = false) {
+  clearKeySecret()
+  if (replayed || !plaintext) return
+  keySecret.value = plaintext
+  keySecretVisible.value = true
+}
+
+function clearKeySecret() {
+  keySecret.value = ''
+  keySecretVisible.value = false
+}
+
+async function handleKeyMutationFailure(error: unknown, fallback: string) {
+  if (isEnterpriseKeyMutationStateConflict(error)) {
+    await loadDetail()
+    appStore.showWarning('Key 状态已变化，已刷新最新数据，请重新操作。')
+    return
+  }
+  appStore.showError(fallback)
+}
+
+function markKeyMutationComplete() {
+  historyLoaded.value = false
+}
+
+async function createEmployeeKey() {
+  if (!detail.value || detail.value.status !== 'active' || keyMutating.value) return
+  keyMutating.value = true
+  try {
+    const result = await enterpriseAPI.createEmployeeKeyAsAdmin(detail.value.id)
+    detail.value.current_key = result.key
+    showKeySecret(result.plaintext, result.replayed)
+    markKeyMutationComplete()
+    appStore.showSuccess(result.replayed ? '创建请求已处理，明文不会重复显示' : '员工 Key 已创建')
+  } catch (error) {
+    await handleKeyMutationFailure(error, '员工 Key 创建失败')
+  } finally {
+    keyMutating.value = false
+  }
+}
+
+async function confirmKeyMutation() {
+  const action = keyPendingAction.value
+  keyPendingAction.value = null
+  if (action === 'rotate') await rotateEmployeeKey()
+  if (action === 'revoke') await revokeEmployeeKey()
+}
+
+async function rotateEmployeeKey() {
+  const employee = detail.value
+  const currentKey = employee?.current_key
+  if (!employee || employee.status !== 'active' || !currentKey || keyMutating.value) return
+  keyMutating.value = true
+  try {
+    const result = await enterpriseAPI.rotateEmployeeKeyAsAdmin(employee.id, currentKey.id)
+    employee.current_key = result.key
+    showKeySecret(result.plaintext, result.replayed)
+    markKeyMutationComplete()
+    appStore.showSuccess(result.replayed ? '轮换请求已处理，明文不会重复显示' : '员工 Key 已轮换')
+  } catch (error) {
+    await handleKeyMutationFailure(error, '员工 Key 轮换失败')
+  } finally {
+    keyMutating.value = false
+  }
+}
+
+async function revokeEmployeeKey() {
+  const employee = detail.value
+  const currentKey = employee?.current_key
+  if (!employee || employee.status !== 'active' || !currentKey || keyMutating.value) return
+  keyMutating.value = true
+  try {
+    await enterpriseAPI.revokeEmployeeKeyAsAdmin(employee.id, currentKey.id)
+    employee.current_key = null
+    clearKeySecret()
+    markKeyMutationComplete()
+    appStore.showSuccess('员工 Key 已撤销')
+  } catch (error) {
+    await handleKeyMutationFailure(error, '员工 Key 撤销失败')
+  } finally {
+    keyMutating.value = false
+  }
+}
+
 onMounted(loadDetail)
+onUnmounted(clearKeySecret)
 </script>

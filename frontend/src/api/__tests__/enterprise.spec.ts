@@ -11,7 +11,20 @@ const employeePrincipal = {
   force_password_change: false,
 }
 
+const adminPrincipal = {
+  enterprise_id: 12,
+  principal_type: 'admin' as const,
+  principal_id: 7,
+  email: 'admin@example.com',
+  role: 'enterprise_admin' as const,
+  force_password_change: false,
+}
+
 function setEmployeePrincipal(principal = employeePrincipal) {
+  localStorage.setItem('enterprise_principal', JSON.stringify(principal))
+}
+
+function setAdminPrincipal(principal = adminPrincipal) {
   localStorage.setItem('enterprise_principal', JSON.stringify(principal))
 }
 
@@ -238,6 +251,76 @@ describe('enterprise API password handling', () => {
     const post = vi.spyOn(enterpriseClient, 'post')
 
     await expect(enterpriseAPI.createKey()).rejects.toThrow('authenticated enterprise employee')
+
+    expect(post).not.toHaveBeenCalled()
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('targets an employee from the administrator route without sending enterprise identity in the body', async () => {
+    setAdminPrincipal()
+    const randomUUID = vi.spyOn(crypto, 'randomUUID')
+      .mockReturnValueOnce('41111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('42222222-2222-4222-8222-222222222222')
+      .mockReturnValueOnce('43333333-3333-4333-8333-333333333333')
+    const post = vi.spyOn(enterpriseClient, 'post').mockResolvedValue({ data: { key: { id: 10 }, replayed: false } })
+
+    await enterpriseAPI.createEmployeeKeyAsAdmin(42)
+    await enterpriseAPI.rotateEmployeeKeyAsAdmin(42, 9)
+    await enterpriseAPI.revokeEmployeeKeyAsAdmin(42, 10)
+
+    expect(post).toHaveBeenNthCalledWith(1, '/enterprise/admin/employees/42/keys', undefined, {
+      headers: { 'Idempotency-Key': '41111111-1111-4111-8111-111111111111' },
+    })
+    expect(post).toHaveBeenNthCalledWith(2, '/enterprise/admin/employees/42/keys/rotate', { expected_api_key_id: 9 }, {
+      headers: { 'Idempotency-Key': '42222222-2222-4222-8222-222222222222' },
+    })
+    expect(post).toHaveBeenNthCalledWith(3, '/enterprise/admin/keys/10/revoke', undefined, {
+      headers: { 'Idempotency-Key': '43333333-3333-4333-8333-333333333333' },
+    })
+    expect(post.mock.calls.flat().join(' ')).not.toContain('enterprise_id')
+    expect(randomUUID).toHaveBeenCalledTimes(3)
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('reuses an administrator mutation key only for the same target employee and key', async () => {
+    setAdminPrincipal()
+    const post = vi.spyOn(enterpriseClient, 'post')
+      .mockRejectedValueOnce(new Error('network timeout'))
+      .mockResolvedValueOnce({ data: { key: { id: 10 }, replayed: true } })
+      .mockResolvedValueOnce({ data: { key: { id: 11 }, replayed: false } })
+
+    await expect(enterpriseAPI.rotateEmployeeKeyAsAdmin(42, 9)).rejects.toThrow('network timeout')
+    const firstHeaders = post.mock.calls[0]?.[2]?.headers
+    expect(sessionStorage.getItem('sub2api:enterprise:admin-key-mutation:12:7:42:rotate:9')).toBe(firstHeaders?.['Idempotency-Key'])
+
+    await enterpriseAPI.rotateEmployeeKeyAsAdmin(42, 9)
+    await enterpriseAPI.rotateEmployeeKeyAsAdmin(43, 9)
+
+    expect(post.mock.calls[1]?.[2]?.headers).toEqual(firstHeaders)
+    expect(post.mock.calls[2]?.[2]?.headers).not.toEqual(firstHeaders)
+    expect(sessionStorage.length).toBe(0)
+  })
+
+  it('keeps an administrator retry key across token refresh for the same principal', async () => {
+    setAdminPrincipal()
+    vi.spyOn(enterpriseClient, 'post').mockRejectedValueOnce(new Error('network timeout'))
+    await expect(enterpriseAPI.createEmployeeKeyAsAdmin(42)).rejects.toThrow('network timeout')
+    const retryKey = sessionStorage.getItem('sub2api:enterprise:admin-key-mutation:12:7:42:create:0')
+
+    syncEnterpriseAuthSession({
+      access_token: 'new-access', refresh_token: 'new-refresh', token_type: 'Bearer', expires_in: 900,
+      principal: adminPrincipal,
+    })
+
+    expect(retryKey).toBeTruthy()
+    expect(sessionStorage.getItem('sub2api:enterprise:admin-key-mutation:12:7:42:create:0')).toBe(retryKey)
+  })
+
+  it('rejects administrator key mutations without an administrator principal', async () => {
+    setEmployeePrincipal()
+    const post = vi.spyOn(enterpriseClient, 'post')
+
+    await expect(enterpriseAPI.createEmployeeKeyAsAdmin(42)).rejects.toThrow('enterprise administrator')
 
     expect(post).not.toHaveBeenCalled()
     expect(sessionStorage.length).toBe(0)

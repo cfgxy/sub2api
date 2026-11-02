@@ -70,3 +70,21 @@ func TestRevokeAdminKeyRecordsRejectedAuditForMissingIdempotencyKey(t *testing.T
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestCreateAdminEmployeeKeyRecordsTargetedRejectedAudit(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(
+		int64(7), "key.employee_create", "employee", int64(31), sqlmock.AnyArg(), "enterprise_admin:9",
+	).WillReturnResult(sqlmock.NewResult(1, 1))
+	h := NewHandler(svc, adminKeyStoreForRejectedAudit{}, employeeKeyGeneratorStub{value: "unused"}, nil)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/enterprise/admin/employees/31/keys", nil)
+	c.Params = gin.Params{{Key: "id", Value: "31"}}
+	c.Set(claimsContextKey, &Claims{EnterpriseID: 7, PrincipalType: "admin", PrincipalID: 9})
+	h.createAdminEmployeeKey(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
