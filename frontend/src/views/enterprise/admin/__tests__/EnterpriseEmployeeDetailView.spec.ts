@@ -81,6 +81,13 @@ function mountView() {
 }
 
 const toastMessages = () => useAppStore().toasts.map((toast) => toast.message).join('\n')
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
 const clickText = async (wrapper: ReturnType<typeof mountView>, text: string) => {
   const button = wrapper.findAll('button').find((item) => item.text() === text)
   expect(button, `未找到按钮：${text}`).toBeDefined()
@@ -222,6 +229,38 @@ describe('EnterpriseEmployeeDetailView', () => {
     expect(wrapper.find('[data-testid="admin-plaintext-key"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('sk-replayed-secret-must-not-render')
     wrapper.unmount()
+  })
+
+  it.each(['create', 'rotate'] as const)('does not restore one-time plaintext when a pending %s request resolves after unmount', async (action) => {
+    const plaintext = `sk-admin-${action}-unmount-race-secret`
+    const result = deferred<{ key: typeof baseDetail.current_key, plaintext: string, replayed: boolean }>()
+    if (action === 'create') {
+      getEmployee.mockResolvedValueOnce({ ...baseDetail, current_key: null })
+      createEmployeeKeyAsAdmin.mockReturnValueOnce(result.promise)
+    } else {
+      rotateEmployeeKeyAsAdmin.mockReturnValueOnce(result.promise)
+    }
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickText(wrapper, 'API Key')
+    if (action === 'create') {
+      await wrapper.get('[data-testid="admin-create-employee-key"]').trigger('click')
+      expect(createEmployeeKeyAsAdmin).toHaveBeenCalledWith(42)
+    } else {
+      await wrapper.get('[data-testid="admin-rotate-employee-key"]').trigger('click')
+      await clickText(wrapper, '确认轮换')
+      expect(rotateEmployeeKeyAsAdmin).toHaveBeenCalledWith(42, 1)
+    }
+
+    wrapper.unmount()
+    result.resolve({ key: { ...baseDetail.current_key }, plaintext, replayed: false })
+    await flushPromises()
+
+    expect((wrapper.vm.$.setupState as { keySecret: string }).keySecret).toBe('')
+    expect(document.body.textContent).not.toContain(plaintext)
+    expect(JSON.stringify(localStorage)).not.toContain(plaintext)
+    expect(JSON.stringify(sessionStorage)).not.toContain(plaintext)
   })
 
   it('revokes the current key and returns the detail to the create state', async () => {

@@ -368,6 +368,7 @@ const keyMutating = ref(false)
 const keyPendingAction = ref<'rotate' | 'revoke' | null>(null)
 const keySecret = ref('')
 const keySecretVisible = ref(false)
+let keySecretUnmounted = false
 const activeTab = ref('profile')
 const pageSize = ref(20)
 
@@ -582,6 +583,7 @@ async function terminate() {
 }
 
 function showKeySecret(plaintext?: string, replayed = false) {
+  if (keySecretUnmounted) return
   clearKeySecret()
   if (replayed || !plaintext) return
   keySecret.value = plaintext
@@ -666,5 +668,8 @@ async function revokeEmployeeKey() {
 }
 
 onMounted(loadDetail)
-onUnmounted(clearKeySecret)
+onUnmounted(() => {
+  keySecretUnmounted = true
+  clearKeySecret()
+})
 </script>
