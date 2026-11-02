@@ -3,6 +3,7 @@ package enterpriseidentity
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,11 +23,20 @@ import (
 )
 
 const (
-	claimsContextKey                       = "enterprise_identity_claims"
-	enterpriseAuthRateLimitScopeContextKey = "enterprise_auth_rate_limit_scope"
-	employeeKeyMutationRateLimitKey        = "enterprise-employee-key-mutation"
-	employeeKeyMutationRateLimit           = 10
-	employeeKeyMutationRateLimitWindow     = time.Minute
+	claimsContextKey                         = "enterprise_identity_claims"
+	enterpriseAuthRateLimitScopeContextKey   = "enterprise_auth_rate_limit_scope"
+	employeeKeyMutationRateLimitKey          = "enterprise-employee-key-mutation"
+	employeeKeyMutationRateLimit             = 10
+	employeeKeyMutationRateLimitWindow       = time.Minute
+	employeeKeyAuditReasonTargetUnavailable  = "target_unavailable"
+	employeeKeyAuditReasonKeyConflict        = "key_conflict"
+	employeeKeyAuditReasonIdempotency        = "idempotency_conflict"
+	employeeKeyAuditReasonProvisionLimit     = "provision_limit"
+	employeeKeyAuditReasonServiceUnavailable = "service_unavailable"
+	employeeKeyAuditReasonNoAvailableResult  = "no_available_result"
+	employeeKeyAuditReasonPermissionDenied   = "permission_denied"
+	employeeKeyAuditReasonRateLimited        = "rate_limited"
+	adminKeyMutationHandlerReachedContextKey = "enterprise_admin_key_mutation_handler_reached"
 )
 
 type Handler struct {
@@ -131,10 +141,35 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.PUT("/brand", h.putBrand)
 	admin.POST("/brand/background", h.uploadBrandBackground)
 	admin.GET("/keys", h.listAdminKeys)
-	admin.POST("/keys/:id/revoke", h.revokeAdminKey)
 	if h.workbench != nil {
 		h.workbench.registerRoutes(admin)
 	}
+
+	adminKeyMutations := authenticated.Group("/admin")
+	adminKeyMutations.POST(
+		"/employees/:id/keys",
+		h.auditAdminKeyMutationPreHandlerRejection("key.employee_create", "employee"),
+		requireEnterpriseAdmin,
+		h.employeeKeyMutationRateLimit(),
+		markAdminKeyMutationHandlerReached,
+		h.createAdminEmployeeKey,
+	)
+	adminKeyMutations.POST(
+		"/employees/:id/keys/rotate",
+		h.auditAdminKeyMutationPreHandlerRejection("key.employee_rotate", "employee"),
+		requireEnterpriseAdmin,
+		h.employeeKeyMutationRateLimit(),
+		markAdminKeyMutationHandlerReached,
+		h.rotateAdminEmployeeKey,
+	)
+	adminKeyMutations.POST(
+		"/keys/:id/revoke",
+		h.auditAdminKeyMutationPreHandlerRejection("key.revoke", "api_key"),
+		requireEnterpriseAdmin,
+		h.employeeKeyMutationRateLimit(),
+		markAdminKeyMutationHandlerReached,
+		h.revokeAdminKey,
+	)
 }
 
 func (h *Handler) registerPublicAuthRoute(root *gin.RouterGroup, path, key string, limit int, handler gin.HandlerFunc) {
@@ -181,7 +216,7 @@ func (h *Handler) employeeKeyMutationRateLimit() gin.HandlerFunc {
 					return hashRateLimitScope("0\x000")
 				}
 				return hashRateLimitScope(
-					strconv.FormatInt(claims.EnterpriseID, 10) + "\x00" + strconv.FormatInt(claims.PrincipalID, 10),
+					strconv.FormatInt(claims.EnterpriseID, 10) + "\x00" + claims.PrincipalType + "\x00" + strconv.FormatInt(claims.PrincipalID, 10),
 				)
 			},
 		},
@@ -272,6 +307,52 @@ func requireEnterpriseAdmin(c *gin.Context) {
 		return
 	}
 	c.Next()
+}
+
+func (h *Handler) auditAdminKeyMutationPreHandlerRejection(eventType, entityType string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		reason := adminKeyMutationPreHandlerRejectionReason(
+			c.Writer.Status(),
+			c.GetBool(adminKeyMutationHandlerReachedContextKey),
+		)
+		if reason == "" {
+			return
+		}
+		claims := mustClaims(c)
+		if claims == nil {
+			return
+		}
+		ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, eventType, entityType, safelyParsedPathID(c), reason)
+	}
+}
+
+func adminKeyMutationPreHandlerRejectionReason(status int, handlerReached bool) string {
+	if handlerReached {
+		return ""
+	}
+	switch status {
+	case http.StatusForbidden:
+		return employeeKeyAuditReasonPermissionDenied
+	case http.StatusTooManyRequests:
+		return employeeKeyAuditReasonRateLimited
+	default:
+		return ""
+	}
+}
+
+func markAdminKeyMutationHandlerReached(c *gin.Context) {
+	c.Set(adminKeyMutationHandlerReachedContextKey, true)
+	c.Next()
+}
+
+func safelyParsedPathID(c *gin.Context) *int64 {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return nil
+	}
+	return &id
 }
 
 func mustClaims(c *gin.Context) *Claims {
@@ -759,17 +840,68 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 	if !ok {
 		return
 	}
+	h.mutateKeyForEmployee(
+		c,
+		operation,
+		claims.EnterpriseID,
+		claims.PrincipalID,
+		fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID),
+		nil,
+	)
+}
+
+func (h *Handler) createAdminEmployeeKey(c *gin.Context) {
+	h.mutateAdminEmployeeKey(c, "create")
+}
+
+func (h *Handler) rotateAdminEmployeeKey(c *gin.Context) {
+	h.mutateAdminEmployeeKey(c, "rotate")
+}
+
+func (h *Handler) mutateAdminEmployeeKey(c *gin.Context, operation string) {
+	claims := mustClaims(c)
+	if claims == nil {
+		response.Forbidden(c, "enterprise administrator permission is required")
+		return
+	}
+	ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+	employeeID, ok := pathID(c)
+	if !ok {
+		h.recordRejectedEmployeeKeyAudit(ctx, claims.EnterpriseID, operation, nil, 0, "invalid_request")
+		return
+	}
+	h.mutateKeyForEmployee(c, operation, claims.EnterpriseID, employeeID, auditActor(ctx), func(expectedAPIKeyID int64, reason string) {
+		h.recordRejectedEmployeeKeyAudit(ctx, claims.EnterpriseID, operation, &employeeID, expectedAPIKeyID, reason)
+	})
+}
+
+func (h *Handler) mutateKeyForEmployee(
+	c *gin.Context,
+	operation string,
+	enterpriseID, employeeID int64,
+	actorRef string,
+	recordRejected func(expectedAPIKeyID int64, reason string),
+) {
 	if h.keyRepository == nil || h.apiKeyService == nil {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		if recordRejected != nil {
+			recordRejected(0, employeeKeyAuditReasonServiceUnavailable)
+		}
 		return
 	}
 	var req employeeKeyMutationRequest
 	if operation != "create" && !bind(c, &req) {
+		if recordRejected != nil {
+			recordRejected(0, "invalid_request")
+		}
 		return
 	}
 	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 128 {
 		response.BadRequest(c, "Idempotency-Key header is required and must not exceed 128 characters")
+		if recordRejected != nil {
+			recordRejected(req.ExpectedAPIKeyID, "invalid_request")
+		}
 		return
 	}
 	plaintext := ""
@@ -777,13 +909,16 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 		var err error
 		plaintext, err = h.apiKeyService.GenerateKey()
 		if response.ErrorFrom(c, err) {
+			if recordRejected != nil {
+				recordRejected(req.ExpectedAPIKeyID, employeeKeyAuditReasonServiceUnavailable)
+			}
 			return
 		}
 	}
 	params := enterprise.EmployeeKeyMutationParams{
-		EnterpriseID: claims.EnterpriseID, EmployeeID: claims.PrincipalID,
+		EnterpriseID: enterpriseID, EmployeeID: employeeID,
 		ExpectedAPIKeyID: req.ExpectedAPIKeyID, IdempotencyKey: idempotencyKey,
-		Plaintext: plaintext, ActorRef: fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID),
+		Plaintext: plaintext, ActorRef: actorRef,
 	}
 	var result *enterprise.EmployeeKeyMutationResult
 	var err error
@@ -796,10 +931,16 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 		result, err = h.keyRepository.RotateEmployeeKey(c.Request.Context(), params)
 	}
 	if response.ErrorFrom(c, err) {
+		if recordRejected != nil {
+			recordRejected(req.ExpectedAPIKeyID, employeeKeyRejectedAuditReason(err))
+		}
 		return
 	}
 	if result == nil || result.Key == nil {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		if recordRejected != nil {
+			recordRejected(req.ExpectedAPIKeyID, employeeKeyAuditReasonNoAvailableResult)
+		}
 		return
 	}
 	if result.Replayed {
@@ -814,6 +955,44 @@ func (h *Handler) mutateKey(c *gin.Context, operation string) {
 		return
 	}
 	response.Success(c, result)
+}
+
+func employeeKeyRejectedAuditReason(err error) string {
+	switch {
+	case errors.Is(err, enterprise.ErrEmployeeKeyNotFound):
+		return employeeKeyAuditReasonTargetUnavailable
+	case errors.Is(err, enterprise.ErrEmployeeKeyAlreadyActive), errors.Is(err, enterprise.ErrEmployeeKeyVersionConflict):
+		return employeeKeyAuditReasonKeyConflict
+	case errors.Is(err, enterprise.ErrEmployeeKeyIdempotency):
+		return employeeKeyAuditReasonIdempotency
+	case errors.Is(err, enterprise.ErrEmployeeKeyProvisionLimit):
+		return employeeKeyAuditReasonProvisionLimit
+	case errors.Is(err, enterprise.ErrEmployeeKeyUnavailable):
+		return employeeKeyAuditReasonServiceUnavailable
+	default:
+		return employeeKeyAuditReasonServiceUnavailable
+	}
+}
+
+func (h *Handler) recordRejectedEmployeeKeyAudit(
+	ctx context.Context,
+	enterpriseID int64,
+	operation string,
+	employeeID *int64,
+	expectedAPIKeyID int64,
+	reason string,
+) {
+	if h.service == nil {
+		return
+	}
+	payload := map[string]any{"result": "rejected", "reason": strings.TrimSpace(reason)}
+	if employeeID != nil {
+		payload["employee_id"] = *employeeID
+	}
+	if expectedAPIKeyID > 0 {
+		payload["api_key_id"] = expectedAPIKeyID
+	}
+	_ = h.service.recordAuditEvent(ctx, enterpriseID, "key.employee_"+operation, "employee", employeeID, payload)
 }
 
 func employeeClaims(c *gin.Context) (*Claims, bool) {
@@ -1045,7 +1224,7 @@ func (h *Handler) revokeAdminKey(c *gin.Context) {
 	store, ok := h.keyRepository.(enterpriseAdminKeyStore)
 	if !ok {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
-		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, "rejected")
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", nil, employeeKeyAuditReasonServiceUnavailable)
 		return
 	}
 	id, ok := pathID(c)
@@ -1061,12 +1240,15 @@ func (h *Handler) revokeAdminKey(c *gin.Context) {
 	}
 	result, err := store.RevokeEnterpriseKey(ctx, claims.EnterpriseID, id, idempotencyKey, auditActor(ctx))
 	if response.ErrorFrom(c, err) {
-		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, "rejected")
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, employeeKeyRejectedAuditReason(err))
 		return
 	}
-	if result != nil {
-		result.Plaintext = ""
+	if result == nil || result.Key == nil {
+		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, "key.revoke", "api_key", &id, employeeKeyAuditReasonNoAvailableResult)
+		return
 	}
+	result.Plaintext = ""
 	response.Success(c, result)
 }
 

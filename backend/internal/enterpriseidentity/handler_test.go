@@ -16,6 +16,7 @@ import (
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -55,6 +56,8 @@ func TestRegisterRoutesIncludesEnterpriseAuthSessionsAndAdminAPIs(t *testing.T) 
 		"GET /api/v1/enterprise/admin/departments",
 		"GET /api/v1/enterprise/admin/departments/:id/deletion-impact",
 		"GET /api/v1/enterprise/admin/employees/:id",
+		"POST /api/v1/enterprise/admin/employees/:id/keys",
+		"POST /api/v1/enterprise/admin/employees/:id/keys/rotate",
 		"GET /api/v1/enterprise/admin/keys",
 		"POST /api/v1/enterprise/admin/keys/:id/revoke",
 		"POST /api/v1/enterprise/admin/employees",
@@ -75,6 +78,7 @@ type employeeKeyStoreStub struct {
 	createResult  *enterprise.EmployeeKeyMutationResult
 	disableResult *enterprise.EmployeeKeyMutationResult
 	rotateResult  *enterprise.EmployeeKeyMutationResult
+	revokeCalls   int
 }
 
 func (s *employeeKeyStoreStub) GetEmployeeCurrentKey(_ context.Context, enterpriseID, employeeID int64) (*enterprise.EmployeeKey, error) {
@@ -99,6 +103,15 @@ func (s *employeeKeyStoreStub) DisableEmployeeKey(_ context.Context, params ente
 func (s *employeeKeyStoreStub) RotateEmployeeKey(_ context.Context, params enterprise.EmployeeKeyMutationParams) (*enterprise.EmployeeKeyMutationResult, error) {
 	s.rotateParams = append(s.rotateParams, params)
 	return s.rotateResult, nil
+}
+
+func (*employeeKeyStoreStub) ListEnterpriseKeys(context.Context, int64) ([]enterprise.EnterpriseKeySummary, error) {
+	return nil, nil
+}
+
+func (s *employeeKeyStoreStub) RevokeEnterpriseKey(context.Context, int64, int64, string, string) (*enterprise.EmployeeKeyMutationResult, error) {
+	s.revokeCalls++
+	return nil, nil
 }
 
 type employeeKeyGeneratorStub struct {
@@ -174,6 +187,79 @@ func TestEmployeeKeyHandlersUseAuthenticatedEmployeeClaims(t *testing.T) {
 	require.Equal(t, int64(22), store.rotateParams[0].EmployeeID)
 	require.Equal(t, int64(67), store.rotateParams[0].ExpectedAPIKeyID)
 	require.NotContains(t, rotateRecorder.Body.String(), "must-not-return-on-replay")
+}
+
+func TestAdminEmployeeKeyHandlersUseAdminEnterpriseAndPathEmployee(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &employeeKeyStoreStub{
+		createResult: &enterprise.EmployeeKeyMutationResult{
+			Key:       &enterprise.EmployeeKey{ID: 68, MaskedKey: "sk-adm...0002", Status: "active"},
+			Plaintext: "admin-generated-key",
+		},
+		rotateResult: &enterprise.EmployeeKeyMutationResult{
+			Key:       &enterprise.EmployeeKey{ID: 69, MaskedKey: "sk-adm...0003", Status: "active"},
+			Plaintext: "must-not-return-on-replay",
+			Replayed:  true,
+		},
+	}
+	h := NewHandler(nil, store, employeeKeyGeneratorStub{value: "admin-generated-key"}, nil)
+	claims := &Claims{EnterpriseID: 11, PrincipalType: "admin", PrincipalID: 7, Role: "enterprise_admin", SessionID: "session-admin"}
+
+	createRecorder := httptest.NewRecorder()
+	createContext, _ := gin.CreateTestContext(createRecorder)
+	createContext.Request = httptest.NewRequest(http.MethodPost, "/enterprise/admin/employees/22/keys", nil)
+	createContext.Request.Header.Set("Idempotency-Key", "admin-create-once")
+	createContext.Params = gin.Params{{Key: "id", Value: "22"}}
+	createContext.Set(claimsContextKey, claims)
+	h.createAdminEmployeeKey(createContext)
+
+	require.Equal(t, http.StatusCreated, createRecorder.Code)
+	require.Equal(t, "no-store", createRecorder.Header().Get("Cache-Control"))
+	require.Len(t, store.createParams, 1)
+	require.Equal(t, int64(11), store.createParams[0].EnterpriseID)
+	require.Equal(t, int64(22), store.createParams[0].EmployeeID)
+	require.Equal(t, "enterprise_admin:7", store.createParams[0].ActorRef)
+	require.Contains(t, createRecorder.Body.String(), "admin-generated-key")
+
+	rotateRecorder := httptest.NewRecorder()
+	rotateContext, _ := gin.CreateTestContext(rotateRecorder)
+	rotateContext.Request = httptest.NewRequest(http.MethodPost, "/enterprise/admin/employees/22/keys/rotate", strings.NewReader(`{"expected_api_key_id":68}`))
+	rotateContext.Request.Header.Set("Content-Type", "application/json")
+	rotateContext.Request.Header.Set("Idempotency-Key", "admin-rotate-once")
+	rotateContext.Params = gin.Params{{Key: "id", Value: "22"}}
+	rotateContext.Set(claimsContextKey, claims)
+	h.rotateAdminEmployeeKey(rotateContext)
+
+	require.Equal(t, http.StatusOK, rotateRecorder.Code)
+	require.Len(t, store.rotateParams, 1)
+	require.Equal(t, int64(11), store.rotateParams[0].EnterpriseID)
+	require.Equal(t, int64(22), store.rotateParams[0].EmployeeID)
+	require.Equal(t, int64(68), store.rotateParams[0].ExpectedAPIKeyID)
+	require.Equal(t, "enterprise_admin:7", store.rotateParams[0].ActorRef)
+	require.NotContains(t, rotateRecorder.Body.String(), "must-not-return-on-replay")
+}
+
+func TestAdminEmployeeKeyRoutesRejectEmployeePrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &employeeKeyStoreStub{}
+	h := NewHandler(nil, store, employeeKeyGeneratorStub{value: "must-not-be-generated"}, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(claimsContextKey, &Claims{
+			EnterpriseID: 11, PrincipalType: "employee", PrincipalID: 22,
+			Role: "enterprise_employee", SessionID: "session-employee",
+		})
+		c.Next()
+	})
+	router.POST("/employees/:id/keys", requireEnterpriseAdmin, h.createAdminEmployeeKey)
+
+	req := httptest.NewRequest(http.MethodPost, "/employees/22/keys", nil)
+	req.Header.Set("Idempotency-Key", "must-not-reach-repository")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Empty(t, store.createParams)
 }
 
 // TestEmployeeHomeComposesPersonalPoolAndRecentTrendWithoutFabricatingData 验证 e-01 员工首页
@@ -324,6 +410,82 @@ func TestEmployeeKeyMutationRateLimitFailsClosedBeforeGeneratorAndRepository(t *
 			require.Zero(t, generator.calls)
 		})
 	}
+}
+
+func TestRegisteredAdminKeyRevokeRateLimitFailsClosedBeforeStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc, mock := newMockService(t)
+	const email = "admin@example.com"
+	const passwordHash = "admin-password-hash"
+	claims := Claims{
+		EnterpriseID: 1, PrincipalType: "admin", PrincipalID: 5,
+		AuthVersion: expectedUserTokenVersion(email, passwordHash), Role: "enterprise_admin", SessionID: "session-1",
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	}
+	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(svc.secret)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT id, name, LOWER.*FROM enterprises").WithArgs("acme.example.com").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "admin_user_id", "status"}).AddRow(1, "Acme", "acme.example.com", 5, "active"))
+	mock.ExpectQuery("SELECT users.email, users.password_hash, users.status").WithArgs(int64(1), int64(5)).
+		WillReturnRows(sqlmock.NewRows([]string{"email", "password_hash", "status"}).AddRow(email, passwordHash, "active"))
+	mock.ExpectQuery("SELECT EXISTS").WithArgs(int64(1), "session-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  25 * time.Millisecond,
+		ReadTimeout:  25 * time.Millisecond,
+		WriteTimeout: 25 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store := &employeeKeyStoreStub{}
+	h := NewHandler(svc, store, nil, rdb)
+	router := gin.New()
+	h.RegisterRoutes(router.Group("/api/v1"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/enterprise/admin/keys/67/revoke", nil)
+	req.Host = "acme.example.com"
+	req.Header.Set("Authorization", "Bearer "+raw)
+	req.Header.Set("Idempotency-Key", "must-not-reach-store")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Zero(t, store.revokeCalls)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestEmployeeKeyMutationRateLimitIsolatesPrincipalTypesWithSameID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	h := NewHandler(nil, nil, nil, rdb)
+	router := gin.New()
+
+	register := func(path, principalType string) {
+		router.POST(path, func(c *gin.Context) {
+			c.Set(claimsContextKey, &Claims{
+				EnterpriseID: 11, PrincipalType: principalType, PrincipalID: 22,
+			})
+			c.Next()
+		}, h.employeeKeyMutationRateLimit(), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+	}
+	register("/employee", "employee")
+	register("/admin", "admin")
+
+	perform := func(path string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, nil))
+		return recorder
+	}
+	for i := 0; i < employeeKeyMutationRateLimit; i++ {
+		require.Equal(t, http.StatusNoContent, perform("/employee").Code)
+	}
+	require.Equal(t, http.StatusTooManyRequests, perform("/employee").Code)
+	require.Equal(t, http.StatusNoContent, perform("/admin").Code)
 }
 
 func TestEmployeeKeyRotationPlaintextResponseIsNeverStoredByHTTPCaches(t *testing.T) {

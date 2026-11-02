@@ -39,6 +39,7 @@ const ACCESS_KEY = 'enterprise_access_token'
 const REFRESH_KEY = 'enterprise_refresh_token'
 const PRINCIPAL_KEY = 'enterprise_principal'
 const enterpriseKeyMutationPrefix = 'sub2api:enterprise:key-mutation:'
+const adminEmployeeKeyMutationPrefix = 'sub2api:enterprise:admin-key-mutation:'
 let refreshPromise: Promise<EnterpriseTokenPair> | null = null
 const sessionListeners = new Set<(pair: EnterpriseTokenPair) => void>()
 const enterpriseKeyMutationKeys = new Map<string, string>()
@@ -94,7 +95,7 @@ export function onEnterpriseAuthSession(listener: (pair: EnterpriseTokenPair) =>
 }
 
 export function syncEnterpriseAuthSession(pair: EnterpriseTokenPair) {
-  if (!sameEnterprisePrincipal(readEnterprisePrincipal(), pair.principal)) clearEnterpriseKeyMutationRetryState()
+  if (!sameEnterprisePrincipal(readStoredEnterprisePrincipal(), pair.principal)) clearEnterpriseKeyMutationRetryState()
   localStorage.setItem(ACCESS_KEY, pair.access_token)
   localStorage.setItem(REFRESH_KEY, pair.refresh_token)
   localStorage.setItem(PRINCIPAL_KEY, JSON.stringify(pair.principal))
@@ -164,8 +165,9 @@ type EnterpriseReadOptions = { suppressUnavailableRedirect?: boolean }
 const suppressUnavailable = (options?: EnterpriseReadOptions) => (options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)
 const newIdempotencyKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 type EnterpriseKeyMutationOperation = 'create' | 'disable' | 'rotate'
+type AdminEmployeeKeyMutationOperation = 'create' | 'rotate' | 'revoke'
 
-function readEnterprisePrincipal(): EnterprisePrincipal | null {
+function readStoredEnterprisePrincipal(): EnterprisePrincipal | null {
   try {
     const raw = globalThis.localStorage?.getItem(PRINCIPAL_KEY)
     if (!raw) return null
@@ -173,19 +175,31 @@ function readEnterprisePrincipal(): EnterprisePrincipal | null {
     if (typeof principal !== 'object' || principal === null) return null
     const candidate = principal as Partial<EnterprisePrincipal>
     if (
-      candidate.principal_type !== 'employee'
-      || candidate.role !== 'enterprise_employee'
-      || typeof candidate.enterprise_id !== 'number'
+      typeof candidate.enterprise_id !== 'number'
       || !Number.isSafeInteger(candidate.enterprise_id)
       || candidate.enterprise_id <= 0
       || typeof candidate.principal_id !== 'number'
       || !Number.isSafeInteger(candidate.principal_id)
       || candidate.principal_id <= 0
+      || !(
+        (candidate.principal_type === 'employee' && candidate.role === 'enterprise_employee')
+        || (candidate.principal_type === 'admin' && candidate.role === 'enterprise_admin')
+      )
     ) return null
     return candidate as EnterprisePrincipal
   } catch {
     return null
   }
+}
+
+function readEnterprisePrincipal(): EnterprisePrincipal | null {
+  const principal = readStoredEnterprisePrincipal()
+  return principal?.principal_type === 'employee' && principal.role === 'enterprise_employee' ? principal : null
+}
+
+function readEnterpriseAdminPrincipal(): EnterprisePrincipal | null {
+  const principal = readStoredEnterprisePrincipal()
+  return principal?.principal_type === 'admin' && principal.role === 'enterprise_admin' ? principal : null
 }
 
 function sameEnterprisePrincipal(previous: EnterprisePrincipal | null, next: EnterprisePrincipal): boolean {
@@ -199,6 +213,21 @@ function enterpriseKeyMutationScope(operation: EnterpriseKeyMutationOperation, e
   const principal = readEnterprisePrincipal()
   if (!principal || (operation !== 'create' && (!Number.isSafeInteger(expectedAPIKeyID) || expectedAPIKeyID <= 0))) return null
   return `${enterpriseKeyMutationPrefix}${principal.enterprise_id}:${principal.principal_id}:${operation}:${expectedAPIKeyID}`
+}
+
+function adminEmployeeKeyMutationScope(
+  employeeID: number,
+  operation: AdminEmployeeKeyMutationOperation,
+  expectedAPIKeyID = 0,
+): string | null {
+  const principal = readEnterpriseAdminPrincipal()
+  if (
+    !principal
+    || !Number.isSafeInteger(employeeID)
+    || employeeID <= 0
+    || (operation !== 'create' && (!Number.isSafeInteger(expectedAPIKeyID) || expectedAPIKeyID <= 0))
+  ) return null
+  return `${adminEmployeeKeyMutationPrefix}${principal.enterprise_id}:${principal.principal_id}:${employeeID}:${operation}:${expectedAPIKeyID}`
 }
 
 function readEnterpriseKeyMutationKey(scope: string): string | null {
@@ -225,7 +254,9 @@ export function clearEnterpriseKeyMutationRetryState(): void {
   try {
     const keys = Array.from({ length: globalThis.sessionStorage?.length ?? 0 }, (_, index) => globalThis.sessionStorage?.key(index))
     for (const key of keys) {
-      if (key?.startsWith(enterpriseKeyMutationPrefix)) globalThis.sessionStorage?.removeItem(key)
+      if (key?.startsWith(enterpriseKeyMutationPrefix) || key?.startsWith(adminEmployeeKeyMutationPrefix)) {
+        globalThis.sessionStorage?.removeItem(key)
+      }
     }
   } catch {
     // sessionStorage 不可用时内存状态已清理。
@@ -270,6 +301,26 @@ async function withEnterpriseKeyMutation<T>(
 		if (isEnterpriseKeyMutationStateConflict(error)) storeEnterpriseKeyMutationKey(scope, null)
 		throw error
 	}
+}
+
+async function withAdminEmployeeKeyMutation<T>(
+  employeeID: number,
+  operation: AdminEmployeeKeyMutationOperation,
+  expectedAPIKeyID: number,
+  request: (idempotencyKey: string) => Promise<T>,
+): Promise<T> {
+  const scope = adminEmployeeKeyMutationScope(employeeID, operation, expectedAPIKeyID)
+  if (!scope) throw new Error('authenticated enterprise administrator and active employee target are required for API key mutation')
+  const idempotencyKey = readEnterpriseKeyMutationKey(scope) ?? newIdempotencyKey()
+  storeEnterpriseKeyMutationKey(scope, idempotencyKey)
+  try {
+    const result = await request(idempotencyKey)
+    storeEnterpriseKeyMutationKey(scope, null)
+    return result
+  } catch (error) {
+    if (isEnterpriseKeyMutationStateConflict(error)) storeEnterpriseKeyMutationKey(scope, null)
+    throw error
+  }
 }
 
 const idempotencyHeaders = (idempotencyKey: string) => ({ headers: { 'Idempotency-Key': idempotencyKey } })
@@ -333,6 +384,15 @@ export const enterpriseAPI = {
   listEmployees: (options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseEmployee[]>(enterpriseClient.get('/enterprise/admin/employees', options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)),
   getEmployee: (id: number, options?: { suppressUnavailableRedirect?: boolean }) => data<EnterpriseEmployeeDetail>(enterpriseClient.get(`/enterprise/admin/employees/${id}`, options?.suppressUnavailableRedirect ? { enterpriseSuppressUnavailableRedirect: true } : undefined)),
   createEmployee: (input: EmployeeCreateInput) => data<EnterpriseEmployee>(enterpriseClient.post('/enterprise/admin/employees', input)),
+  createEmployeeKeyAsAdmin: (employeeId: number) => withAdminEmployeeKeyMutation(employeeId, 'create', 0, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
+    enterpriseClient.post(`/enterprise/admin/employees/${employeeId}/keys`, undefined, idempotencyHeaders(idempotencyKey)),
+  )),
+  rotateEmployeeKeyAsAdmin: (employeeId: number, expected_api_key_id: number) => withAdminEmployeeKeyMutation(employeeId, 'rotate', expected_api_key_id, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
+    enterpriseClient.post(`/enterprise/admin/employees/${employeeId}/keys/rotate`, { expected_api_key_id }, idempotencyHeaders(idempotencyKey)),
+  )),
+  revokeEmployeeKeyAsAdmin: (employeeId: number, apiKeyId: number) => withAdminEmployeeKeyMutation(employeeId, 'revoke', apiKeyId, (idempotencyKey) => data<EnterpriseEmployeeKeyMutationResult>(
+    enterpriseClient.post(`/enterprise/admin/keys/${apiKeyId}/revoke`, undefined, idempotencyHeaders(idempotencyKey)),
+  )),
   resetEmployeePassword: (id: number) => data<{ initial_password: string; must_change_password: boolean }>(enterpriseClient.post(`/enterprise/admin/employees/${id}/reset-password`)),
   updateEmployee: (id: number, input: EmployeeUpdateInput) => data<{ success: boolean }>(enterpriseClient.patch(`/enterprise/admin/employees/${id}`, input)),
   terminateEmployee: (id: number) => data<{ success: boolean }>(enterpriseClient.delete(`/enterprise/admin/employees/${id}`)),
