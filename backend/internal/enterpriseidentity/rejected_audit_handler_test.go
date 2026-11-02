@@ -72,7 +72,7 @@ func (want auditPayloadWithReason) Match(value driver.Value) bool {
 		return false
 	}
 	var payload map[string]any
-	return json.Unmarshal(encoded, &payload) == nil && payload["reason"] == string(want)
+	return json.Unmarshal(encoded, &payload) == nil && payload["result"] == "rejected" && payload["reason"] == string(want)
 }
 
 type failingEmployeeKeyGeneratorForRejectedAudit struct{}
