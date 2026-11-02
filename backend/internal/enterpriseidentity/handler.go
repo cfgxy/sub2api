@@ -3,6 +3,7 @@ package enterpriseidentity
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,11 +23,17 @@ import (
 )
 
 const (
-	claimsContextKey                       = "enterprise_identity_claims"
-	enterpriseAuthRateLimitScopeContextKey = "enterprise_auth_rate_limit_scope"
-	employeeKeyMutationRateLimitKey        = "enterprise-employee-key-mutation"
-	employeeKeyMutationRateLimit           = 10
-	employeeKeyMutationRateLimitWindow     = time.Minute
+	claimsContextKey                         = "enterprise_identity_claims"
+	enterpriseAuthRateLimitScopeContextKey   = "enterprise_auth_rate_limit_scope"
+	employeeKeyMutationRateLimitKey          = "enterprise-employee-key-mutation"
+	employeeKeyMutationRateLimit             = 10
+	employeeKeyMutationRateLimitWindow       = time.Minute
+	employeeKeyAuditReasonTargetUnavailable  = "target_unavailable"
+	employeeKeyAuditReasonKeyConflict        = "key_conflict"
+	employeeKeyAuditReasonIdempotency        = "idempotency_conflict"
+	employeeKeyAuditReasonProvisionLimit     = "provision_limit"
+	employeeKeyAuditReasonServiceUnavailable = "service_unavailable"
+	employeeKeyAuditReasonNoAvailableResult  = "no_available_result"
 )
 
 type Handler struct {
@@ -806,7 +813,7 @@ func (h *Handler) mutateKeyForEmployee(
 	if h.keyRepository == nil || h.apiKeyService == nil {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
 		if recordRejected != nil {
-			recordRejected(0, "rejected")
+			recordRejected(0, employeeKeyAuditReasonServiceUnavailable)
 		}
 		return
 	}
@@ -831,7 +838,7 @@ func (h *Handler) mutateKeyForEmployee(
 		plaintext, err = h.apiKeyService.GenerateKey()
 		if response.ErrorFrom(c, err) {
 			if recordRejected != nil {
-				recordRejected(req.ExpectedAPIKeyID, "rejected")
+				recordRejected(req.ExpectedAPIKeyID, employeeKeyAuditReasonServiceUnavailable)
 			}
 			return
 		}
@@ -853,14 +860,14 @@ func (h *Handler) mutateKeyForEmployee(
 	}
 	if response.ErrorFrom(c, err) {
 		if recordRejected != nil {
-			recordRejected(req.ExpectedAPIKeyID, "rejected")
+			recordRejected(req.ExpectedAPIKeyID, employeeKeyRejectedAuditReason(err))
 		}
 		return
 	}
 	if result == nil || result.Key == nil {
 		response.ErrorFrom(c, enterprise.ErrEmployeeKeyUnavailable)
 		if recordRejected != nil {
-			recordRejected(req.ExpectedAPIKeyID, "rejected")
+			recordRejected(req.ExpectedAPIKeyID, employeeKeyAuditReasonNoAvailableResult)
 		}
 		return
 	}
@@ -876,6 +883,23 @@ func (h *Handler) mutateKeyForEmployee(
 		return
 	}
 	response.Success(c, result)
+}
+
+func employeeKeyRejectedAuditReason(err error) string {
+	switch {
+	case errors.Is(err, enterprise.ErrEmployeeKeyNotFound):
+		return employeeKeyAuditReasonTargetUnavailable
+	case errors.Is(err, enterprise.ErrEmployeeKeyAlreadyActive), errors.Is(err, enterprise.ErrEmployeeKeyVersionConflict):
+		return employeeKeyAuditReasonKeyConflict
+	case errors.Is(err, enterprise.ErrEmployeeKeyIdempotency):
+		return employeeKeyAuditReasonIdempotency
+	case errors.Is(err, enterprise.ErrEmployeeKeyProvisionLimit):
+		return employeeKeyAuditReasonProvisionLimit
+	case errors.Is(err, enterprise.ErrEmployeeKeyUnavailable):
+		return employeeKeyAuditReasonServiceUnavailable
+	default:
+		return employeeKeyAuditReasonServiceUnavailable
+	}
 }
 
 func (h *Handler) recordRejectedEmployeeKeyAudit(
