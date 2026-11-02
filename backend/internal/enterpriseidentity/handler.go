@@ -34,6 +34,9 @@ const (
 	employeeKeyAuditReasonProvisionLimit     = "provision_limit"
 	employeeKeyAuditReasonServiceUnavailable = "service_unavailable"
 	employeeKeyAuditReasonNoAvailableResult  = "no_available_result"
+	employeeKeyAuditReasonPermissionDenied   = "permission_denied"
+	employeeKeyAuditReasonRateLimited        = "rate_limited"
+	adminKeyMutationHandlerReachedContextKey = "enterprise_admin_key_mutation_handler_reached"
 )
 
 type Handler struct {
@@ -131,8 +134,6 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.GET("/employees", h.listEmployees)
 	admin.GET("/employees/:id", h.getEmployee)
 	admin.POST("/employees", h.createEmployee)
-	admin.POST("/employees/:id/keys", h.employeeKeyMutationRateLimit(), h.createAdminEmployeeKey)
-	admin.POST("/employees/:id/keys/rotate", h.employeeKeyMutationRateLimit(), h.rotateAdminEmployeeKey)
 	admin.POST("/employees/:id/reset-password", h.resetEmployeePassword)
 	admin.PATCH("/employees/:id", h.updateEmployee)
 	admin.DELETE("/employees/:id", h.terminateEmployee)
@@ -140,10 +141,35 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	admin.PUT("/brand", h.putBrand)
 	admin.POST("/brand/background", h.uploadBrandBackground)
 	admin.GET("/keys", h.listAdminKeys)
-	admin.POST("/keys/:id/revoke", h.employeeKeyMutationRateLimit(), h.revokeAdminKey)
 	if h.workbench != nil {
 		h.workbench.registerRoutes(admin)
 	}
+
+	adminKeyMutations := authenticated.Group("/admin")
+	adminKeyMutations.POST(
+		"/employees/:id/keys",
+		h.auditAdminKeyMutationPreHandlerRejection("key.employee_create", "employee"),
+		requireEnterpriseAdmin,
+		h.employeeKeyMutationRateLimit(),
+		markAdminKeyMutationHandlerReached,
+		h.createAdminEmployeeKey,
+	)
+	adminKeyMutations.POST(
+		"/employees/:id/keys/rotate",
+		h.auditAdminKeyMutationPreHandlerRejection("key.employee_rotate", "employee"),
+		requireEnterpriseAdmin,
+		h.employeeKeyMutationRateLimit(),
+		markAdminKeyMutationHandlerReached,
+		h.rotateAdminEmployeeKey,
+	)
+	adminKeyMutations.POST(
+		"/keys/:id/revoke",
+		h.auditAdminKeyMutationPreHandlerRejection("key.revoke", "api_key"),
+		requireEnterpriseAdmin,
+		h.employeeKeyMutationRateLimit(),
+		markAdminKeyMutationHandlerReached,
+		h.revokeAdminKey,
+	)
 }
 
 func (h *Handler) registerPublicAuthRoute(root *gin.RouterGroup, path, key string, limit int, handler gin.HandlerFunc) {
@@ -281,6 +307,52 @@ func requireEnterpriseAdmin(c *gin.Context) {
 		return
 	}
 	c.Next()
+}
+
+func (h *Handler) auditAdminKeyMutationPreHandlerRejection(eventType, entityType string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		reason := adminKeyMutationPreHandlerRejectionReason(
+			c.Writer.Status(),
+			c.GetBool(adminKeyMutationHandlerReachedContextKey),
+		)
+		if reason == "" {
+			return
+		}
+		claims := mustClaims(c)
+		if claims == nil {
+			return
+		}
+		ctx := WithAuditActor(c.Request.Context(), fmt.Sprintf("enterprise_%s:%d", claims.PrincipalType, claims.PrincipalID))
+		h.recordRejectedAudit(ctx, claims.EnterpriseID, eventType, entityType, safelyParsedPathID(c), reason)
+	}
+}
+
+func adminKeyMutationPreHandlerRejectionReason(status int, handlerReached bool) string {
+	if handlerReached {
+		return ""
+	}
+	switch status {
+	case http.StatusForbidden:
+		return employeeKeyAuditReasonPermissionDenied
+	case http.StatusTooManyRequests:
+		return employeeKeyAuditReasonRateLimited
+	default:
+		return ""
+	}
+}
+
+func markAdminKeyMutationHandlerReached(c *gin.Context) {
+	c.Set(adminKeyMutationHandlerReachedContextKey, true)
+	c.Next()
+}
+
+func safelyParsedPathID(c *gin.Context) *int64 {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return nil
+	}
+	return &id
 }
 
 func mustClaims(c *gin.Context) *Claims {

@@ -162,20 +162,64 @@ func (r *Repository) ListEnterpriseKeys(ctx context.Context, enterpriseID int64)
 }
 
 func (r *Repository) RevokeEnterpriseKey(ctx context.Context, enterpriseID, apiKeyID int64, idempotencyKey, actorRef string) (*EmployeeKeyMutationResult, error) {
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if replayed, found, err := r.replayCompletedEnterpriseKeyRevocation(ctx, enterpriseID, apiKeyID, idempotencyKey); err != nil || found {
+		return replayed, err
+	}
+
 	var employeeID int64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT employee_id FROM enterprise_key_assignments
 		WHERE enterprise_id = $1 AND api_key_id = $2 AND status = 'active'`, enterpriseID, apiKeyID).Scan(&employeeID)
 	if errors.Is(err, sql.ErrNoRows) {
+		if replayed, found, replayErr := r.replayCompletedEnterpriseKeyRevocation(ctx, enterpriseID, apiKeyID, idempotencyKey); replayErr != nil || found {
+			return replayed, replayErr
+		}
 		return nil, ErrEmployeeKeyNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return r.DisableEmployeeKey(ctx, EmployeeKeyMutationParams{
+	result, err := r.DisableEmployeeKey(ctx, EmployeeKeyMutationParams{
 		EnterpriseID: enterpriseID, EmployeeID: employeeID, ExpectedAPIKeyID: apiKeyID,
 		IdempotencyKey: idempotencyKey, ActorRef: actorRef,
 	})
+	if errors.Is(err, ErrEmployeeKeyNotFound) {
+		if replayed, found, replayErr := r.replayCompletedEnterpriseKeyRevocation(ctx, enterpriseID, apiKeyID, idempotencyKey); replayErr != nil || found {
+			return replayed, replayErr
+		}
+	}
+	return result, err
+}
+
+func (r *Repository) replayCompletedEnterpriseKeyRevocation(
+	ctx context.Context,
+	enterpriseID, apiKeyID int64,
+	idempotencyKey string,
+) (*EmployeeKeyMutationResult, bool, error) {
+	var employeeID, resultAPIKeyID int64
+	var storedHash string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT employee_id, request_hash, result_api_key_id
+		FROM enterprise_key_lifecycle_idempotency
+		WHERE enterprise_id = $1 AND operation = $2 AND idempotency_key = $3
+		  AND result_api_key_id = $4 AND completed_at IS NOT NULL`,
+		enterpriseID, keyOperationDisable, idempotencyKey, apiKeyID,
+	).Scan(&employeeID, &storedHash, &resultAPIKeyID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if storedHash != EmployeeKeyRequestHash(keyOperationDisable, apiKeyID) {
+		return nil, false, ErrEmployeeKeyIdempotency
+	}
+	row, err := loadEmployeeKeyByID(ctx, r.db, enterpriseID, employeeID, resultAPIKeyID)
+	if err != nil {
+		return nil, false, err
+	}
+	return &EmployeeKeyMutationResult{Key: &row.EmployeeKey, Replayed: true}, true, nil
 }
 
 func (r *Repository) CreateEmployeeKey(ctx context.Context, params EmployeeKeyMutationParams) (*EmployeeKeyMutationResult, error) {
@@ -441,8 +485,8 @@ func lockLatestEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, employ
 		FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID))
 }
 
-func loadEmployeeKeyByID(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID, apiKeyID int64) (employeeKeyRow, error) {
-	return scanEmployeeKey(tx.QueryRowContext(ctx, employeeKeySelect+`
+func loadEmployeeKeyByID(ctx context.Context, queryer queryRower, enterpriseID, employeeID, apiKeyID int64) (employeeKeyRow, error) {
+	return scanEmployeeKey(queryer.QueryRowContext(ctx, employeeKeySelect+`
 		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2 AND api_key.id = $3
 		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC LIMIT 1`, enterpriseID, employeeID, apiKeyID))
 }

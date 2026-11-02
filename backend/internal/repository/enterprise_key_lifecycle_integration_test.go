@@ -745,6 +745,64 @@ func TestEnterpriseEmployeeKeyDisablePreservesHistoryAndReplaysWithoutPlaintext(
 	require.Equal(t, 1, idempotencyCount)
 }
 
+func TestEnterpriseAdminKeyRevocationReplaySurvivesRevocationAndEmployeeDisable(t *testing.T) {
+	ctx := context.Background()
+	first := seedEnterpriseFixture(t, ctx)
+	second := seedEnterpriseFixture(t, ctx)
+	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+
+	firstResult, err := repo.RevokeEnterpriseKey(
+		ctx, first.enterpriseID, first.apiKeyID, "admin-revoke-once", "enterprise_admin:9",
+	)
+	require.NoError(t, err)
+	require.False(t, firstResult.Replayed)
+	require.Empty(t, firstResult.Plaintext)
+
+	replayed, err := repo.RevokeEnterpriseKey(
+		ctx, first.enterpriseID, first.apiKeyID, "admin-revoke-once", "enterprise_admin:9",
+	)
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	require.Empty(t, replayed.Plaintext)
+	require.Equal(t, first.apiKeyID, replayed.Key.ID)
+
+	_, err = repo.RevokeEnterpriseKey(
+		ctx, first.enterpriseID, first.apiKeyID, "admin-revoke-other", "enterprise_admin:9",
+	)
+	require.ErrorIs(t, err, enterprise.ErrEmployeeKeyNotFound)
+	_, err = repo.RevokeEnterpriseKey(
+		ctx, second.enterpriseID, first.apiKeyID, "admin-revoke-once", "enterprise_admin:9",
+	)
+	require.ErrorIs(t, err, enterprise.ErrEmployeeKeyNotFound)
+
+	successor, err := repo.CreateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
+		EnterpriseID: first.enterpriseID, EmployeeID: first.employeeID,
+		IdempotencyKey: "admin-revoke-successor", Plaintext: "sk-admin-revoke-successor", ActorRef: "enterprise_admin:9",
+	})
+	require.NoError(t, err)
+	_, err = repo.RevokeEnterpriseKey(
+		ctx, first.enterpriseID, successor.Key.ID, "admin-revoke-once", "enterprise_admin:9",
+	)
+	require.ErrorIs(t, err, enterprise.ErrEmployeeKeyIdempotency)
+
+	identityService := enterpriseidentity.NewService(integrationDB, &config.Config{}, nil, nil, enterpriseNoopAuthCacheInvalidator{})
+	require.NoError(t, identityService.UpdateEmployee(ctx, first.enterpriseID, first.employeeID, "disabled", nil, 1))
+	replayed, err = repo.RevokeEnterpriseKey(
+		ctx, first.enterpriseID, first.apiKeyID, "admin-revoke-once", "enterprise_admin:9",
+	)
+	require.NoError(t, err)
+	require.True(t, replayed.Replayed)
+	require.Empty(t, replayed.Plaintext)
+	require.Equal(t, first.apiKeyID, replayed.Key.ID)
+
+	var successorAssignmentStatus string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status FROM enterprise_key_assignments
+		WHERE enterprise_id = $1 AND employee_id = $2 AND api_key_id = $3`,
+		first.enterpriseID, first.employeeID, successor.Key.ID).Scan(&successorAssignmentStatus))
+	require.Equal(t, "revoked", successorAssignmentStatus)
+}
+
 func TestEnterpriseEmployeeStatusChangeRevokesCurrentKey(t *testing.T) {
 	for _, operation := range []struct {
 		name           string
