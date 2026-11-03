@@ -311,14 +311,22 @@ func ApplyEnterpriseUsageAttribution(
 		return
 	}
 	log.EnterpriseAttributionCandidate = apiKey.EnterpriseAttributionCandidate
-	if subscription == nil {
+	identity := apiKey.EnterpriseAttributionIdentity
+	if identity == nil {
 		return
 	}
-	log.AttributionDailyWindowAnchor = cloneUsageAttributionTime(subscription.DailyWindowStart)
-	log.AttributionWeeklyWindowAnchor = cloneUsageAttributionTime(subscription.WeeklyWindowStart)
-	log.AttributionMonthlyWindowAnchor = cloneUsageAttributionTime(subscription.MonthlyWindowStart)
-	identity := apiKey.EnterpriseAttributionIdentity
-	if identity == nil || identity.UpstreamSubscriptionID != subscription.ID {
+	if subscription != nil {
+		if identity.UpstreamSubscriptionID != subscription.ID {
+			return
+		}
+		log.AttributionDailyWindowAnchor = cloneUsageAttributionTime(subscription.DailyWindowStart)
+		log.AttributionWeeklyWindowAnchor = cloneUsageAttributionTime(subscription.WeeklyWindowStart)
+		log.AttributionMonthlyWindowAnchor = cloneUsageAttributionTime(subscription.MonthlyWindowStart)
+	} else if identity.WindowAnchorsResolved {
+		log.AttributionDailyWindowAnchor = cloneUsageAttributionTime(identity.DailyWindowAnchor)
+		log.AttributionWeeklyWindowAnchor = cloneUsageAttributionTime(identity.WeeklyWindowAnchor)
+		log.AttributionMonthlyWindowAnchor = cloneUsageAttributionTime(identity.MonthlyWindowAnchor)
+	} else {
 		return
 	}
 	log.EnterpriseAttribution = SnapshotEnterpriseUsageAttribution(

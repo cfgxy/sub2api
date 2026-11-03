@@ -172,7 +172,7 @@ func TestEnterpriseEmployeeKeyRotationPreservesSnapshotAndIdempotency(t *testing
 	require.Equal(t, 6.75, result.Key.Usage7d)
 	require.WithinDuration(t, window5h, *result.Key.Window5h, time.Second)
 	require.WithinDuration(t, window1d, *result.Key.Window1d, time.Second)
-	require.WithinDuration(t, window7d, *result.Key.Window7d, time.Second)
+	require.WithinDuration(t, fixture.anchor, *result.Key.Window7d, time.Second)
 
 	replayParams := params
 	replayParams.Plaintext = fmt.Sprintf("sk-enterprise-unused-%d", time.Now().UnixNano())
@@ -1293,7 +1293,7 @@ func TestEnterpriseEmployeeKeyCreateAfterDisableInheritsTerminalSnapshot(t *test
 	require.Equal(t, 6.75, successor.Key.Usage7d)
 	require.WithinDuration(t, window5h, *successor.Key.Window5h, time.Second)
 	require.WithinDuration(t, window1d, *successor.Key.Window1d, time.Second)
-	require.WithinDuration(t, window7d, *successor.Key.Window7d, time.Second)
+	require.WithinDuration(t, fixture.anchor, *successor.Key.Window7d, time.Second)
 }
 
 func TestEnterpriseEmployeeKeySuccessorRequiresCurrentActiveSubscription(t *testing.T) {
@@ -1336,7 +1336,7 @@ func TestEnterpriseEmployeeKeySuccessorBindsCurrentSubscriptionAfterReplacement(
 	require.NoError(t, err)
 
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	var groupID, subscriptionID int64
+	var groupID, subscriptionID, enterpriseSubscriptionID int64
 	anchor := time.Now().UTC().Truncate(time.Second)
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		INSERT INTO groups (name, daily_limit_usd, weekly_limit_usd, monthly_limit_usd)
@@ -1347,12 +1347,27 @@ func TestEnterpriseEmployeeKeySuccessorBindsCurrentSubscriptionAfterReplacement(
 			daily_window_start, weekly_window_start, monthly_window_start
 		) VALUES ($1, $2, $3::timestamptz, $3::timestamptz + INTERVAL '1 year', 'active', $3::timestamptz, $3::timestamptz, $3::timestamptz)
 		RETURNING id`, fixture.enterpriseUserID, groupID, anchor).Scan(&subscriptionID))
+	for {
+		var consumedEnterpriseSubscriptionID int64
+		require.NoError(t, integrationDB.QueryRowContext(ctx,
+			`SELECT nextval(pg_get_serial_sequence('enterprise_subscriptions', 'id'))`).Scan(&consumedEnterpriseSubscriptionID))
+		if consumedEnterpriseSubscriptionID+1 != subscriptionID {
+			break
+		}
+	}
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
 		INSERT INTO enterprise_subscriptions (
 			enterprise_id, upstream_user_subscription_id, status,
 			observed_weekly_window_start, activated_at, actor_ref
 		) VALUES ($1, $2, 'active', $3, $3, 'test:replacement')
-		RETURNING id`, fixture.enterpriseID, subscriptionID, anchor).Scan(new(int64)))
+		RETURNING id`, fixture.enterpriseID, subscriptionID, anchor).Scan(&enterpriseSubscriptionID))
+	require.NotEqual(t, subscriptionID, enterpriseSubscriptionID, "fixture must distinguish internal and upstream subscription IDs")
+	_, err = integrationDB.ExecContext(ctx, `
+		INSERT INTO enterprise_weekly_allocations (
+			enterprise_id, subscription_id, employee_id, window_type, window_anchor, amount, version
+		) VALUES ($1, $2, $3, 'week', $4, 17, 1)`,
+		fixture.enterpriseID, enterpriseSubscriptionID, fixture.employeeID, anchor)
+	require.NoError(t, err)
 
 	successor, err := repo.CreateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
 		EnterpriseID: fixture.enterpriseID, EmployeeID: fixture.employeeID,
@@ -1368,6 +1383,17 @@ func TestEnterpriseEmployeeKeySuccessorBindsCurrentSubscriptionAfterReplacement(
 		FROM enterprise_key_assignments WHERE api_key_id = $1`, successor.Key.ID).Scan(&assignmentSubscriptionID, &assignmentGroupID))
 	require.Equal(t, subscriptionID, assignmentSubscriptionID)
 	require.Equal(t, groupID, assignmentGroupID)
+	require.Equal(t, 17.0, successor.Key.RateLimit7d)
+	require.WithinDuration(t, anchor, *successor.Key.Window7d, time.Second)
+
+	rotated, err := repo.RotateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
+		EnterpriseID: fixture.enterpriseID, EmployeeID: fixture.employeeID,
+		ExpectedAPIKeyID: successor.Key.ID, IdempotencyKey: "rotate-after-subscription-replacement",
+		Plaintext: "sk-rotate-after-subscription-replacement", ActorRef: "test:employee",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 17.0, rotated.Key.RateLimit7d)
+	require.WithinDuration(t, anchor, *rotated.Key.Window7d, time.Second)
 }
 
 func TestEnterpriseEmployeeKeyTerminalStatusCannotBecomeCallableThroughLifecycle(t *testing.T) {
@@ -1511,5 +1537,5 @@ func TestEnterpriseEmployeeKeyLateBillingUsesLatestTerminalSnapshotBeforeRecreat
 	require.Equal(t, 7.25, recreated.Key.Usage7d)
 	require.WithinDuration(t, window5h, *recreated.Key.Window5h, time.Second)
 	require.WithinDuration(t, window1d, *recreated.Key.Window1d, time.Second)
-	require.WithinDuration(t, window7d, *recreated.Key.Window7d, time.Second)
+	require.WithinDuration(t, fixture.anchor, *recreated.Key.Window7d, time.Second)
 }

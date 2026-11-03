@@ -1012,10 +1012,14 @@ func (r *apiKeyRepository) IncrementRateLimitUsage(ctx context.Context, id int64
 		UPDATE api_keys SET
 			usage_5h = CASE WHEN window_5h_start IS NOT NULL AND window_5h_start + INTERVAL '5 hours' <= NOW() THEN $1 ELSE usage_5h + $1 END,
 			usage_1d = CASE WHEN window_1d_start IS NOT NULL AND window_1d_start + INTERVAL '24 hours' <= NOW() THEN $1 ELSE usage_1d + $1 END,
-			usage_7d = CASE WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN $1 ELSE usage_7d + $1 END,
+			usage_7d = CASE
+				WHEN EXISTS (SELECT 1 FROM enterprise_key_assignments assignment WHERE assignment.api_key_id = api_keys.id AND assignment.status = 'active') THEN LEAST(rate_limit_7d, usage_7d + $1)
+				WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN $1 ELSE usage_7d + $1 END,
 			window_5h_start = CASE WHEN window_5h_start IS NULL OR window_5h_start + INTERVAL '5 hours' <= NOW() THEN NOW() ELSE window_5h_start END,
 			window_1d_start = CASE WHEN window_1d_start IS NULL OR window_1d_start + INTERVAL '24 hours' <= NOW() THEN date_trunc('day', NOW()) ELSE window_1d_start END,
-			window_7d_start = CASE WHEN window_7d_start IS NULL OR window_7d_start + INTERVAL '7 days' <= NOW() THEN date_trunc('day', NOW()) ELSE window_7d_start END,
+			window_7d_start = CASE
+				WHEN EXISTS (SELECT 1 FROM enterprise_key_assignments assignment WHERE assignment.api_key_id = api_keys.id AND assignment.status = 'active') THEN window_7d_start
+				WHEN window_7d_start IS NULL OR window_7d_start + INTERVAL '7 days' <= NOW() THEN date_trunc('day', NOW()) ELSE window_7d_start END,
 			updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL`,
 		cost, id)
@@ -1030,8 +1034,12 @@ func (r *apiKeyRepository) ResetRateLimitWindows(ctx context.Context, id int64) 
 			window_5h_start = CASE WHEN window_5h_start IS NOT NULL AND window_5h_start + INTERVAL '5 hours' <= NOW() THEN NOW() ELSE window_5h_start END,
 			usage_1d = CASE WHEN window_1d_start IS NOT NULL AND window_1d_start + INTERVAL '24 hours' <= NOW() THEN 0 ELSE usage_1d END,
 			window_1d_start = CASE WHEN window_1d_start IS NOT NULL AND window_1d_start + INTERVAL '24 hours' <= NOW() THEN date_trunc('day', NOW()) ELSE window_1d_start END,
-			usage_7d = CASE WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN 0 ELSE usage_7d END,
-			window_7d_start = CASE WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN date_trunc('day', NOW()) ELSE window_7d_start END,
+			usage_7d = CASE
+				WHEN EXISTS (SELECT 1 FROM enterprise_key_assignments assignment WHERE assignment.api_key_id = api_keys.id AND assignment.status = 'active') THEN usage_7d
+				WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN 0 ELSE usage_7d END,
+			window_7d_start = CASE
+				WHEN EXISTS (SELECT 1 FROM enterprise_key_assignments assignment WHERE assignment.api_key_id = api_keys.id AND assignment.status = 'active') THEN window_7d_start
+				WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN date_trunc('day', NOW()) ELSE window_7d_start END,
 			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL`,
 		id)
@@ -1061,6 +1069,137 @@ func (r *apiKeyRepository) GetRateLimitData(ctx context.Context, id int64) (resu
 		return nil, err
 	}
 	return data, rows.Err()
+}
+
+// SyncEnterpriseEmployeeWeeklyLimit makes api_keys the execution state for an
+// employee allocation. The lock order is shared with lifecycle and billing:
+// employee, enterprise, assignment/key, enterprise subscription, upstream
+// subscription, allocation. This must remain a transaction because the window
+// anchor and the carried usage are one state transition.
+func (r *apiKeyRepository) SyncEnterpriseEmployeeWeeklyLimit(
+	ctx context.Context,
+	apiKeyID int64,
+	identity *service.EnterpriseUsageAttributionIdentity,
+) (*service.EnterpriseEmployeeWeeklyLimitState, error) {
+	if identity == nil || identity.EmployeeID == nil || identity.EnterpriseID <= 0 ||
+		identity.EnterpriseSubscriptionID <= 0 || identity.UpstreamSubscriptionID <= 0 || identity.WeeklyWindowAnchor == nil {
+		return nil, service.ErrAPIKeyNotFound
+	}
+	db, ok := r.sql.(*sql.DB)
+	if !ok {
+		return nil, fmt.Errorf("enterprise employee weekly limit requires a database transaction")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ignored int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprise_employees
+		WHERE enterprise_id = $1 AND id = $2 AND status = 'active'
+		FOR UPDATE`, identity.EnterpriseID, *identity.EmployeeID).Scan(&ignored); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrAPIKeyNotFound
+		}
+		return nil, err
+	}
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprises WHERE id = $1 AND status = 'active' FOR UPDATE`, identity.EnterpriseID).Scan(&ignored); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrAPIKeyNotFound
+		}
+		return nil, err
+	}
+	var assignedKeyID int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT assignment.api_key_id
+		FROM enterprise_key_assignments AS assignment
+		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
+		  AND assignment.upstream_user_subscription_id = $3 AND assignment.status = 'active'
+		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC
+		LIMIT 1 FOR UPDATE`, identity.EnterpriseID, *identity.EmployeeID, identity.UpstreamSubscriptionID).Scan(&assignedKeyID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrAPIKeyNotFound
+		}
+		return nil, err
+	}
+	if assignedKeyID != apiKeyID {
+		return nil, service.ErrAPIKeyNotFound
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM api_keys WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, apiKeyID).Scan(&ignored); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrAPIKeyNotFound
+		}
+		return nil, err
+	}
+
+	var anchor time.Time
+	if err = tx.QueryRowContext(ctx, `
+		SELECT upstream_subscription.weekly_window_start
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.deleted_at IS NULL
+		WHERE enterprise_subscription.id = $1
+		  AND enterprise_subscription.enterprise_id = $2
+		  AND enterprise_subscription.upstream_user_subscription_id = $3
+		  AND enterprise_subscription.status = 'active'
+		FOR UPDATE OF enterprise_subscription, upstream_subscription`,
+		identity.EnterpriseSubscriptionID, identity.EnterpriseID, identity.UpstreamSubscriptionID).Scan(&anchor); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrAPIKeyNotFound
+		}
+		return nil, err
+	}
+	anchor = anchor.UTC()
+	if !anchor.Equal(identity.WeeklyWindowAnchor.UTC()) {
+		return nil, service.ErrAPIKeyNotFound
+	}
+
+	var limitText sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT amount::text
+		FROM enterprise_weekly_allocations
+		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
+		  AND window_type = 'week' AND window_anchor = $4
+		FOR UPDATE`, identity.EnterpriseID, identity.EnterpriseSubscriptionID, *identity.EmployeeID, anchor).Scan(&limitText)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	limit := 0.0
+	if limitText.Valid {
+		if _, err = fmt.Sscan(limitText.String, &limit); err != nil {
+			return nil, err
+		}
+	}
+	state := &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: limit, WeeklyWindowAnchor: anchor}
+	if err = tx.QueryRowContext(ctx, `
+		UPDATE api_keys
+		SET rate_limit_7d = $1,
+		    usage_7d = CASE
+		        WHEN window_7d_start = $2 THEN usage_7d
+		        WHEN window_7d_start IS NOT NULL AND EXISTS (
+		            SELECT 1 FROM enterprise_subscription_windows AS known_window
+		            WHERE known_window.upstream_user_subscription_id = $4
+		              AND known_window.observed_weekly_window_start = api_keys.window_7d_start
+		        ) THEN 0
+		        ELSE usage_7d
+		    END,
+		    window_7d_start = $2,
+		    updated_at = NOW()
+		WHERE id = $3 AND deleted_at IS NULL
+		RETURNING usage_7d`, limit, anchor, apiKeyID, identity.UpstreamSubscriptionID).Scan(&state.Usage7d); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrAPIKeyNotFound
+		}
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return state, nil
 }
 
 func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {

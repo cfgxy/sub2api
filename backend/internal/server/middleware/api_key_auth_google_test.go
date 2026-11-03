@@ -78,12 +78,15 @@ type fakeAPIKeyRepo struct {
 	updateLastUsed func(ctx context.Context, id int64, usedAt time.Time) error
 }
 
-type enterpriseAttributionNoSubscriptionRepo struct {
+type enterpriseAttributionSimpleModeRepo struct {
 	service.APIKeyRepository
 	resolveCalls atomic.Int32
+	syncCalls    atomic.Int32
+	resolveErr   error
+	limitState   *service.EnterpriseEmployeeWeeklyLimitState
 }
 
-func (r *enterpriseAttributionNoSubscriptionRepo) apiKey(key string) *service.APIKey {
+func (r *enterpriseAttributionSimpleModeRepo) apiKey(key string) *service.APIKey {
 	return &service.APIKey{
 		ID:                             1,
 		Key:                            key,
@@ -93,31 +96,54 @@ func (r *enterpriseAttributionNoSubscriptionRepo) apiKey(key string) *service.AP
 	}
 }
 
-func (r *enterpriseAttributionNoSubscriptionRepo) GetByKey(ctx context.Context, key string) (*service.APIKey, error) {
-	return r.apiKey(key), nil
+func (r *enterpriseAttributionSimpleModeRepo) GetByKey(context.Context, string) (*service.APIKey, error) {
+	return r.apiKey("test-credential"), nil
 }
 
-func (r *enterpriseAttributionNoSubscriptionRepo) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
-	return r.apiKey(key), nil
+func (r *enterpriseAttributionSimpleModeRepo) GetByKeyForAuth(context.Context, string) (*service.APIKey, error) {
+	return r.apiKey("test-credential"), nil
 }
 
-func (r *enterpriseAttributionNoSubscriptionRepo) ResolveEnterpriseUsageAttributionIdentity(
+func (r *enterpriseAttributionSimpleModeRepo) ResolveEnterpriseUsageAttributionIdentity(
 	context.Context,
 	int64,
 	string,
 	*int64,
 ) (*service.EnterpriseUsageAttributionIdentity, error) {
 	r.resolveCalls.Add(1)
-	return nil, errors.New("enterprise resolver must not run without subscription")
+	if r.resolveErr != nil {
+		return nil, r.resolveErr
+	}
+	anchor := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	employeeID := int64(3)
+	return &service.EnterpriseUsageAttributionIdentity{
+		EnterpriseID:             4,
+		EnterpriseSubscriptionID: 5,
+		UpstreamSubscriptionID:   6,
+		EmployeeID:               &employeeID,
+		AssignmentGeneration:     1,
+		Classification:           "employee",
+		WindowAnchorsResolved:    true,
+		WeeklyWindowAnchor:       &anchor,
+	}, nil
 }
 
-func (r *enterpriseAttributionNoSubscriptionRepo) UpdateLastUsed(context.Context, int64, time.Time) error {
+func (r *enterpriseAttributionSimpleModeRepo) SyncEnterpriseEmployeeWeeklyLimit(
+	context.Context,
+	int64,
+	*service.EnterpriseUsageAttributionIdentity,
+) (*service.EnterpriseEmployeeWeeklyLimitState, error) {
+	r.syncCalls.Add(1)
+	return r.limitState, nil
+}
+
+func (r *enterpriseAttributionSimpleModeRepo) UpdateLastUsed(context.Context, int64, time.Time) error {
 	return nil
 }
 
-func TestEnterpriseCandidateWithoutSubscriptionKeepsBothMiddlewarePathsOpen(t *testing.T) {
+func TestEnterpriseCandidateSimpleModeSelfResolvesAndRejectsMissingOrZeroAllocation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	tests := []struct {
+	middlewareCases := []struct {
 		name       string
 		header     string
 		middleware func(*service.APIKeyService, *config.Config) gin.HandlerFunc
@@ -137,24 +163,92 @@ func TestEnterpriseCandidateWithoutSubscriptionKeepsBothMiddlewarePathsOpen(t *t
 			},
 		},
 	}
+	allocationCases := []struct {
+		name         string
+		limitState   *service.EnterpriseEmployeeWeeklyLimitState
+		resolveErr   error
+		expectedCode int
+		expectedSync int32
+	}{
+		{name: "active allocation", limitState: &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: 10, Usage7d: 1}, expectedCode: http.StatusOK, expectedSync: 1},
+		{name: "missing allocation", limitState: &service.EnterpriseEmployeeWeeklyLimitState{}, expectedCode: http.StatusTooManyRequests, expectedSync: 1},
+		{name: "zero allocation", limitState: &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: 0}, expectedCode: http.StatusTooManyRequests, expectedSync: 1},
+		{name: "missing active subscription", resolveErr: service.ErrEnterpriseAttributionUnavailable, expectedCode: http.StatusServiceUnavailable},
+	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{RunMode: config.RunModeSimple}
-			repo := &enterpriseAttributionNoSubscriptionRepo{}
-			apiKeyService := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
-			r := gin.New()
-			r.Use(tt.middleware(apiKeyService, cfg))
-			r.GET("/v1/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+	for _, middlewareCase := range middlewareCases {
+		for _, allocationCase := range allocationCases {
+			t.Run(middlewareCase.name+"/"+allocationCase.name, func(t *testing.T) {
+				cfg := &config.Config{RunMode: config.RunModeSimple}
+				repo := &enterpriseAttributionSimpleModeRepo{resolveErr: allocationCase.resolveErr, limitState: allocationCase.limitState}
+				apiKeyService := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+				r := gin.New()
+				r.Use(middlewareCase.middleware(apiKeyService, cfg))
+				r.GET("/v1/test", func(c *gin.Context) { c.Status(http.StatusOK) })
 
-			req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
-			req.Header.Set(tt.header, "test-credential")
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
+				req := httptest.NewRequest(http.MethodGet, "/v1/test", nil)
+				req.Header.Set(middlewareCase.header, "test-credential")
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
 
-			require.Equal(t, http.StatusOK, rec.Code)
-			require.Zero(t, repo.resolveCalls.Load())
-		})
+				require.Equal(t, allocationCase.expectedCode, rec.Code)
+				require.Equal(t, int32(1), repo.resolveCalls.Load())
+				require.Equal(t, allocationCase.expectedSync, repo.syncCalls.Load())
+			})
+		}
+	}
+}
+
+func TestEnterpriseEmployeeSimpleModeLimitAllowsReadOnlyEndpoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	middlewareCases := []struct {
+		name       string
+		header     string
+		middleware func(*service.APIKeyService, *config.Config) gin.HandlerFunc
+	}{
+		{
+			name:   "standard",
+			header: "x-api-key",
+			middleware: func(apiKeyService *service.APIKeyService, cfg *config.Config) gin.HandlerFunc {
+				return gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, cfg))
+			},
+		},
+		{
+			name:   "google",
+			header: "x-goog-api-key",
+			middleware: func(apiKeyService *service.APIKeyService, cfg *config.Config) gin.HandlerFunc {
+				return APIKeyAuthWithSubscriptionGoogle(apiKeyService, nil, cfg)
+			},
+		},
+	}
+	paths := []string{
+		"/v1/usage",
+		"/v1/sub2api/billing",
+		"/v1/images/tasks/imgtask_123",
+	}
+
+	for _, middlewareCase := range middlewareCases {
+		for _, path := range paths {
+			t.Run(middlewareCase.name+path, func(t *testing.T) {
+				cfg := &config.Config{RunMode: config.RunModeSimple}
+				repo := &enterpriseAttributionSimpleModeRepo{
+					limitState: &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: 1, Usage7d: 1},
+				}
+				apiKeyService := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+				r := gin.New()
+				r.Use(middlewareCase.middleware(apiKeyService, cfg))
+				r.GET(path, func(c *gin.Context) { c.Status(http.StatusOK) })
+
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				req.Header.Set(middlewareCase.header, "test-credential")
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
+
+				require.Equal(t, http.StatusOK, rec.Code)
+				require.Equal(t, int32(1), repo.resolveCalls.Load())
+				require.Equal(t, int32(1), repo.syncCalls.Load())
+			})
+		}
 	}
 }
 
