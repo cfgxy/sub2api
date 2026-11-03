@@ -66,6 +66,13 @@ type APIKey struct {
 	Window5hStart *time.Time // Start of current 5h window
 	Window1dStart *time.Time // Start of current 1d window
 	Window7dStart *time.Time // Start of current 7d window
+
+	// EnterpriseEmployeeWeeklyLimit is request-scoped state populated from the
+	// primary database after enterprise attribution is finalized. It preserves
+	// the ordinary 0 = unlimited semantics for non-employee API keys while
+	// making a zero employee allocation a hard deny.
+	EnterpriseEmployeeWeeklyLimit bool
+	EnterpriseWeeklyWindowAnchor  *time.Time
 }
 
 func (k *APIKey) IsActive() bool {
@@ -74,7 +81,7 @@ func (k *APIKey) IsActive() bool {
 
 // HasRateLimits returns true if any rate limit window is configured
 func (k *APIKey) HasRateLimits() bool {
-	return k.RateLimit5h > 0 || k.RateLimit1d > 0 || k.RateLimit7d > 0
+	return k.EnterpriseEmployeeWeeklyLimit || k.RateLimit5h > 0 || k.RateLimit1d > 0 || k.RateLimit7d > 0
 }
 
 // IsExpired checks if the API key has expired

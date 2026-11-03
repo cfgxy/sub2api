@@ -96,7 +96,8 @@ type postUsageBillingParams struct {
 var ErrSimpleModeKeyRateLimitBillingUnavailable = errors.New("simple mode api key rate-limit billing unavailable")
 
 func simpleModeKeyRateLimitBillingEnabled(cfg *config.Config, apiKey *APIKey) bool {
-	return cfg != nil && cfg.RunMode == config.RunModeSimple && cfg.SimpleModeKeyRateLimitEnabled && apiKey != nil && apiKey.HasRateLimits()
+	return cfg != nil && cfg.RunMode == config.RunModeSimple && apiKey != nil && apiKey.HasRateLimits() &&
+		(cfg.SimpleModeKeyRateLimitEnabled || apiKey.EnterpriseEmployeeWeeklyLimit)
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -419,7 +420,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() && deps.billingCacheService != nil {
 		billedKeyID := billedAPIKeyID(p, result)
-		if billedKeyID != p.APIKey.ID {
+		if p.APIKey.EnterpriseEmployeeWeeklyLimit || billedKeyID != p.APIKey.ID {
 			// 数据库已向 successor 记账；直接失效缓存，避免缓存 miss 回填提交后数值后又异步重复累加。
 			_ = deps.billingCacheService.InvalidateAPIKeyRateLimit(ctx, billedKeyID)
 		} else {

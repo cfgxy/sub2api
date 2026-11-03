@@ -534,15 +534,19 @@ func normalizeEmployeeKeyWindow(usage float64, start *time.Time, duration time.D
 }
 
 func insertFirstEmployeeKey(ctx context.Context, tx *sql.Tx, params EmployeeKeyMutationParams, dedicatedUserID int64) (employeeKeyRow, error) {
-	subscriptionID, groupID, err := lockEmployeeKeySubscription(ctx, tx, params.EnterpriseID, dedicatedUserID)
+	subscriptionID, groupID, anchor, err := lockEmployeeKeySubscription(ctx, tx, params.EnterpriseID, dedicatedUserID)
+	if err != nil {
+		return employeeKeyRow{}, err
+	}
+	limit, err := lockEmployeeWeeklyAllocation(ctx, tx, params.EnterpriseID, subscriptionID, params.EmployeeID, anchor)
 	if err != nil {
 		return employeeKeyRow{}, err
 	}
 	var keyID int64
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO api_keys (user_id, key, name, group_id, status)
-		VALUES ($1, $2, 'Enterprise employee key', $3, 'active') RETURNING id`,
-		dedicatedUserID, params.Plaintext, groupID).Scan(&keyID)
+			INSERT INTO api_keys (user_id, key, name, group_id, status, rate_limit_7d, usage_7d, window_7d_start)
+			VALUES ($1, $2, 'Enterprise employee key', $3, 'active', $4, 0, $5) RETURNING id`,
+		dedicatedUserID, params.Plaintext, groupID, limit, anchor).Scan(&keyID)
 	if err != nil {
 		return employeeKeyRow{}, err
 	}
@@ -559,32 +563,56 @@ func insertFirstEmployeeKey(ctx context.Context, tx *sql.Tx, params EmployeeKeyM
 	return loadEmployeeKeyByID(ctx, tx, params.EnterpriseID, params.EmployeeID, keyID)
 }
 
-func lockEmployeeKeySubscription(ctx context.Context, tx *sql.Tx, enterpriseID, dedicatedUserID int64) (int64, int64, error) {
+func lockEmployeeKeySubscription(ctx context.Context, tx *sql.Tx, enterpriseID, dedicatedUserID int64) (int64, int64, time.Time, error) {
 	var subscriptionID, groupID int64
 	var upstreamStatus string
-	var startsAt, expiresAt time.Time
+	var startsAt, expiresAt, weeklyAnchor time.Time
 	if err := tx.QueryRowContext(ctx, `
 		SELECT enterprise_subscription.upstream_user_subscription_id, upstream_subscription.group_id,
-		       upstream_subscription.status, upstream_subscription.starts_at, upstream_subscription.expires_at
+		       upstream_subscription.status, upstream_subscription.starts_at, upstream_subscription.expires_at,
+		       upstream_subscription.weekly_window_start
 		FROM enterprise_subscriptions AS enterprise_subscription
 		JOIN user_subscriptions AS upstream_subscription
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
 		 AND upstream_subscription.user_id = $2 AND upstream_subscription.deleted_at IS NULL
 		WHERE enterprise_subscription.enterprise_id = $1 AND enterprise_subscription.status = 'active'
-		FOR UPDATE OF enterprise_subscription, upstream_subscription`, enterpriseID, dedicatedUserID).Scan(&subscriptionID, &groupID, &upstreamStatus, &startsAt, &expiresAt); err != nil {
+		FOR UPDATE OF enterprise_subscription, upstream_subscription`, enterpriseID, dedicatedUserID).Scan(&subscriptionID, &groupID, &upstreamStatus, &startsAt, &expiresAt, &weeklyAnchor); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, ErrEmployeeKeyUnavailable
+			return 0, 0, time.Time{}, ErrEmployeeKeyUnavailable
 		}
-		return 0, 0, err
+		return 0, 0, time.Time{}, err
 	}
 	var now time.Time
 	if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
-		return 0, 0, err
+		return 0, 0, time.Time{}, err
 	}
 	if upstreamStatus != "active" || now.Before(startsAt) || !expiresAt.After(now) {
-		return 0, 0, ErrEmployeeKeyUnavailable
+		return 0, 0, time.Time{}, ErrEmployeeKeyUnavailable
 	}
-	return subscriptionID, groupID, nil
+	return subscriptionID, groupID, weeklyAnchor.UTC(), nil
+}
+
+// Missing allocation is represented as zero and is rejected by the request
+// preflight. It is not an unlimited-rate-limit fallback for employee keys.
+func lockEmployeeWeeklyAllocation(ctx context.Context, tx *sql.Tx, enterpriseID, subscriptionID, employeeID int64, anchor time.Time) (float64, error) {
+	var value sql.NullString
+	err := tx.QueryRowContext(ctx, `
+		SELECT amount::text
+		FROM enterprise_weekly_allocations
+		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
+		  AND window_type = 'week' AND window_anchor = $4
+		FOR UPDATE`, enterpriseID, subscriptionID, employeeID, anchor).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var limit float64
+	if _, err := fmt.Sscan(value.String, &limit); err != nil {
+		return 0, err
+	}
+	return limit, nil
 }
 
 func employeeKeyBoundary(ctx context.Context, tx *sql.Tx) (time.Time, error) {
@@ -629,7 +657,11 @@ func rotateCurrentEmployeeKey(ctx context.Context, tx *sql.Tx, params EmployeeKe
 }
 
 func insertSuccessorEmployeeKey(ctx context.Context, tx *sql.Tx, params EmployeeKeyMutationParams, dedicatedUserID int64, previous employeeKeyRow, boundary time.Time) (employeeKeyRow, error) {
-	subscriptionID, groupID, err := lockEmployeeKeySubscription(ctx, tx, params.EnterpriseID, dedicatedUserID)
+	subscriptionID, groupID, anchor, err := lockEmployeeKeySubscription(ctx, tx, params.EnterpriseID, dedicatedUserID)
+	if err != nil {
+		return employeeKeyRow{}, err
+	}
+	limit, err := lockEmployeeWeeklyAllocation(ctx, tx, params.EnterpriseID, subscriptionID, params.EmployeeID, anchor)
 	if err != nil {
 		return employeeKeyRow{}, err
 	}
@@ -648,12 +680,13 @@ func insertSuccessorEmployeeKey(ctx context.Context, tx *sql.Tx, params Employee
 		       END,
 		       source.ip_whitelist, source.ip_blacklist,
 		       source.quota, source.quota_used, source.expires_at,
-		       source.rate_limit_5h, source.rate_limit_1d, source.rate_limit_7d,
-		       source.usage_5h, source.usage_1d, source.usage_7d,
-		       source.window_5h_start, source.window_1d_start, source.window_7d_start
+		       source.rate_limit_5h, source.rate_limit_1d, $6,
+		       source.usage_5h, source.usage_1d,
+		       CASE WHEN source.window_7d_start = $7 THEN source.usage_7d ELSE 0 END,
+		       source.window_5h_start, source.window_1d_start, $7
 		FROM api_keys AS source
 		WHERE source.id = $4
-		RETURNING id`, dedicatedUserID, params.Plaintext, groupID, previous.ID, boundary).Scan(&keyID)
+		RETURNING id`, dedicatedUserID, params.Plaintext, groupID, previous.ID, boundary, limit, anchor).Scan(&keyID)
 	if err != nil {
 		return employeeKeyRow{}, err
 	}

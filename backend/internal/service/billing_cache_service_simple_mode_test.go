@@ -91,6 +91,32 @@ func TestCheckBillingEligibilitySimpleModeKeyRateLimitsAreOptInAndDBAuthoritativ
 	}
 }
 
+func TestCheckBillingEligibilitySimpleModeEmployeeZeroAllocationFailsClosed(t *testing.T) {
+	anchor := time.Now().UTC()
+	svc := &BillingCacheService{
+		cfg: &config.Config{RunMode: config.RunModeSimple},
+		apiKeyRateLimitLoader: &simpleModeRateLimitLoaderStub{data: &APIKeyRateLimitData{
+			Window7dStart: &anchor,
+		}},
+	}
+	key := &APIKey{
+		ID:                            42,
+		EnterpriseEmployeeWeeklyLimit: true,
+		EnterpriseWeeklyWindowAnchor:  &anchor,
+	}
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 7}, key, nil, nil, "")
+	require.ErrorIs(t, err, ErrAPIKeyRateLimit7dExceeded)
+}
+
+func TestSimpleModeEmployeeWeeklyLimitBillingIsAlwaysEnabled(t *testing.T) {
+	cfg := &config.Config{RunMode: config.RunModeSimple, SimpleModeKeyRateLimitEnabled: false}
+	require.False(t, simpleModeKeyRateLimitBillingEnabled(cfg, &APIKey{RateLimit7d: 10}))
+	require.True(t, simpleModeKeyRateLimitBillingEnabled(cfg, &APIKey{
+		EnterpriseEmployeeWeeklyLimit: true,
+		RateLimit7d:                   10,
+	}))
+}
+
 func simplePtrTime(t time.Time) *time.Time {
 	return &t
 }
