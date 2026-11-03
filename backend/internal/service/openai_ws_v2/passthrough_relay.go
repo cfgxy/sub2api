@@ -1220,22 +1220,35 @@ func parseUsageAndAccumulate(
 		ImageOutputTokens:        int(imageTokens),
 		AudioOutputTokens:        audioOutputTokens,
 	}
-	// cached_tokens is a subset of input_tokens. Only promote a GA payload to
-	// mutually exclusive buckets when cached_tokens_details proves how that
-	// subset is distributed across text, image, and audio. Without it, preserve
-	// aggregate input_tokens so downstream billing can safely charge the total
-	// once instead of guessing a modality split.
-	if separatedInput && separatedOutput {
-		parsedUsage.InputTokens = uncachedText
-		parsedUsage.ImageInputTokens = uncachedImage
-		parsedUsage.AudioInputTokens = uncachedAudio
-		parsedUsage.ImageCacheReadTokens = cachedImage
-		parsedUsage.AudioCacheReadTokens = cachedAudio
-		parsedUsage.OutputTokens = textOutputTokens
+	// 每个 GA Realtime 回合进入会话累计器前均归一化为互斥账本。
+	// cached_tokens 是 input_tokens 的子集；将聚合回退与已拆分回合
+	// 直接相加会使后续总量解释不确定，进而令 RecordUsage 丢失 token。
+	//
+	// 上游缺失或自相矛盾的模态明细，其余 token 保守归入文本桶：既保持
+	// token 总量与缓存子集准确，又不虚构 image/audio 的定价。
+	if hasRealtimeDetails {
+		if separatedInput {
+			parsedUsage.InputTokens = uncachedText
+			parsedUsage.ImageInputTokens = uncachedImage
+			parsedUsage.AudioInputTokens = uncachedAudio
+			parsedUsage.ImageCacheReadTokens = cachedImage
+			parsedUsage.AudioCacheReadTokens = cachedAudio
+		} else {
+			parsedUsage.InputTokens = max(inputTokens-min(cachedTokens, inputTokens), 0)
+			parsedUsage.ImageInputTokens = 0
+			parsedUsage.AudioInputTokens = 0
+			parsedUsage.ImageCacheReadTokens = 0
+			parsedUsage.AudioCacheReadTokens = 0
+			parsedUsage.CacheReadInputTokens = min(cachedTokens, inputTokens)
+		}
+		if separatedOutput {
+			parsedUsage.OutputTokens = textOutputTokens
+		} else {
+			parsedUsage.OutputTokens = outputTokens
+			parsedUsage.ImageOutputTokens = 0
+			parsedUsage.AudioOutputTokens = 0
+		}
 		parsedUsage.TokenBucketsSeparated = true
-	} else if hasRealtimeDetails && !separatedInput {
-		parsedUsage.ImageInputTokens = 0
-		parsedUsage.AudioInputTokens = 0
 	}
 
 	if isTerminalEvent(strings.TrimSpace(eventType)) {

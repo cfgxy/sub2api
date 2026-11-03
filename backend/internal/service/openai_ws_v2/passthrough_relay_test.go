@@ -1325,33 +1325,84 @@ func TestRelay_GARealtimeUsageFallsBackToAggregateWithoutCachedTokenDetails(t *t
 		StartClientAfterFirstDownstream: true,
 	})
 	require.Nil(t, relayExit)
-	require.Equal(t, 132, result.Usage.InputTokens)
+	require.Equal(t, 92, result.Usage.InputTokens)
 	require.Equal(t, 40, result.Usage.CacheReadInputTokens)
 	require.Zero(t, result.Usage.ImageInputTokens)
 	require.Zero(t, result.Usage.AudioInputTokens)
-	require.False(t, result.Usage.TokenBucketsSeparated)
+	require.Equal(t, 35, result.Usage.OutputTokens)
+	require.Equal(t, 15, result.Usage.ImageOutputTokens)
+	require.Equal(t, 30, result.Usage.AudioOutputTokens)
+	require.True(t, result.Usage.TokenBucketsSeparated)
 }
 
-func TestRelay_GARealtimeUsageAggregateIsNotSeparatedForMixedTurns(t *testing.T) {
+func TestRelay_GARealtimeUsageCanonicalizesMixedTurnsWithoutTokenLoss(t *testing.T) {
 	t.Parallel()
 
-	clientConn := newPassthroughTestFrameConn(nil, false)
-	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
-		{
-			msgType: coderws.MessageText,
-			payload: []byte(`{"type":"response.done","response":{"id":"resp_separated","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40,"cached_tokens_details":{"text_tokens":10,"audio_tokens":20,"image_tokens":10}},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
-		},
-		{
-			msgType: coderws.MessageText,
-			payload: []byte(`{"type":"response.done","response":{"id":"resp_aggregate","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
-		},
-	}, true)
+	separated := passthroughTestFrame{msgType: coderws.MessageText, payload: []byte(`{"type":"response.done","response":{"id":"resp_separated","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40,"cached_tokens_details":{"text_tokens":10,"audio_tokens":20,"image_tokens":10}},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`)}
+	aggregate := passthroughTestFrame{msgType: coderws.MessageText, payload: []byte(`{"type":"response.done","response":{"id":"resp_aggregate","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`)}
+	want := Usage{
+		InputTokens:           152,
+		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
+		AudioInputTokens:      22,
+		AudioCacheReadTokens:  20,
+		CacheReadInputTokens:  80,
+		OutputTokens:          70,
+		ImageOutputTokens:     30,
+		AudioOutputTokens:     60,
+		TokenBucketsSeparated: true,
+	}
 
-	result, relayExit := Relay(context.Background(), clientConn, upstreamConn, nil, RelayOptions{
-		StartClientAfterFirstDownstream: true,
-	})
-	require.Nil(t, relayExit)
-	require.False(t, result.Usage.TokenBucketsSeparated)
+	for name, frames := range map[string][]passthroughTestFrame{
+		"separated before aggregate": {separated, aggregate},
+		"aggregate before separated": {aggregate, separated},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clientConn := newPassthroughTestFrameConn(nil, false)
+			upstreamConn := newPassthroughTestFrameConn(frames, true)
+			result, relayExit := Relay(context.Background(), clientConn, upstreamConn, nil, RelayOptions{
+				StartClientAfterFirstDownstream: true,
+			})
+			require.Nil(t, relayExit)
+			require.Equal(t, want, result.Usage)
+		})
+	}
+}
+
+func TestRelay_GARealtimeUsageCanonicalizesPartialOrInvalidDetails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		payload string
+		want    Usage
+	}{
+		{
+			name:    "only input is separable",
+			payload: `{"type":"response.done","response":{"usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40,"cached_tokens_details":{"text_tokens":10,"audio_tokens":20,"image_tokens":10}},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":16}}}}`,
+			want:    Usage{InputTokens: 60, ImageInputTokens: 10, ImageCacheReadTokens: 10, AudioInputTokens: 22, AudioCacheReadTokens: 20, CacheReadInputTokens: 40, OutputTokens: 80, TokenBucketsSeparated: true},
+		},
+		{
+			name:    "only output is separable",
+			payload: `{"type":"response.done","response":{"usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`,
+			want:    Usage{InputTokens: 92, CacheReadInputTokens: 40, OutputTokens: 35, ImageOutputTokens: 15, AudioOutputTokens: 30, TokenBucketsSeparated: true},
+		},
+		{
+			name:    "inconsistent cache details",
+			payload: `{"type":"response.done","response":{"usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40,"cached_tokens_details":{"text_tokens":10,"audio_tokens":20,"image_tokens":9}},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`,
+			want:    Usage{InputTokens: 92, CacheReadInputTokens: 40, OutputTokens: 35, ImageOutputTokens: 15, AudioOutputTokens: 30, TokenBucketsSeparated: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clientConn := newPassthroughTestFrameConn(nil, false)
+			upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{{msgType: coderws.MessageText, payload: []byte(tt.payload)}}, true)
+			result, relayExit := Relay(context.Background(), clientConn, upstreamConn, nil, RelayOptions{StartClientAfterFirstDownstream: true})
+			require.Nil(t, relayExit)
+			require.Equal(t, tt.want, result.Usage)
+		})
+	}
 }
 
 func TestRelay_DeduplicatesRepeatedTerminalResponse(t *testing.T) {
