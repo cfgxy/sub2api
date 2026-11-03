@@ -164,6 +164,10 @@ type UsageLog struct {
 	ImageInputCost    float64
 	ImageOutputTokens int
 	ImageOutputCost   float64
+	AudioInputTokens  int
+	AudioInputCost    float64
+	AudioOutputTokens int
+	AudioOutputCost   float64
 
 	InputCost                 float64
 	OutputCost                float64
@@ -368,7 +372,9 @@ func cloneUsageAttributionTime(value *time.Time) *time.Time {
 }
 
 func (u *UsageLog) TotalTokens() int {
-	return u.InputTokens + u.OutputTokens + u.CacheCreationTokens + u.CacheReadTokens
+	return u.InputTokens + u.ImageInputTokens + u.AudioInputTokens +
+		u.OutputTokens + u.ImageOutputTokens + u.AudioOutputTokens +
+		u.CacheCreationTokens + u.CacheReadTokens
 }
 
 func (u *UsageLog) EffectiveRequestType() RequestType {

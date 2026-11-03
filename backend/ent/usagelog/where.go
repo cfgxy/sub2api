@@ -160,6 +160,16 @@ func CacheCreation1hTokens(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation1hTokens, v))
 }
 
+// AudioInputTokens applies equality check predicate on the "audio_input_tokens" field. It's identical to AudioInputTokensEQ.
+func AudioInputTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioInputTokens, v))
+}
+
+// AudioOutputTokens applies equality check predicate on the "audio_output_tokens" field. It's identical to AudioOutputTokensEQ.
+func AudioOutputTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioOutputTokens, v))
+}
+
 // InputCost applies equality check predicate on the "input_cost" field. It's identical to InputCostEQ.
 func InputCost(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldInputCost, v))
@@ -178,6 +188,16 @@ func CacheCreationCost(v float64) predicate.UsageLog {
 // CacheReadCost applies equality check predicate on the "cache_read_cost" field. It's identical to CacheReadCostEQ.
 func CacheReadCost(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCacheReadCost, v))
+}
+
+// AudioInputCost applies equality check predicate on the "audio_input_cost" field. It's identical to AudioInputCostEQ.
+func AudioInputCost(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioInputCost, v))
+}
+
+// AudioOutputCost applies equality check predicate on the "audio_output_cost" field. It's identical to AudioOutputCostEQ.
+func AudioOutputCost(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioOutputCost, v))
 }
 
 // TotalCost applies equality check predicate on the "total_cost" field. It's identical to TotalCostEQ.
@@ -1295,6 +1315,86 @@ func CacheCreation1hTokensLTE(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldCacheCreation1hTokens, v))
 }
 
+// AudioInputTokensEQ applies the EQ predicate on the "audio_input_tokens" field.
+func AudioInputTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioInputTokens, v))
+}
+
+// AudioInputTokensNEQ applies the NEQ predicate on the "audio_input_tokens" field.
+func AudioInputTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAudioInputTokens, v))
+}
+
+// AudioInputTokensIn applies the In predicate on the "audio_input_tokens" field.
+func AudioInputTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAudioInputTokens, vs...))
+}
+
+// AudioInputTokensNotIn applies the NotIn predicate on the "audio_input_tokens" field.
+func AudioInputTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAudioInputTokens, vs...))
+}
+
+// AudioInputTokensGT applies the GT predicate on the "audio_input_tokens" field.
+func AudioInputTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAudioInputTokens, v))
+}
+
+// AudioInputTokensGTE applies the GTE predicate on the "audio_input_tokens" field.
+func AudioInputTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAudioInputTokens, v))
+}
+
+// AudioInputTokensLT applies the LT predicate on the "audio_input_tokens" field.
+func AudioInputTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAudioInputTokens, v))
+}
+
+// AudioInputTokensLTE applies the LTE predicate on the "audio_input_tokens" field.
+func AudioInputTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAudioInputTokens, v))
+}
+
+// AudioOutputTokensEQ applies the EQ predicate on the "audio_output_tokens" field.
+func AudioOutputTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioOutputTokens, v))
+}
+
+// AudioOutputTokensNEQ applies the NEQ predicate on the "audio_output_tokens" field.
+func AudioOutputTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAudioOutputTokens, v))
+}
+
+// AudioOutputTokensIn applies the In predicate on the "audio_output_tokens" field.
+func AudioOutputTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAudioOutputTokens, vs...))
+}
+
+// AudioOutputTokensNotIn applies the NotIn predicate on the "audio_output_tokens" field.
+func AudioOutputTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAudioOutputTokens, vs...))
+}
+
+// AudioOutputTokensGT applies the GT predicate on the "audio_output_tokens" field.
+func AudioOutputTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAudioOutputTokens, v))
+}
+
+// AudioOutputTokensGTE applies the GTE predicate on the "audio_output_tokens" field.
+func AudioOutputTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAudioOutputTokens, v))
+}
+
+// AudioOutputTokensLT applies the LT predicate on the "audio_output_tokens" field.
+func AudioOutputTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAudioOutputTokens, v))
+}
+
+// AudioOutputTokensLTE applies the LTE predicate on the "audio_output_tokens" field.
+func AudioOutputTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAudioOutputTokens, v))
+}
+
 // InputCostEQ applies the EQ predicate on the "input_cost" field.
 func InputCostEQ(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldInputCost, v))
@@ -1453,6 +1553,86 @@ func CacheReadCostLT(v float64) predicate.UsageLog {
 // CacheReadCostLTE applies the LTE predicate on the "cache_read_cost" field.
 func CacheReadCostLTE(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldCacheReadCost, v))
+}
+
+// AudioInputCostEQ applies the EQ predicate on the "audio_input_cost" field.
+func AudioInputCostEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioInputCost, v))
+}
+
+// AudioInputCostNEQ applies the NEQ predicate on the "audio_input_cost" field.
+func AudioInputCostNEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAudioInputCost, v))
+}
+
+// AudioInputCostIn applies the In predicate on the "audio_input_cost" field.
+func AudioInputCostIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAudioInputCost, vs...))
+}
+
+// AudioInputCostNotIn applies the NotIn predicate on the "audio_input_cost" field.
+func AudioInputCostNotIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAudioInputCost, vs...))
+}
+
+// AudioInputCostGT applies the GT predicate on the "audio_input_cost" field.
+func AudioInputCostGT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAudioInputCost, v))
+}
+
+// AudioInputCostGTE applies the GTE predicate on the "audio_input_cost" field.
+func AudioInputCostGTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAudioInputCost, v))
+}
+
+// AudioInputCostLT applies the LT predicate on the "audio_input_cost" field.
+func AudioInputCostLT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAudioInputCost, v))
+}
+
+// AudioInputCostLTE applies the LTE predicate on the "audio_input_cost" field.
+func AudioInputCostLTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAudioInputCost, v))
+}
+
+// AudioOutputCostEQ applies the EQ predicate on the "audio_output_cost" field.
+func AudioOutputCostEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAudioOutputCost, v))
+}
+
+// AudioOutputCostNEQ applies the NEQ predicate on the "audio_output_cost" field.
+func AudioOutputCostNEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAudioOutputCost, v))
+}
+
+// AudioOutputCostIn applies the In predicate on the "audio_output_cost" field.
+func AudioOutputCostIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAudioOutputCost, vs...))
+}
+
+// AudioOutputCostNotIn applies the NotIn predicate on the "audio_output_cost" field.
+func AudioOutputCostNotIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAudioOutputCost, vs...))
+}
+
+// AudioOutputCostGT applies the GT predicate on the "audio_output_cost" field.
+func AudioOutputCostGT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAudioOutputCost, v))
+}
+
+// AudioOutputCostGTE applies the GTE predicate on the "audio_output_cost" field.
+func AudioOutputCostGTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAudioOutputCost, v))
+}
+
+// AudioOutputCostLT applies the LT predicate on the "audio_output_cost" field.
+func AudioOutputCostLT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAudioOutputCost, v))
+}
+
+// AudioOutputCostLTE applies the LTE predicate on the "audio_output_cost" field.
+func AudioOutputCostLTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAudioOutputCost, v))
 }
 
 // TotalCostEQ applies the EQ predicate on the "total_cost" field.

@@ -250,11 +250,24 @@ func realtimeEnterpriseAttribution(apiKey *service.APIKey, subscription *service
 }
 
 func realtimeUsage(usage openaiwsv2.Usage) service.OpenAIUsage {
-	return service.OpenAIUsage{InputTokens: usage.InputTokens, ImageInputTokens: usage.ImageInputTokens, OutputTokens: usage.OutputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens, CacheReadInputTokens: usage.CacheReadInputTokens, ImageOutputTokens: usage.ImageOutputTokens}
+	return service.OpenAIUsage{
+		InputTokens:              usage.InputTokens,
+		ImageInputTokens:         usage.ImageInputTokens,
+		AudioInputTokens:         usage.AudioInputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		ImageOutputTokens:        usage.ImageOutputTokens,
+		AudioOutputTokens:        usage.AudioOutputTokens,
+		TokenBucketsSeparated:    true,
+	}
 }
 
 func realtimeUsageHasTokens(usage openaiwsv2.Usage) bool {
-	return usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0 || usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0
+	return usage.InputTokens > 0 || usage.OutputTokens > 0 ||
+		usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0 ||
+		usage.AudioInputTokens > 0 || usage.AudioOutputTokens > 0 ||
+		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0
 }
 
 func firstNonEmptyRealtime(values ...string) string {

@@ -224,6 +224,9 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 	p := pricing
 	if len(pricing.Intervals) > 0 {
 		totalTokens := tokens.InputTokens + tokens.OutputTokens + tokens.CacheCreationTokens + tokens.CacheReadTokens
+		if tokens.TokenBucketsSeparated {
+			totalTokens += tokens.ImageInputTokens + tokens.AudioInputTokens + tokens.ImageOutputTokens + tokens.AudioOutputTokens
+		}
 		if iv := FindMatchingInterval(pricing.Intervals, totalTokens); iv != nil {
 			p = &ChannelModelPricing{
 				InputPrice:        iv.InputPrice,
@@ -231,6 +234,7 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 				CacheWritePrice:   iv.CacheWritePrice,
 				CacheWrite1hPrice: iv.CacheWrite1hPrice,
 				CacheReadPrice:    iv.CacheReadPrice,
+				ImageOutputPrice:  pricing.ImageOutputPrice,
 				PerRequestPrice:   iv.PerRequestPrice,
 			}
 		}
@@ -249,8 +253,14 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 				float64(cache1h)*deref(p.CacheWrite1hPrice)
 		}
 	}
-	cost := float64(tokens.InputTokens)*deref(p.InputPrice) +
-		float64(tokens.OutputTokens)*deref(p.OutputPrice) +
+	inputTokens := tokens.InputTokens
+	outputTokens := tokens.OutputTokens
+	if tokens.TokenBucketsSeparated {
+		inputTokens += tokens.ImageInputTokens + tokens.AudioInputTokens
+		outputTokens += tokens.AudioOutputTokens
+	}
+	cost := float64(inputTokens)*deref(p.InputPrice) +
+		float64(outputTokens)*deref(p.OutputPrice) +
 		cacheCreationCost +
 		float64(tokens.CacheReadTokens)*deref(p.CacheReadPrice) +
 		float64(tokens.ImageOutputTokens)*deref(p.ImageOutputPrice)

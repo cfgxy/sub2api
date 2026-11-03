@@ -1278,6 +1278,55 @@ func TestRelay_GARealtimeUsageSeparatesAudioImageAndCachedTokens(t *testing.T) {
 	require.Equal(t, result.Usage, turn.Usage)
 }
 
+func TestRelay_GARealtimeUsagePrefersSingularDetailsOverResponsesCompatibilityFields(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_detail_precedence","usage":{"input_tokens":100,"output_tokens":80,"input_token_details":{"text_tokens":20,"audio_tokens":30,"image_tokens":10,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15},"input_tokens_details":{"cached_tokens":99,"image_tokens":99},"output_tokens_details":{"image_tokens":99}}}}`),
+		},
+	}, true)
+
+	result, relayExit := Relay(context.Background(), clientConn, upstreamConn, nil, RelayOptions{
+		StartClientAfterFirstDownstream: true,
+	})
+	require.Nil(t, relayExit)
+	require.Equal(t, Usage{
+		InputTokens:          20,
+		ImageInputTokens:     10,
+		AudioInputTokens:     30,
+		OutputTokens:         35,
+		CacheReadInputTokens: 40,
+		ImageOutputTokens:    15,
+		AudioOutputTokens:    30,
+	}, result.Usage)
+}
+
+func TestRelay_DeduplicatesRepeatedTerminalResponse(t *testing.T) {
+	t.Parallel()
+
+	payload := []byte(`{"type":"response.done","response":{"id":"resp_once","usage":{"input_tokens":3,"output_tokens":2,"input_token_details":{"text_tokens":3},"output_token_details":{"text_tokens":2}}}}`)
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{msgType: coderws.MessageText, payload: payload},
+		{msgType: coderws.MessageText, payload: payload},
+	}, true)
+	var turns []RelayTurnResult
+
+	result, relayExit := Relay(context.Background(), clientConn, upstreamConn, nil, RelayOptions{
+		StartClientAfterFirstDownstream: true,
+		OnTurnComplete: func(turn RelayTurnResult) {
+			turns = append(turns, turn)
+		},
+	})
+	require.Nil(t, relayExit)
+	require.Equal(t, Usage{InputTokens: 3, OutputTokens: 2}, result.Usage)
+	require.Len(t, turns, 1)
+	require.Equal(t, "resp_once", turns[0].RequestID)
+}
+
 func TestRelay_TraceEvents_ContainsLifecycleStages(t *testing.T) {
 	t.Parallel()
 

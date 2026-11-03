@@ -96,6 +96,34 @@ func TestCalculateCost_RateMultiplier(t *testing.T) {
 	require.InDelta(t, cost1x.ActualCost*2, cost2x.ActualCost, 1e-10)
 }
 
+func TestComputeTokenBreakdown_SeparatesAudioCostsAndAppliesLongContextPricing(t *testing.T) {
+	svc := &BillingService{}
+	pricing := &ModelPricing{
+		InputPricePerToken:          0.001,
+		OutputPricePerToken:         0.002,
+		AudioInputPricePerToken:     0.004,
+		AudioOutputPricePerToken:    0.006,
+		LongContextInputThreshold:   99,
+		LongContextInputMultiplier:  2,
+		LongContextOutputMultiplier: 3,
+	}
+
+	cost := svc.computeTokenBreakdown(pricing, UsageTokens{
+		InputTokens:           10,
+		AudioInputTokens:      90,
+		OutputTokens:          5,
+		AudioOutputTokens:     20,
+		TokenBucketsSeparated: true,
+	}, 1, "", true)
+
+	require.InDelta(t, 0.02, cost.InputCost, 1e-12)
+	require.InDelta(t, 0.72, cost.AudioInputCost, 1e-12)
+	require.InDelta(t, 0.03, cost.OutputCost, 1e-12)
+	require.InDelta(t, 0.36, cost.AudioOutputCost, 1e-12)
+	require.InDelta(t, 1.13, cost.TotalCost, 1e-12)
+	require.True(t, cost.LongContextBillingApplied)
+}
+
 func TestGetModelPricing_FallbackMatchesByFamily(t *testing.T) {
 	svc := newTestBillingService()
 

@@ -116,6 +116,7 @@ type relayState struct {
 	terminalEventType       string
 	firstTokenMs            *int
 	turnTimingByID          map[string]*relayTurnTiming
+	completedResponseIDs    map[string]struct{}
 	activeTurn              *relayTurnTiming
 	pendingBareError        *observedUpstreamEvent
 }
@@ -775,6 +776,11 @@ func observeUpstreamMessage(
 	if responseID == "" && isTerminalEvent(eventType) {
 		responseID = strings.TrimSpace(values[3].String())
 	}
+	if isTerminalEvent(eventType) && responseID != "" && state.completedResponseIDs != nil {
+		if _, completed := state.completedResponseIDs[responseID]; completed {
+			return observedUpstreamEvent{}
+		}
+	}
 	now := nowFn()
 
 	if state.firstTokenMs == nil && isTokenEvent(eventType) {
@@ -867,6 +873,10 @@ func finalizeObservedRelayTerminal(state *relayState, observed observedUpstreamE
 	responseID := strings.TrimSpace(observed.responseID)
 	if responseID != "" {
 		state.lastResponseID = responseID
+		if state.completedResponseIDs == nil {
+			state.completedResponseIDs = make(map[string]struct{})
+		}
+		state.completedResponseIDs[responseID] = struct{}{}
 		if turnTiming, ok := openAIWSRelayDeleteTurnTiming(state, responseID); ok {
 			observed.responseModel = relayTurnResponseModel(&turnTiming)
 			observed.responseConflict = turnTiming.responseModelConflict

@@ -180,22 +180,32 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 	logServiceTierBillingDowngrade("service.openai_gateway", account, result.RequestID, ApplyOpenAIServiceTierBillingResolution(billingAccount, result))
 
-	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
-	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
-	actualInputTokens := result.Usage.InputTokens - result.Usage.CacheReadInputTokens - result.Usage.CacheCreationInputTokens
-	if actualInputTokens < 0 {
-		actualInputTokens = 0
+	// 将上游总数或 Realtime 的已分桶数统一为互斥文本/图片/音频/缓存桶。
+	// 非 Realtime 的兼容路径仍以 input/output total 为主；Realtime GA 的
+	// input_token_details/output_token_details 已明确给出文本明细，不能再扣一次 cache。
+	actualInputTokens := result.Usage.InputTokens
+	actualOutputTokens := result.Usage.OutputTokens
+	if !result.Usage.TokenBucketsSeparated {
+		actualInputTokens -= result.Usage.CacheReadInputTokens + result.Usage.CacheCreationInputTokens
+		actualInputTokens -= max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0)
+		actualInputTokens -= result.Usage.AudioInputTokens
+		actualOutputTokens -= result.Usage.ImageOutputTokens + result.Usage.AudioOutputTokens
 	}
+	actualInputTokens = max(actualInputTokens, 0)
+	actualOutputTokens = max(actualOutputTokens, 0)
 
 	// Calculate cost
 	tokens := UsageTokens{
-		InputTokens:          actualInputTokens,
-		ImageInputTokens:     max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
-		ImageCacheReadTokens: result.Usage.ImageCacheReadTokens,
-		OutputTokens:         result.Usage.OutputTokens,
-		CacheCreationTokens:  result.Usage.CacheCreationInputTokens,
-		CacheReadTokens:      result.Usage.CacheReadInputTokens,
-		ImageOutputTokens:    result.Usage.ImageOutputTokens,
+		InputTokens:           actualInputTokens,
+		ImageInputTokens:      max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
+		ImageCacheReadTokens:  result.Usage.ImageCacheReadTokens,
+		AudioInputTokens:      result.Usage.AudioInputTokens,
+		OutputTokens:          actualOutputTokens,
+		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
+		CacheReadTokens:       result.Usage.CacheReadInputTokens,
+		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+		AudioOutputTokens:     result.Usage.AudioOutputTokens,
+		TokenBucketsSeparated: true,
 	}
 
 	// Get rate multiplier
@@ -401,11 +411,13 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		InboundEndpoint:          optionalTrimmedStringPtr(input.InboundEndpoint),
 		UpstreamEndpoint:         optionalTrimmedStringPtr(input.UpstreamEndpoint),
 		InputTokens:              actualInputTokens,
-		OutputTokens:             result.Usage.OutputTokens,
+		OutputTokens:             actualOutputTokens,
 		CacheCreationTokens:      result.Usage.CacheCreationInputTokens,
 		CacheReadTokens:          result.Usage.CacheReadInputTokens,
 		ImageInputTokens:         result.Usage.ImageInputTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,
+		AudioInputTokens:         result.Usage.AudioInputTokens,
+		AudioOutputTokens:        result.Usage.AudioOutputTokens,
 		ImageCount:               result.ImageCount,
 		ImageSize:                optionalTrimmedStringPtr(result.ImageSize),
 		ImageInputSize:           optionalTrimmedStringPtr(result.ImageInputSize),
@@ -427,8 +439,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost
 		usageLog.ImageInputCost = cost.ImageInputCost
+		usageLog.AudioInputCost = cost.AudioInputCost
 		usageLog.OutputCost = cost.OutputCost
 		usageLog.ImageOutputCost = cost.ImageOutputCost
+		usageLog.AudioOutputCost = cost.AudioOutputCost
 		usageLog.CacheCreationCost = cost.CacheCreationCost
 		usageLog.CacheReadCost = cost.CacheReadCost
 		usageLog.TotalCost = cost.TotalCost
