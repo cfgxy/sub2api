@@ -69,7 +69,11 @@ func (s *enterpriseEmployeeBillingRepoStub) ReleaseEnterpriseEmployeeUsage(_ con
 	}, nil
 }
 
-func TestEnterpriseEmployeeReservationRequiresProvenBoundAndAcceptsExactCharge(t *testing.T) {
+func (s *enterpriseEmployeeBillingRepoStub) RenewEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageRenewCommand) (bool, error) {
+	return true, nil
+}
+
+func TestEnterpriseEmployeeReservationMarksEstimatedAndExactCharges(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Billing.InflightReservation.DefaultMaxTokens = 8192
 	cfg.Billing.InflightReservation.MaxInputTokens = 1_000_000
@@ -83,18 +87,22 @@ func TestEnterpriseEmployeeReservationRequiresProvenBoundAndAcceptsExactCharge(t
 	}
 	apiKey := &APIKey{ID: 9, User: &User{ID: 10}, EnterpriseEmployeeWeeklyLimit: true, Group: &Group{RateMultiplier: 1}}
 
-	_, err := svc.ReserveEnterpriseEmployeeUsage(context.Background(), apiKey, InflightEstimateRequest{
+	reservation, err := svc.ReserveEnterpriseEmployeeUsage(context.Background(), apiKey, InflightEstimateRequest{
 		Model: "claude-sonnet-4-5", BodyBytes: 100,
 	})
-	require.ErrorIs(t, err, ErrEnterpriseEmployeeMaximumCostUnknown)
-	require.Zero(t, repo.reserveCalls, "configured estimator caps are not proof of the upstream output bound")
-
-	reservation, err := svc.ReserveEnterpriseEmployeeFixedCharge(context.Background(), apiKey, 1.25)
 	require.NoError(t, err)
 	require.NotNil(t, reservation)
 	require.Equal(t, 1, repo.reserveCalls)
 	require.NotNil(t, repo.lastReserve)
+	require.False(t, repo.lastReserve.MaximumCostKnown)
+
+	reservation, err = svc.ReserveEnterpriseEmployeeFixedCharge(context.Background(), apiKey, 1.25)
+	require.NoError(t, err)
+	require.NotNil(t, reservation)
+	require.Equal(t, 2, repo.reserveCalls)
+	require.NotNil(t, repo.lastReserve)
 	require.InDelta(t, 1.25, repo.lastReserve.ReservedUSD, 0.000000001)
+	require.True(t, repo.lastReserve.MaximumCostKnown)
 }
 
 func TestEnterpriseEmployeeSettlementRetriesAfterCoreBillingDedup(t *testing.T) {

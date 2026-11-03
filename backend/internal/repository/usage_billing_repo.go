@@ -86,7 +86,8 @@ func persistEnterpriseEmployeeCommittedSettlement(ctx context.Context, tx *sql.T
 	var reservationID int64
 	err := tx.QueryRowContext(ctx, `
 		UPDATE enterprise_employee_usage_reservations
-		SET actual_usd = $1, status = 'committed', committed_at = NOW(), updated_at = NOW()
+		SET actual_usd = $1, status = 'committed', committed_at = NOW(),
+		    lease_expires_at = NULL, updated_at = NOW()
 		WHERE request_id = $2 AND source_api_key_id = $3 AND status = 'reserved'
 		RETURNING id`, cmd.EnterpriseEmployeeActualUSD, cmd.RequestID, cmd.APIKeyID).Scan(&reservationID)
 	if err == nil {
@@ -235,6 +236,20 @@ func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Cont
 		return nil, existingErr
 	}
 
+	if !cmd.MaximumCostKnown {
+		var inflight int
+		if err = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM enterprise_employee_usage_reservations
+			WHERE employee_id = $1 AND enterprise_subscription_id = $2
+			  AND weekly_window_anchor = $3 AND status IN ('reserved', 'committed')`, employeeID, enterpriseSubscriptionID, anchor).Scan(&inflight); err != nil {
+			return nil, err
+		}
+		if inflight > 0 {
+			return nil, service.ErrAPIKeyRateLimit7dExceeded
+		}
+	}
+
 	var reserved float64
 	if err = tx.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(
@@ -254,18 +269,20 @@ func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Cont
 		INSERT INTO enterprise_employee_usage_reservations (
 			request_id, request_fingerprint, source_api_key_id, enterprise_id,
 			enterprise_subscription_id, upstream_user_subscription_id, employee_id,
-			assignment_generation, weekly_window_anchor, reserved_usd
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			assignment_generation, weekly_window_anchor, reserved_usd, maximum_cost_known,
+			lease_expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW() + ($12 * INTERVAL '1 microsecond'))
 		RETURNING id, request_id, source_api_key_id, enterprise_id,
 		          enterprise_subscription_id, upstream_user_subscription_id,
 		          employee_id, assignment_generation, weekly_window_anchor,
-		          reserved_usd, actual_usd, status`, cmd.RequestID, cmd.RequestFingerprint,
+		          reserved_usd, maximum_cost_known, actual_usd, status`, cmd.RequestID, cmd.RequestFingerprint,
 		cmd.SourceAPIKeyID, enterpriseID, enterpriseSubscriptionID, upstreamSubscriptionID,
-		employeeID, generation, anchor, cmd.ReservedUSD).
+		employeeID, generation, anchor, cmd.ReservedUSD, cmd.MaximumCostKnown,
+		service.EnterpriseEmployeeReservationLease.Microseconds()).
 		Scan(&result.ReservationID, &result.RequestID, &result.SourceAPIKeyID, &result.EnterpriseID,
 			&result.EnterpriseSubscriptionID, &result.UpstreamUserSubscriptionID, &result.EmployeeID,
 			&result.AssignmentGeneration, &result.WeeklyWindowAnchor, &result.ReservedUSD,
-			&result.ActualUSD, &result.Status)
+			&result.MaximumCostKnown, &result.ActualUSD, &result.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +386,8 @@ func (r *usageBillingRepository) SettleEnterpriseEmployeeUsage(ctx context.Conte
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE enterprise_employee_usage_reservations
 		SET actual_usd = $1, status = 'settled',
-		    committed_at = COALESCE(committed_at, NOW()), settled_at = NOW(), updated_at = NOW()
+		    committed_at = COALESCE(committed_at, NOW()), settled_at = NOW(),
+		    lease_expires_at = NULL, updated_at = NOW()
 		WHERE id = $2`, actualUSD, reservation.ReservationID); err != nil {
 		return nil, err
 	}
@@ -413,7 +431,7 @@ func (r *usageBillingRepository) ReleaseEnterpriseEmployeeUsage(ctx context.Cont
 	}
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE enterprise_employee_usage_reservations
-		SET status = 'released', released_at = NOW(), updated_at = NOW()
+		SET status = 'released', released_at = NOW(), lease_expires_at = NULL, updated_at = NOW()
 		WHERE id = $1`, reservation.ReservationID); err != nil {
 		return nil, err
 	}
@@ -425,10 +443,32 @@ func (r *usageBillingRepository) ReleaseEnterpriseEmployeeUsage(ctx context.Cont
 	return reservation, nil
 }
 
-// RecoverEnterpriseEmployeeUsage settles committed reservations for the same
-// employee as sourceAPIKeyID. It deliberately invokes the normal settlement
-// transaction for each row, preserving the employee -> assignment ->
-// subscription locking order and settlement idempotency.
+func (r *usageBillingRepository) RenewEnterpriseEmployeeUsage(ctx context.Context, cmd *service.EnterpriseEmployeeUsageRenewCommand) (bool, error) {
+	if cmd == nil || r == nil || r.db == nil {
+		return false, service.ErrEnterpriseEmployeeReservationNotFound
+	}
+	cmd.RequestID = strings.TrimSpace(cmd.RequestID)
+	if cmd.RequestID == "" || cmd.SourceAPIKeyID <= 0 {
+		return false, service.ErrUsageBillingRequestIDRequired
+	}
+	var reservationID int64
+	err := r.db.QueryRowContext(ctx, `
+		UPDATE enterprise_employee_usage_reservations
+		SET lease_expires_at = NOW() + ($1 * INTERVAL '1 microsecond'), updated_at = NOW()
+		WHERE request_id = $2 AND source_api_key_id = $3 AND status = 'reserved'
+		RETURNING id`, service.EnterpriseEmployeeReservationLease.Microseconds(), cmd.RequestID, cmd.SourceAPIKeyID).Scan(&reservationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RecoverEnterpriseEmployeeUsage releases expired reservations that never
+// reached billing, then settles committed rows for the same employee as
+// sourceAPIKeyID. A reservation with billing dedup evidence is never released.
 func (r *usageBillingRepository) RecoverEnterpriseEmployeeUsage(ctx context.Context, sourceAPIKeyID int64) error {
 	if r == nil || r.db == nil || sourceAPIKeyID <= 0 {
 		return service.ErrEnterpriseEmployeeReservationNotFound
@@ -445,6 +485,21 @@ func (r *usageBillingRepository) RecoverEnterpriseEmployeeUsage(ctx context.Cont
 		return service.ErrEnterpriseAttributionUnavailable
 	}
 	if err != nil {
+		return err
+	}
+	if _, err = r.db.ExecContext(ctx, `
+		UPDATE enterprise_employee_usage_reservations AS reservation
+		SET status = 'released', released_at = NOW(), lease_expires_at = NULL, updated_at = NOW()
+		WHERE reservation.enterprise_id = $1 AND reservation.employee_id = $2
+		  AND reservation.status = 'reserved' AND reservation.lease_expires_at <= NOW()
+		  AND NOT EXISTS (
+			SELECT 1 FROM usage_billing_dedup AS dedup
+			WHERE dedup.request_id = reservation.request_id AND dedup.api_key_id = reservation.source_api_key_id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM usage_billing_dedup_archive AS archive
+			WHERE archive.request_id = reservation.request_id AND archive.api_key_id = reservation.source_api_key_id
+		  )`, enterpriseID, employeeID); err != nil {
 		return err
 	}
 
@@ -493,7 +548,7 @@ func loadEnterpriseEmployeeReservation(ctx context.Context, tx *sql.Tx, requestI
 		SELECT id, request_id, source_api_key_id, enterprise_id,
 		       enterprise_subscription_id, upstream_user_subscription_id,
 		       employee_id, assignment_generation, weekly_window_anchor,
-		       reserved_usd, actual_usd, status
+		       reserved_usd, maximum_cost_known, actual_usd, status
 		FROM enterprise_employee_usage_reservations
 		WHERE request_id = $1 AND source_api_key_id = $2`
 	if forUpdate {
@@ -504,7 +559,7 @@ func loadEnterpriseEmployeeReservation(ctx context.Context, tx *sql.Tx, requestI
 		&result.ReservationID, &result.RequestID, &result.SourceAPIKeyID, &result.EnterpriseID,
 		&result.EnterpriseSubscriptionID, &result.UpstreamUserSubscriptionID, &result.EmployeeID,
 		&result.AssignmentGeneration, &result.WeeklyWindowAnchor, &result.ReservedUSD,
-		&result.ActualUSD, &result.Status,
+		&result.MaximumCostKnown, &result.ActualUSD, &result.Status,
 	)
 	return result, err
 }

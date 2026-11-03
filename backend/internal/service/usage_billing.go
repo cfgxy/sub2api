@@ -194,6 +194,7 @@ type EnterpriseEmployeeUsageReservationCommand struct {
 	RequestFingerprint string
 	SourceAPIKeyID     int64
 	ReservedUSD        float64
+	MaximumCostKnown   bool
 }
 
 func (c *EnterpriseEmployeeUsageReservationCommand) Normalize() {
@@ -216,6 +217,7 @@ type EnterpriseEmployeeUsageReservationResult struct {
 	AssignmentGeneration       int64
 	WeeklyWindowAnchor         time.Time
 	ReservedUSD                float64
+	MaximumCostKnown           bool
 	ActualUSD                  *float64
 	Status                     string
 	AlreadyExists              bool
@@ -242,10 +244,16 @@ type EnterpriseEmployeeUsageReleaseCommand struct {
 	SourceAPIKeyID int64
 }
 
+type EnterpriseEmployeeUsageRenewCommand struct {
+	RequestID      string
+	SourceAPIKeyID int64
+}
+
 type EnterpriseEmployeeUsageReservationRepository interface {
 	ReserveEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageReservationCommand) (*EnterpriseEmployeeUsageReservationResult, error)
 	SettleEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageSettlementCommand) (*EnterpriseEmployeeUsageReservationResult, error)
 	ReleaseEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageReleaseCommand) (*EnterpriseEmployeeUsageReservationResult, error)
+	RenewEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageRenewCommand) (bool, error)
 }
 
 // EnterpriseEmployeeUsageRecoveryRepository recovers committed employee

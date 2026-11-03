@@ -47,6 +47,7 @@ type InflightBalanceReservationRenewer interface {
 
 const (
 	defaultInflightReservationTTL      = 15 * time.Minute
+	EnterpriseEmployeeReservationLease = 15 * time.Minute
 	defaultInflightDefaultMaxTokens    = 8192
 	inflightReservationReleaseTimeout  = 2 * time.Second
 	inflightReservationReserveTimeout  = 2 * time.Second
@@ -79,12 +80,16 @@ type InflightReservation struct {
 	scopes     []string
 	employee   *EnterpriseEmployeeUsageReservation
 
-	refs        atomic.Int64
-	releaseOnce sync.Once
-	stopOnce    sync.Once
-	closeOnce   sync.Once
-	stopRenew   chan struct{}
-	renewDone   chan struct{}
+	refs               atomic.Int64
+	releaseOnce        sync.Once
+	stopOnce           sync.Once
+	closeOnce          sync.Once
+	stopRenew          chan struct{}
+	renewDone          chan struct{}
+	employeeStopRenew  chan struct{}
+	employeeRenewDone  chan struct{}
+	employeeRenewStart sync.Once
+	employeeRenewStop  sync.Once
 }
 
 // EnterpriseEmployeeUsageReservation is the durable database hold attached to
@@ -134,6 +139,15 @@ func (r *EnterpriseEmployeeUsageReservation) Release(ctx context.Context) (*Ente
 	})
 }
 
+func (r *EnterpriseEmployeeUsageReservation) Renew(ctx context.Context) (bool, error) {
+	if r == nil || r.repo == nil {
+		return false, ErrEnterpriseEmployeeReservationNotFound
+	}
+	return r.repo.RenewEnterpriseEmployeeUsage(ctx, &EnterpriseEmployeeUsageRenewCommand{
+		RequestID: r.result.RequestID, SourceAPIKeyID: r.result.SourceAPIKeyID,
+	})
+}
+
 // AttachEnterpriseEmployeeUsageReservation adds a durable employee hold to an
 // existing in-flight handle, or creates a handle when Redis reservations are
 // disabled (subscription and Simple Mode employee requests).
@@ -146,6 +160,7 @@ func AttachEnterpriseEmployeeUsageReservation(r *InflightReservation, employee *
 		r.refs.Store(1)
 	}
 	r.employee = employee
+	r.startEmployeeRenewal()
 	return r
 }
 
@@ -204,6 +219,7 @@ func (r *InflightReservation) Release() {
 		return
 	}
 	r.stopRenewal()
+	r.stopEmployeeRenewal()
 	r.releaseOnce.Do(func() {
 		r.refs.Store(0)
 		relCtx, relCancel := context.WithTimeout(context.Background(), inflightReservationReleaseTimeout)
@@ -224,6 +240,47 @@ func (r *InflightReservation) Release() {
 			}
 		}
 	})
+}
+
+func (r *InflightReservation) startEmployeeRenewal() {
+	if r == nil || r.employee == nil {
+		return
+	}
+	r.employeeRenewStart.Do(func() {
+		employee := r.employee
+		r.employeeStopRenew = make(chan struct{})
+		r.employeeRenewDone = make(chan struct{})
+		go func() {
+			defer close(r.employeeRenewDone)
+			ticker := time.NewTicker(EnterpriseEmployeeReservationLease / 3)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-r.employeeStopRenew:
+					return
+				case <-ticker.C:
+					ctx, cancel := context.WithTimeout(context.Background(), inflightReservationRenewTimeout)
+					alive, err := employee.Renew(ctx)
+					cancel()
+					if err != nil {
+						logger.LegacyPrintf("service.billing_cache", "Warning: enterprise employee reservation renew failed for request %s: %v", employee.RequestID(), err)
+						continue
+					}
+					if !alive {
+						return
+					}
+				}
+			}
+		}()
+	})
+}
+
+func (r *InflightReservation) stopEmployeeRenewal() {
+	if r == nil || r.employeeRenewDone == nil {
+		return
+	}
+	r.employeeRenewStop.Do(func() { close(r.employeeStopRenew) })
+	<-r.employeeRenewDone
 }
 
 func (r *InflightReservation) decRef() {
@@ -815,6 +872,7 @@ func reserveEnterpriseEmployeeUsage(ctx context.Context, repo UsageBillingReposi
 		RequestFingerprint: buildEnterpriseEmployeeReservationFingerprint(apiKey.ID, req, maximum),
 		SourceAPIKeyID:     apiKey.ID,
 		ReservedUSD:        maximum,
+		MaximumCostKnown:   exactAmount != nil,
 	})
 	if err != nil {
 		return nil, err
