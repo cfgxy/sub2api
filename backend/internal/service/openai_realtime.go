@@ -170,15 +170,10 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeWebSocket(
 	client *coderws.Conn,
 	account *Account,
 	model string,
-	firstMessageType coderws.MessageType,
-	firstMessage []byte,
 	onTurnComplete func(openaiwsv2.RelayTurnResult),
 ) error {
 	if client == nil {
 		return errors.New("realtime client websocket is nil")
-	}
-	if err := ValidateRealtimeClientFrameModel(firstMessage, model); err != nil {
-		return err
 	}
 	endpoint, err := officialRealtimeEndpoint(account, true, "")
 	if err != nil {
@@ -197,7 +192,6 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeWebSocket(
 	}
 	headers := make(http.Header)
 	headers.Set("Authorization", "Bearer "+token)
-	headers.Set("OpenAI-Beta", "realtime=v1")
 	upstream, status, _, err := s.getOpenAIWSPassthroughDialer().Dial(ctx, parsed.String(), headers, resolveAccountProxyURL(account))
 	if err != nil {
 		return fmt.Errorf("dial official realtime upstream (status %d): %w", status, err)
@@ -208,9 +202,9 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeWebSocket(
 		return errors.New("official realtime transport does not support raw frames")
 	}
 	clientFrames := realtimeModelBoundFrameConn{upstream: realtimeFrameConn{conn: client}, model: model}
-	_, relayExit := openaiwsv2.Relay(ctx, clientFrames, upstreamFrames, firstMessage, openaiwsv2.RelayOptions{
-		FirstMessageType: firstMessageType,
-		OnTurnComplete:   onTurnComplete,
+	_, relayExit := openaiwsv2.Relay(ctx, clientFrames, upstreamFrames, nil, openaiwsv2.RelayOptions{
+		StartClientAfterFirstDownstream: true,
+		OnTurnComplete:                  onTurnComplete,
 	})
 	if relayExit != nil && relayExit.Err != nil {
 		return relayExit.Err

@@ -1217,6 +1217,67 @@ func TestRelay_DownstreamPreambleStartsClientReader(t *testing.T) {
 	}
 }
 
+func TestRelay_ServerFirstDoesNotWriteEmptyInitialFrame(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"session.created","session":{"id":"sess_123"}}`),
+		},
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_123","usage":{"input_tokens":3,"output_tokens":2,"input_token_details":{"text_tokens":3},"output_token_details":{"text_tokens":2}}}}`),
+		},
+	}, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, relayExit := Relay(ctx, clientConn, upstreamConn, nil, RelayOptions{
+		StartClientAfterFirstDownstream: true,
+	})
+	require.Nil(t, relayExit)
+	require.Empty(t, upstreamConn.Writes(), "server-first relay must not send an empty initial frame upstream")
+	require.Equal(t, int64(0), result.ClientToUpstreamFrames)
+	require.Equal(t, int64(2), result.UpstreamToClientFrames)
+	require.Equal(t, 3, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+	require.Len(t, clientConn.Writes(), 2)
+}
+
+func TestRelay_GARealtimeUsageSeparatesAudioImageAndCachedTokens(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_ga","usage":{"input_tokens":100,"output_tokens":80,"input_token_details":{"text_tokens":20,"audio_tokens":30,"image_tokens":10,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
+		},
+	}, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var turn RelayTurnResult
+	result, relayExit := Relay(ctx, clientConn, upstreamConn, nil, RelayOptions{
+		StartClientAfterFirstDownstream: true,
+		OnTurnComplete: func(current RelayTurnResult) {
+			turn = current
+		},
+	})
+	require.Nil(t, relayExit)
+	require.Equal(t, 20, result.Usage.InputTokens)
+	require.Equal(t, 30, result.Usage.AudioInputTokens)
+	require.Equal(t, 10, result.Usage.ImageInputTokens)
+	require.Equal(t, 40, result.Usage.CacheReadInputTokens)
+	require.Equal(t, 35, result.Usage.OutputTokens)
+	require.Equal(t, 30, result.Usage.AudioOutputTokens)
+	require.Equal(t, 15, result.Usage.ImageOutputTokens)
+	require.Equal(t, result.Usage, turn.Usage)
+}
+
 func TestRelay_TraceEvents_ContainsLifecycleStages(t *testing.T) {
 	t.Parallel()
 

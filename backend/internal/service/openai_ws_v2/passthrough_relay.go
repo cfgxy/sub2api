@@ -27,10 +27,12 @@ type FrameConn interface {
 type Usage struct {
 	InputTokens              int
 	ImageInputTokens         int
+	AudioInputTokens         int
 	OutputTokens             int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 	ImageOutputTokens        int
+	AudioOutputTokens        int
 }
 
 type RelayResult struct {
@@ -182,7 +184,8 @@ func Relay(
 	}
 	startAt := nowFn()
 	state := &relayState{requestModel: result.RequestModel}
-	if isClientResponseCreateFrame(firstMessageType, firstClientMessage) {
+	initialMessagePresent := len(firstClientMessage) > 0
+	if initialMessagePresent && isClientResponseCreateFrame(firstMessageType, firstClientMessage) {
 		firstTurnStartedAt := options.FirstTurnStartedAt
 		if firstTurnStartedAt.IsZero() {
 			firstTurnStartedAt = startAt
@@ -251,7 +254,11 @@ func Relay(
 		MessageType:  relayMessageTypeString(firstMessageType),
 	})
 
-	if options.FirstMessageSent {
+	if !initialMessagePresent {
+		emitRelayTrace(onTrace, RelayTraceEvent{
+			Stage: "await_first_upstream_message",
+		})
+	} else if options.FirstMessageSent {
 		emitRelayTrace(onTrace, RelayTraceEvent{
 			Stage:        "write_first_message_skipped",
 			Direction:    "client_to_upstream",
@@ -277,8 +284,10 @@ func Relay(
 			PayloadBytes: len(firstClientMessage),
 		})
 	}
-	clientToUpstreamFrames.Add(1)
-	markActivity()
+	if initialMessagePresent {
+		clientToUpstreamFrames.Add(1)
+		markActivity()
+	}
 
 	exitCh := make(chan relayExitSignal, 3)
 	dropDownstreamWrites := atomic.Bool{}
@@ -1110,15 +1119,29 @@ func parseUsageAndAccumulate(
 	if !outputResult.Exists() {
 		outputResult = usageResult.Get("completion_tokens")
 	}
-	cachedResult := usageResult.Get("input_tokens_details.cached_tokens")
+	// GA Realtime uses the singular input_token_details/output_token_details
+	// object. Keep the Responses and Chat Completions spellings so the shared
+	// relay remains backwards compatible.
+	realtimeInputDetails := usageResult.Get("input_token_details")
+	realtimeOutputDetails := usageResult.Get("output_token_details")
+	cachedResult := realtimeInputDetails.Get("cached_tokens")
+	if !cachedResult.Exists() {
+		cachedResult = usageResult.Get("input_tokens_details.cached_tokens")
+	}
 	if !cachedResult.Exists() {
 		cachedResult = usageResult.Get("prompt_tokens_details.cached_tokens")
 	}
-	imageTokens := usageResult.Get("output_tokens_details.image_tokens").Int()
+	imageTokens := realtimeOutputDetails.Get("image_tokens").Int()
+	if imageTokens == 0 {
+		imageTokens = usageResult.Get("output_tokens_details.image_tokens").Int()
+	}
 	if imageTokens == 0 {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
 	}
-	imageInputTokens := usageResult.Get("input_tokens_details.image_tokens").Int()
+	imageInputTokens := realtimeInputDetails.Get("image_tokens").Int()
+	if imageInputTokens == 0 {
+		imageInputTokens = usageResult.Get("input_tokens_details.image_tokens").Int()
+	}
 	if imageInputTokens <= 0 {
 		imageInputTokens = usageResult.Get("prompt_tokens_details.image_tokens").Int()
 	}
@@ -1146,6 +1169,22 @@ func parseUsageAndAccumulate(
 		// 解析失败时不做部分字段累加，避免计费 usage 出现“半有效”状态。
 		return Usage{}
 	}
+	audioInputTokens := max(int(realtimeInputDetails.Get("audio_tokens").Int()), 0)
+	audioOutputTokens := max(int(realtimeOutputDetails.Get("audio_tokens").Int()), 0)
+	if realtimeInputDetails.Exists() {
+		if text := realtimeInputDetails.Get("text_tokens"); text.Exists() {
+			inputTokens = max(int(text.Int()), 0)
+		} else {
+			inputTokens = max(inputTokens-int(imageInputTokens)-audioInputTokens-cachedTokens, 0)
+		}
+	}
+	if realtimeOutputDetails.Exists() {
+		if text := realtimeOutputDetails.Get("text_tokens"); text.Exists() {
+			outputTokens = max(int(text.Int()), 0)
+		} else {
+			outputTokens = max(outputTokens-int(imageTokens)-audioOutputTokens, 0)
+		}
+	}
 	reasoningTokens := usageResult.Get("output_tokens_details.reasoning_tokens").Int()
 	if reasoningTokens == 0 {
 		reasoningTokens = usageResult.Get("completion_tokens_details.reasoning_tokens").Int()
@@ -1158,10 +1197,12 @@ func parseUsageAndAccumulate(
 	parsedUsage := Usage{
 		InputTokens:              inputTokens,
 		ImageInputTokens:         int(imageInputTokens),
+		AudioInputTokens:         audioInputTokens,
 		OutputTokens:             outputTokens,
 		CacheCreationInputTokens: openAICacheCreationTokensFromUsage(usageResult),
 		CacheReadInputTokens:     cachedTokens,
 		ImageOutputTokens:        int(imageTokens),
+		AudioOutputTokens:        audioOutputTokens,
 	}
 
 	if isTerminalEvent(strings.TrimSpace(eventType)) {
@@ -1178,7 +1219,8 @@ func parseUsageAndAccumulate(
 func relayUsageHasTokens(usage Usage) bool {
 	return usage.InputTokens > 0 || usage.OutputTokens > 0 ||
 		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0 ||
-		usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0
+		usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0 ||
+		usage.AudioInputTokens > 0 || usage.AudioOutputTokens > 0
 }
 
 func mergeRelayUsageNonZero(dst *Usage, src Usage) {
@@ -1203,6 +1245,12 @@ func mergeRelayUsageNonZero(dst *Usage, src Usage) {
 	if src.ImageOutputTokens > 0 {
 		dst.ImageOutputTokens = src.ImageOutputTokens
 	}
+	if src.AudioInputTokens > 0 {
+		dst.AudioInputTokens = src.AudioInputTokens
+	}
+	if src.AudioOutputTokens > 0 {
+		dst.AudioOutputTokens = src.AudioOutputTokens
+	}
 }
 
 func finalizeRelayTurnUsage(state *relayState) Usage {
@@ -1216,6 +1264,8 @@ func finalizeRelayTurnUsage(state *relayState) Usage {
 	state.usage.CacheCreationInputTokens += turnUsage.CacheCreationInputTokens
 	state.usage.CacheReadInputTokens += turnUsage.CacheReadInputTokens
 	state.usage.ImageOutputTokens += turnUsage.ImageOutputTokens
+	state.usage.AudioInputTokens += turnUsage.AudioInputTokens
+	state.usage.AudioOutputTokens += turnUsage.AudioOutputTokens
 	state.turnUsage = Usage{}
 	return turnUsage
 }

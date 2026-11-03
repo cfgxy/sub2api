@@ -65,19 +65,12 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 		return
 	}
 	defer client.CloseNow()
-	messageType, firstMessage, err := client.Read(c.Request.Context())
-	if err != nil {
-		return
-	}
-	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, model, firstMessage); decision != nil && !decision.AllowNextStage {
-		h.openAISecurityAuditError(c, decision)
-		_ = client.Close(coderws.StatusPolicyViolation, "request rejected by security policy")
-		return
-	}
-	requestPayloadHash := service.HashUsageRequestPayload(firstMessage)
+	// Realtime GA sends session.created before clients need to send a frame.
+	// Model-bearing client events are enforced by realtimeModelBoundFrameConn.
+	requestPayloadHash := service.HashUsageRequestPayload(nil)
 	attribution := realtimeEnterpriseAttribution(apiKey, subscription)
 	account := selection.Account
-	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model, messageType, firstMessage,
+	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model,
 		func(turn openaiwsv2.RelayTurnResult) {
 			if !realtimeUsageHasTokens(turn.Usage) {
 				return
