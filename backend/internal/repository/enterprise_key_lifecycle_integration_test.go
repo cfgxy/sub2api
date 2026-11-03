@@ -172,7 +172,7 @@ func TestEnterpriseEmployeeKeyRotationPreservesSnapshotAndIdempotency(t *testing
 	require.Equal(t, 6.75, result.Key.Usage7d)
 	require.WithinDuration(t, window5h, *result.Key.Window5h, time.Second)
 	require.WithinDuration(t, window1d, *result.Key.Window1d, time.Second)
-	require.WithinDuration(t, window7d, *result.Key.Window7d, time.Second)
+	require.WithinDuration(t, fixture.anchor, *result.Key.Window7d, time.Second)
 
 	replayParams := params
 	replayParams.Plaintext = fmt.Sprintf("sk-enterprise-unused-%d", time.Now().UnixNano())
@@ -1293,7 +1293,7 @@ func TestEnterpriseEmployeeKeyCreateAfterDisableInheritsTerminalSnapshot(t *test
 	require.Equal(t, 6.75, successor.Key.Usage7d)
 	require.WithinDuration(t, window5h, *successor.Key.Window5h, time.Second)
 	require.WithinDuration(t, window1d, *successor.Key.Window1d, time.Second)
-	require.WithinDuration(t, window7d, *successor.Key.Window7d, time.Second)
+	require.WithinDuration(t, fixture.anchor, *successor.Key.Window7d, time.Second)
 }
 
 func TestEnterpriseEmployeeKeySuccessorRequiresCurrentActiveSubscription(t *testing.T) {
@@ -1537,5 +1537,5 @@ func TestEnterpriseEmployeeKeyLateBillingUsesLatestTerminalSnapshotBeforeRecreat
 	require.Equal(t, 7.25, recreated.Key.Usage7d)
 	require.WithinDuration(t, window5h, *recreated.Key.Window5h, time.Second)
 	require.WithinDuration(t, window1d, *recreated.Key.Window1d, time.Second)
-	require.WithinDuration(t, window7d, *recreated.Key.Window7d, time.Second)
+	require.WithinDuration(t, fixture.anchor, *recreated.Key.Window7d, time.Second)
 }

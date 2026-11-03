@@ -225,50 +225,48 @@ func TestEnterpriseEmployeeUsageCommittedSettlementRecoveryIsDurableAndIdempoten
 	require.InDelta(t, 3, usage, 0.000000001, "recovery must add the committed actual once")
 }
 
-func TestEnterpriseEmployeeCommittedSettlementCountsTowardAdmissionAndRejectsOverage(t *testing.T) {
+func TestEnterpriseEmployeeDelayedSettlementPreservesActualCostAndBlocksSubsequentAdmission(t *testing.T) {
 	ctx := context.Background()
-	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 0)
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 5, 0)
 	repo := NewUsageBillingRepository(nil, integrationDB).(*usageBillingRepository)
 	requestID := fmt.Sprintf("reservation-committed-admission-%d", time.Now().UnixNano())
 
 	_, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
-		fixture, requestID, strings.Repeat("b", 64), 4,
+		fixture, requestID, strings.Repeat("b", 64), 5,
 	))
 	require.NoError(t, err)
 	_, err = repo.Apply(ctx, &service.UsageBillingCommand{
 		RequestID: requestID, APIKeyID: fixture.apiKeyID,
-		APIKeyRateLimitCost: 3, EnterpriseEmployeeReservation: true,
-		EnterpriseEmployeeActualUSD: 3,
+		APIKeyRateLimitCost: 6, EnterpriseEmployeeReservation: true,
+		EnterpriseEmployeeActualUSD: 6,
 	})
 	require.NoError(t, err)
 
 	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
-		fixture, requestID+"-next", strings.Repeat("c", 64), 8,
+		fixture, requestID+"-pending", strings.Repeat("c", 64), 1,
 	))
 	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
 
-	overageID := requestID + "-overage"
+	require.NoError(t, repo.RecoverEnterpriseEmployeeUsage(ctx, fixture.apiKeyID))
+
+	var usage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
+	require.InDelta(t, 6, usage, 0.000000001)
+
 	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
-		fixture, overageID, strings.Repeat("d", 64), 2,
+		fixture, requestID+"-after-settlement", strings.Repeat("d", 64), 1,
 	))
-	require.NoError(t, err)
-	_, err = repo.Apply(ctx, &service.UsageBillingCommand{
-		RequestID: overageID, APIKeyID: fixture.apiKeyID,
-		APIKeyRateLimitCost: 3, EnterpriseEmployeeReservation: true,
-		EnterpriseEmployeeActualUSD: 3,
-	})
-	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeSettlementExceedsReservation)
+	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
 
 	var status string
+	var actual *float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		SELECT status FROM enterprise_employee_usage_reservations
-		WHERE request_id = $1 AND source_api_key_id = $2`, overageID, fixture.apiKeyID).Scan(&status))
-	require.Equal(t, "reserved", status)
-	var claims int
-	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM usage_billing_dedup
-		WHERE request_id = $1 AND api_key_id = $2`, overageID, fixture.apiKeyID).Scan(&claims))
-	require.Zero(t, claims, "overage must roll back the core dedup claim and all billing effects")
+		SELECT status, actual_usd
+		FROM enterprise_employee_usage_reservations
+		WHERE request_id = $1 AND source_api_key_id = $2`, requestID, fixture.apiKeyID).Scan(&status, &actual))
+	require.Equal(t, "settled", status)
+	require.NotNil(t, actual)
+	require.InDelta(t, 6, *actual, 0.000000001)
 }
 
 func TestEnterpriseEmployeeUsageSettlementFollowsSuccessorAndDoesNotPolluteAdvancedWindow(t *testing.T) {

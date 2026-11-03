@@ -25,66 +25,6 @@ func TestRequestMaxOutputTokens(t *testing.T) {
 	require.Equal(t, 0, requestMaxOutputTokens([]byte(`{}`)))
 }
 
-func TestTokenInflightEstimateMarksUnboundedEnterpriseCostShapes(t *testing.T) {
-	for _, test := range []struct {
-		name          string
-		body          string
-		wantContext   bool
-		wantSurcharge bool
-	}{
-		{
-			name:        "responses previous response",
-			body:        `{"model":"gpt-5.1","previous_response_id":"resp_123","max_output_tokens":128}`,
-			wantContext: true,
-		},
-		{
-			name:        "responses websocket function call output may infer previous response",
-			body:        `{"model":"gpt-5.1","input":[{"type":"function_call_output","call_id":"call_123","output":"ok"}],"max_output_tokens":128}`,
-			wantContext: true,
-		},
-		{
-			name:        "gemini cached content",
-			body:        `{"cachedContent":"cachedContents/example","generationConfig":{"maxOutputTokens":128}}`,
-			wantContext: true,
-		},
-		{
-			name:        "remote image URL",
-			body:        `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.test/source.png"}}]}],"max_tokens":128}`,
-			wantContext: true,
-		},
-		{
-			name:        "gemini remote media URI",
-			body:        `{"contents":[{"parts":[{"file_data":{"file_uri":"gs://bucket/source.png"}}]}],"generationConfig":{"maxOutputTokens":128}}`,
-			wantContext: true,
-		},
-		{
-			name: "inline image data remains bounded by request bytes",
-			body: `{"input":[{"type":"input_image","image_url":"data:image/png;base64,AQID"}],"max_output_tokens":128}`,
-		},
-		{
-			name:          "web search tool",
-			body:          `{"max_output_tokens":128,"tools":[{"type":"web_search_preview"}]}`,
-			wantSurcharge: true,
-		},
-		{
-			name:          "oauth web search history may inject tool",
-			body:          `{"max_output_tokens":128,"input":[{"type":"web_search_call","id":"ws_123"}],"tools":[{"type":"function"}]}`,
-			wantSurcharge: true,
-		},
-		{
-			name:          "image generation tool",
-			body:          `{"max_output_tokens":128,"tools":[{"type":"image_generation"}]}`,
-			wantSurcharge: true,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			req := tokenInflightEstimate("gpt-5.1", []byte(test.body))
-			require.Equal(t, test.wantContext, req.HasExternalContext)
-			require.Equal(t, test.wantSurcharge, req.HasUnboundedSurcharges)
-		})
-	}
-}
-
 type countingEstimator struct {
 	calls  int
 	cost   float64

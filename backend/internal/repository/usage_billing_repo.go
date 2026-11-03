@@ -88,7 +88,6 @@ func persistEnterpriseEmployeeCommittedSettlement(ctx context.Context, tx *sql.T
 		UPDATE enterprise_employee_usage_reservations
 		SET actual_usd = $1, status = 'committed', committed_at = NOW(), updated_at = NOW()
 		WHERE request_id = $2 AND source_api_key_id = $3 AND status = 'reserved'
-		  AND reserved_usd + 0.000000001 >= $1
 		RETURNING id`, cmd.EnterpriseEmployeeActualUSD, cmd.RequestID, cmd.APIKeyID).Scan(&reservationID)
 	if err == nil {
 		return nil
@@ -97,20 +96,16 @@ func persistEnterpriseEmployeeCommittedSettlement(ctx context.Context, tx *sql.T
 		return err
 	}
 
-	var reservedUSD float64
 	var status string
 	err = tx.QueryRowContext(ctx, `
-		SELECT reserved_usd, status
+		SELECT status
 		FROM enterprise_employee_usage_reservations
-		WHERE request_id = $1 AND source_api_key_id = $2`, cmd.RequestID, cmd.APIKeyID).Scan(&reservedUSD, &status)
+		WHERE request_id = $1 AND source_api_key_id = $2`, cmd.RequestID, cmd.APIKeyID).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.ErrEnterpriseEmployeeReservationNotFound
 	}
 	if err != nil {
 		return err
-	}
-	if status == enterpriseEmployeeReservationStatusReserved && cmd.EnterpriseEmployeeActualUSD > reservedUSD+0.000000001 {
-		return service.ErrEnterpriseEmployeeSettlementExceedsReservation
 	}
 	return service.ErrEnterpriseEmployeeReservationStateConflict
 }
@@ -362,10 +357,6 @@ func (r *usageBillingRepository) SettleEnterpriseEmployeeUsage(ctx context.Conte
 	} else if reservation.Status != enterpriseEmployeeReservationStatusReserved {
 		return nil, service.ErrEnterpriseEmployeeReservationStateConflict
 	}
-	if actualUSD > reservation.ReservedUSD+0.000000001 {
-		return nil, service.ErrEnterpriseEmployeeSettlementExceedsReservation
-	}
-
 	if actualUSD > 0 && targetAPIKeyID > 0 && targetUpstreamSubscriptionID == reservation.UpstreamUserSubscriptionID && currentAnchor.UTC().Equal(reservation.WeeklyWindowAnchor.UTC()) {
 		if _, err = tx.ExecContext(ctx, `
 			UPDATE api_keys

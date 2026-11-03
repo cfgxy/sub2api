@@ -465,12 +465,6 @@ type InflightEstimateRequest struct {
 	Units int
 	// SearchCalls 叠加的搜索次数（按分组 search_price_per_1k 计）。
 	SearchCalls int
-	// HasExternalContext indicates that the upstream can charge input tokens not
-	// represented by BodyBytes, such as a server-side response or cached context.
-	HasExternalContext bool
-	// HasUnboundedSurcharges indicates tool fees whose maximum invocation count
-	// cannot be proven from the request body.
-	HasUnboundedSurcharges bool
 	// 视频：分辨率与时长（秒）。
 	VideoResolution      string
 	VideoDurationSeconds int
@@ -594,20 +588,6 @@ func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, 
 		}
 	}
 	return computePeakAwareMultipliers(apiKey, rate, timezone.Now())
-}
-
-func (d inflightEstimateDeps) provenRates(ctx context.Context, apiKey *APIKey) (text, image float64) {
-	rate := 1.0
-	if d.cfg != nil && d.cfg.Default.RateMultiplier > 0 {
-		rate = d.cfg.Default.RateMultiplier
-	}
-	if apiKey != nil && apiKey.GroupID != nil && apiKey.Group != nil {
-		rate = apiKey.Group.RateMultiplier
-		if d.userGroupRate != nil && apiKey.User != nil {
-			rate = d.userGroupRate(ctx, apiKey.User.ID, *apiKey.GroupID, rate)
-		}
-	}
-	return rate * provenGroupPeakMultiplier(apiKey), resolveImageRateMultiplier(apiKey, rate)
 }
 
 func tokenCounts(cfg config.InflightReservationConfig, bodyBytes, maxTokens int) (int, int) {
@@ -789,213 +769,9 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 	return best, true
 }
 
-func maximumPositive(values ...float64) float64 {
-	max := 0.0
-	for _, value := range values {
-		if value > max && !math.IsNaN(value) && !math.IsInf(value, 0) {
-			max = value
-		}
-	}
-	return max
-}
-
-func provenTokenPrice(pricing *ModelPricing, input bool) float64 {
-	if pricing == nil {
-		return 0
-	}
-	if input {
-		return maximumPositive(
-			pricing.InputPricePerToken, pricing.InputPricePerTokenPriority,
-			pricing.ImageInputPricePerToken, pricing.CacheCreationPricePerToken,
-			pricing.CacheCreationPricePerTokenPriority, pricing.CacheReadPricePerToken,
-			pricing.CacheReadPricePerTokenPriority, pricing.CacheCreation5mPrice,
-			pricing.CacheCreation1hPrice, pricing.ImageCacheReadPricePerToken,
-		)
-	}
-	return maximumPositive(pricing.OutputPricePerToken, pricing.OutputPricePerTokenPriority, pricing.ImageOutputPricePerToken)
-}
-
-func provenPricingMultiplier(pricing *ModelPricing) float64 {
-	if pricing == nil {
-		return 1
-	}
-	serviceTier := maximumPositive(1, pricing.UltrafastMultiplier)
-	if pricing.FastMultiplier != nil {
-		serviceTier = maximumPositive(serviceTier, *pricing.FastMultiplier)
-	} else {
-		serviceTier = maximumPositive(serviceTier, 2)
-	}
-	if pricing.FlexMultiplier != nil {
-		serviceTier = maximumPositive(serviceTier, *pricing.FlexMultiplier)
-	}
-	longContext := maximumPositive(1, pricing.LongContextInputMultiplier, pricing.LongContextOutputMultiplier)
-	reasoning := 1.0
-	for _, multiplier := range pricing.ReasoningEffortMultipliers {
-		reasoning = maximumPositive(reasoning, multiplier)
-	}
-	// 服务档位、长上下文与推理等级在实际 token 账单中依次相乘；它们不是
-	// 互斥的候选项。预占必须采用可同时发生的最大组合，而不是其中最大单项。
-	return serviceTier * longContext * reasoning
-}
-
-func provenChannelTimeMultiplier(resolved *ResolvedPricing) float64 {
-	if resolved == nil || resolved.Source != PricingSourceChannel || resolved.channelPricing == nil ||
-		resolved.channelPricing.TimePricing == nil || validateChannelTimePricing(resolved.channelPricing.TimePricing) != nil {
-		return 1
-	}
-	multiplier := 1.0
-	for _, period := range resolved.channelPricing.TimePricing.Periods {
-		multiplier = maximumPositive(multiplier, period.Multiplier)
-	}
-	return multiplier
-}
-
-func provenGroupPeakMultiplier(apiKey *APIKey) float64 {
-	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType() || !apiKey.Group.PeakRateEnabled {
-		return 1
-	}
-	// 请求在高峰起止边界前后完成时，最终账务可能落在任一时段；预占按两者较高者。
-	return maximumPositive(1, apiKey.Group.PeakRateMultiplier)
-}
-
-// provenPricingVariants returns every token pricing shape that final billing can
-// select for a request. Selecting just the interval at BodyBytes is not a proof:
-// actual tokenization can land in any lower interval, and operator interval
-// prices are not required to be monotonic.
-func provenPricingVariants(resolved *ResolvedPricing, resolver *ModelPricingResolver, fallback *ModelPricing) []*ModelPricing {
-	if resolved == nil || resolver == nil {
-		if fallback == nil {
-			return nil
-		}
-		return []*ModelPricing{fallback}
-	}
-
-	variants := make([]*ModelPricing, 0, len(resolved.Intervals)+1)
-	if resolved.BasePricing != nil {
-		variants = append(variants, resolved.BasePricing)
-	}
-	for i := range resolved.Intervals {
-		pricing := intervalToModelPricing(&resolved.Intervals[i], resolved.BasePricing, resolved.channelPricing)
-		pricing.SupportsCacheBreakdown = resolved.SupportsCacheBreakdown
-		variants = append(variants, pricing)
-	}
-	return variants
-}
-
-func (d inflightEstimateDeps) estimateOneProvenMaximum(ctx context.Context, apiKey *APIKey, model string, req InflightEstimateRequest, textRate, imageRate float64) (float64, bool) {
-	var resolved *ResolvedPricing
-	if d.resolver != nil {
-		in := PricingInput{Model: model}
-		if apiKey != nil {
-			in.GroupID = apiKey.GroupID
-			in.Group = apiKey.Group
-		}
-		resolved = d.resolver.Resolve(ctx, in)
-	}
-	if req.Kind != InflightEstimateToken {
-		// 图片端点若最终会按 token 账单，当前请求字段无法证明图像编码后的
-		// token 上界；不得退回字节/默认值估算后把它称为已证明的预占。
-		if req.Kind == InflightEstimateImage && (resolved == nil || resolved.Mode == "" || resolved.Mode == BillingModeToken) {
-			return 0, false
-		}
-		if req.Kind == InflightEstimateAudio && !strings.EqualFold(req.AudioMode, "tts") {
-			return 0, false
-		}
-		if req.Kind == InflightEstimateVideo && req.VideoDurationSeconds <= 0 {
-			return 0, false
-		}
-		cost := d.estimateOne(ctx, apiKey, model, req, textRate, imageRate)
-		return cost, validCost(cost)
-	}
-	if req.MaxTokens <= 0 || req.BodyBytes <= 0 {
-		return 0, false
-	}
-	if resolved != nil && resolved.Mode != "" && resolved.Mode != BillingModeToken {
-		cost := d.estimateOne(ctx, apiKey, model, req, textRate, imageRate)
-		return cost, validCost(cost)
-	}
-	var fallbackPricing *ModelPricing
-	if resolved != nil && d.resolver != nil {
-		// Body bytes are a strict upper bound for tokenizer output. Do not use the
-		// normal estimator's bytes/4 approximation or configured caps here.
-		fallbackPricing = d.resolver.GetIntervalPricing(resolved, req.BodyBytes)
-	}
-	if fallbackPricing == nil && d.billing != nil {
-		fallbackPricing, _ = d.billing.GetModelPricing(model)
-	}
-	variants := provenPricingVariants(resolved, d.resolver, fallbackPricing)
-	if len(variants) == 0 {
-		return 0, false
-	}
-	cost := 0.0
-	for _, pricing := range variants {
-		inputPrice := provenTokenPrice(pricing, true)
-		outputPrice := provenTokenPrice(pricing, false)
-		if inputPrice <= 0 || outputPrice <= 0 {
-			return 0, false
-		}
-		timeMultiplier := provenChannelTimeMultiplier(resolved)
-		if resolved != nil && resolved.Source == PricingSourceLiteLLM && isDeepSeekModel(model) {
-			timeMultiplier *= 2 // DeepSeek 峰时官方价最高为低谷价的两倍。
-		}
-		candidate := (float64(req.BodyBytes)*inputPrice + float64(req.MaxTokens)*outputPrice) * textRate * provenPricingMultiplier(pricing) * timeMultiplier
-		if candidate > cost {
-			cost = candidate
-		}
-	}
-	if req.SearchCalls > 0 && d.billing != nil {
-		if search := d.billing.CalculateSearchCost(req.SearchCalls, groupSearchPricePer1kFromAPIKey(apiKey), textRate); search != nil {
-			cost += search.ActualCost
-		}
-	}
-	return cost, validCost(cost)
-}
-
-// estimateProvenMaximum returns a cost bound that does not depend on configured
-// estimator caps or implicit output defaults. Any unpriced routing candidate or
-// unbounded request shape makes the result unknown.
-func (d inflightEstimateDeps) estimateProvenMaximum(ctx context.Context, apiKey *APIKey, req InflightEstimateRequest) (float64, bool) {
-	if apiKey == nil || apiKey.User == nil || strings.TrimSpace(req.Model) == "" {
-		return 0, false
-	}
-	if req.HasExternalContext || req.HasUnboundedSurcharges {
-		return 0, false
-	}
-	textRate, imageRate := d.provenRates(ctx, apiKey)
-	if textRate <= 0 && imageRate <= 0 {
-		return 0, true
-	}
-	primary, fallbacks, upstreamInput := inflightBillingModelCandidates(ctx, d, apiKey, req.Model)
-	models := append(append([]string{}, primary...), fallbacks...)
-	if d.accountMappedModels == nil {
-		return 0, false
-	}
-	models = append(models, d.accountMappedModels(ctx, apiKey, upstreamInput)...)
-	seen := make(map[string]struct{}, len(models))
-	best := 0.0
-	for _, model := range models {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			continue
-		}
-		if _, exists := seen[model]; exists {
-			continue
-		}
-		seen[model] = struct{}{}
-		cost, ok := d.estimateOneProvenMaximum(ctx, apiKey, model, req, textRate, imageRate)
-		if !ok {
-			return 0, false
-		}
-		if cost > best {
-			best = cost
-		}
-	}
-	return best, validCost(best)
-}
-
 func buildEnterpriseEmployeeReservationFingerprint(apiKeyID int64, req InflightEstimateRequest, reservedUSD float64) string {
-	raw := fmt.Sprintf("%d|%s|%d|%d|%d|%d|%d|%t|%t|%s|%0.8f", apiKeyID, strings.TrimSpace(req.Model),
-		req.BodyBytes, req.MaxTokens, req.Kind, req.Units, req.SearchCalls, req.HasExternalContext, req.HasUnboundedSurcharges,
+	raw := fmt.Sprintf("%d|%s|%d|%d|%d|%d|%d|%s|%0.8f", apiKeyID, strings.TrimSpace(req.Model),
+		req.BodyBytes, req.MaxTokens, req.Kind, req.Units, req.SearchCalls,
 		strings.TrimSpace(req.RequestPayloadHash), QuantizeUsageBillingAmount(reservedUSD))
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
@@ -1013,9 +789,9 @@ func reserveEnterpriseEmployeeUsage(ctx context.Context, repo UsageBillingReposi
 	if exactAmount != nil {
 		maximum = QuantizeUsageBillingAmount(*exactAmount)
 	} else {
-		var proven bool
-		maximum, proven = deps.estimateProvenMaximum(ctx, apiKey, req)
-		if !proven {
+		var priced bool
+		maximum, priced = deps.estimate(ctx, apiKey, req)
+		if !priced {
 			return nil, ErrBillingServiceUnavailable.WithCause(ErrEnterpriseEmployeeMaximumCostUnknown)
 		}
 	}

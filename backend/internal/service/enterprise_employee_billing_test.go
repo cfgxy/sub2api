@@ -97,32 +97,6 @@ func TestEnterpriseEmployeeReservationRequiresProvenBoundAndAcceptsExactCharge(t
 	require.InDelta(t, 1.25, repo.lastReserve.ReservedUSD, 0.000000001)
 }
 
-func TestEnterpriseEmployeeReservationRejectsUnboundedRequestShapes(t *testing.T) {
-	apiKey := &APIKey{ID: 9, User: &User{ID: 10}, EnterpriseEmployeeWeeklyLimit: true, Group: &Group{RateMultiplier: 1}}
-	repo := &enterpriseEmployeeBillingRepoStub{}
-	deps := inflightEstimateDeps{}
-
-	for _, test := range []struct {
-		name string
-		req  InflightEstimateRequest
-	}{
-		{
-			name: "external context",
-			req:  InflightEstimateRequest{Model: "claude-sonnet-4-5", BodyBytes: 32, MaxTokens: 16, Kind: InflightEstimateToken, HasExternalContext: true},
-		},
-		{
-			name: "tool surcharge",
-			req:  InflightEstimateRequest{Model: "claude-sonnet-4-5", BodyBytes: 32, MaxTokens: 16, Kind: InflightEstimateToken, HasUnboundedSurcharges: true},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := reserveEnterpriseEmployeeUsage(context.Background(), repo, deps, apiKey, test.req, nil)
-			require.ErrorIs(t, err, ErrEnterpriseEmployeeMaximumCostUnknown)
-		})
-	}
-	require.Zero(t, repo.reserveCalls)
-}
-
 func TestEnterpriseEmployeeSettlementRetriesAfterCoreBillingDedup(t *testing.T) {
 	repo := &enterpriseEmployeeBillingRepoStub{settleErr: errors.New("settlement unavailable")}
 	employee := newEnterpriseEmployeeUsageReservation(repo, &EnterpriseEmployeeUsageReservationResult{
