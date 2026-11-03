@@ -138,6 +138,42 @@ func TestEnterpriseEmployeeUnknownCostReservationSerializesAndSettlesActualCost(
 	require.InDelta(t, 6, usage, 0.000000001)
 }
 
+func TestEnterpriseEmployeeUnknownCostReservationBlocksKnownCostUntilSettled(t *testing.T) {
+	ctx := context.Background()
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 0)
+	repo := NewUsageBillingRepository(nil, integrationDB).(*usageBillingRepository)
+
+	unknownRequestID := fmt.Sprintf("reservation-unknown-before-known-%d", time.Now().UnixNano())
+	_, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
+		fixture, unknownRequestID, strings.Repeat("a", 64), 4,
+	))
+	require.NoError(t, err)
+
+	known := enterpriseEmployeeReservationCommand(
+		fixture, fmt.Sprintf("reservation-known-after-unknown-%d", time.Now().UnixNano()), strings.Repeat("b", 64), 6,
+	)
+	known.MaximumCostKnown = true
+	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, known)
+	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
+
+	_, err = repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:                     unknownRequestID,
+		APIKeyID:                      fixture.apiKeyID,
+		APIKeyRateLimitCost:           6,
+		EnterpriseEmployeeReservation: true,
+		EnterpriseEmployeeActualUSD:   6,
+	})
+	require.NoError(t, err)
+
+	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, known)
+	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
+
+	require.NoError(t, repo.RecoverEnterpriseEmployeeUsage(ctx, fixture.apiKeyID))
+	var usage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
+	require.InDelta(t, 6, usage, 0.000000001)
+}
+
 func TestEnterpriseEmployeeUsageReservationIdempotentLifecycleAndConflicts(t *testing.T) {
 	ctx := context.Background()
 	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 1)

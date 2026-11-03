@@ -236,18 +236,19 @@ func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Cont
 		return nil, existingErr
 	}
 
-	if !cmd.MaximumCostKnown {
-		var inflight int
-		if err = tx.QueryRowContext(ctx, `
-			SELECT COUNT(*)
+	var hasBlockingInflight bool
+	if err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
 			FROM enterprise_employee_usage_reservations
 			WHERE employee_id = $1 AND enterprise_subscription_id = $2
-			  AND weekly_window_anchor = $3 AND status IN ('reserved', 'committed')`, employeeID, enterpriseSubscriptionID, anchor).Scan(&inflight); err != nil {
-			return nil, err
-		}
-		if inflight > 0 {
-			return nil, service.ErrAPIKeyRateLimit7dExceeded
-		}
+			  AND weekly_window_anchor = $3 AND status IN ('reserved', 'committed')
+			  AND ($4 = FALSE OR maximum_cost_known = FALSE)
+		)`, employeeID, enterpriseSubscriptionID, anchor, cmd.MaximumCostKnown).Scan(&hasBlockingInflight); err != nil {
+		return nil, err
+	}
+	if hasBlockingInflight {
+		return nil, service.ErrAPIKeyRateLimit7dExceeded
 	}
 
 	var reserved float64
@@ -562,19 +563,6 @@ func loadEnterpriseEmployeeReservation(ctx context.Context, tx *sql.Tx, requestI
 		&result.MaximumCostKnown, &result.ActualUSD, &result.Status,
 	)
 	return result, err
-}
-
-func usageBillingClaimExists(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64) (bool, error) {
-	var exists int
-	err := tx.QueryRowContext(ctx, `
-		SELECT 1 FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2
-		UNION ALL
-		SELECT 1 FROM usage_billing_dedup_archive WHERE request_id = $1 AND api_key_id = $2
-		LIMIT 1`, requestID, apiKeyID).Scan(&exists)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 func absFloat(v float64) float64 {
