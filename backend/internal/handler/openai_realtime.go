@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -66,11 +68,37 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 	}
 	defer client.CloseNow()
 	// Realtime GA sends session.created before clients need to send a frame.
-	// Model-bearing client events are enforced by realtimeModelBoundFrameConn.
-	requestPayloadHash := service.HashUsageRequestPayload(nil)
+	// The first auditable client event supplies the request hash; event payloads
+	// are never logged or retained after the audit callback returns.
+	var auditMu sync.Mutex
+	auditTurn := 0
+	requestPayloadHash := ""
+	auditClientFrame := func(frameCtx context.Context, payload []byte) error {
+		auditMu.Lock()
+		defer auditMu.Unlock()
+		auditTurn++
+		if requestPayloadHash == "" {
+			requestPayloadHash = service.HashUsageRequestPayload(payload)
+		}
+		c.Set(securityAuditWSTurnContextKey, auditTurn)
+		stage := "subsequent_turn"
+		if auditTurn == 1 {
+			stage = "first_turn"
+		}
+		if decision := h.checkSecurityAuditStage(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, model, payload, stage); decision != nil && !decision.AllowNextStage {
+			writeSecurityAuditWSError(frameCtx, client, decision)
+			return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
+		}
+		return nil
+	}
+	requestHash := func() string {
+		auditMu.Lock()
+		defer auditMu.Unlock()
+		return requestPayloadHash
+	}
 	attribution := realtimeEnterpriseAttribution(apiKey, subscription)
 	account := selection.Account
-	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model,
+	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model, auditClientFrame,
 		func(turn openaiwsv2.RelayTurnResult) {
 			if !realtimeUsageHasTokens(turn.Usage) {
 				return
@@ -98,7 +126,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 				UpstreamEndpoint:      "/v1/realtime",
 				UserAgent:             c.GetHeader("User-Agent"),
 				IPAddress:             ip.GetClientIP(c),
-				RequestPayloadHash:    requestPayloadHash,
+				RequestPayloadHash:    requestHash(),
 				APIKeyService:         h.apiKeyService,
 				QuotaPlatform:         service.QuotaPlatform(c.Request.Context(), apiKey),
 				PricingAt:             turn.StartedAt,
@@ -109,6 +137,11 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 		})
 	if proxyErr == nil || openAIWSIngressEndedByClient(proxyErr) {
 		_ = client.Close(coderws.StatusNormalClosure, "")
+		return
+	}
+	var closeErr *service.OpenAIWSClientCloseError
+	if errors.As(proxyErr, &closeErr) {
+		closeOpenAIClientWS(client, closeErr.StatusCode(), closeErr.Reason())
 		return
 	}
 	reqLog.Warn("official_realtime_proxy_failed", zap.Int64("account_id", account.ID), zap.Error(proxyErr))
@@ -254,19 +287,21 @@ func realtimeUsage(usage openaiwsv2.Usage) service.OpenAIUsage {
 		InputTokens:              usage.InputTokens,
 		ImageInputTokens:         usage.ImageInputTokens,
 		AudioInputTokens:         usage.AudioInputTokens,
+		ImageCacheReadTokens:     usage.ImageCacheReadTokens,
+		AudioCacheReadTokens:     usage.AudioCacheReadTokens,
 		OutputTokens:             usage.OutputTokens,
 		CacheCreationInputTokens: usage.CacheCreationInputTokens,
 		CacheReadInputTokens:     usage.CacheReadInputTokens,
 		ImageOutputTokens:        usage.ImageOutputTokens,
 		AudioOutputTokens:        usage.AudioOutputTokens,
-		TokenBucketsSeparated:    true,
+		TokenBucketsSeparated:    usage.TokenBucketsSeparated,
 	}
 }
 
 func realtimeUsageHasTokens(usage openaiwsv2.Usage) bool {
 	return usage.InputTokens > 0 || usage.OutputTokens > 0 ||
-		usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0 ||
-		usage.AudioInputTokens > 0 || usage.AudioOutputTokens > 0 ||
+		usage.ImageInputTokens > 0 || usage.ImageCacheReadTokens > 0 || usage.ImageOutputTokens > 0 ||
+		usage.AudioInputTokens > 0 || usage.AudioCacheReadTokens > 0 || usage.AudioOutputTokens > 0 ||
 		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0
 }
 

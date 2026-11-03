@@ -449,7 +449,9 @@ func TestOpenAIGatewayServiceRecordUsage_PersistsSeparatedRealtimeAudioBuckets(t
 	usage := OpenAIUsage{
 		InputTokens:           20,
 		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
 		AudioInputTokens:      30,
+		AudioCacheReadTokens:  20,
 		CacheReadInputTokens:  40,
 		OutputTokens:          35,
 		ImageOutputTokens:     15,
@@ -480,10 +482,15 @@ func TestOpenAIGatewayServiceRecordUsage_PersistsSeparatedRealtimeAudioBuckets(t
 	require.Equal(t, 30, usageRepo.lastLog.AudioInputTokens)
 	require.Equal(t, 30, usageRepo.lastLog.AudioOutputTokens)
 	require.Equal(t, 40, usageRepo.lastLog.CacheReadTokens)
+	require.Equal(t, map[string]int{
+		"audio_cache_read_tokens": 20,
+		"image_cache_read_tokens": 10,
+	}, usageRepo.lastLog.ImageSizeBreakdown)
 
 	expected, err := svc.billingService.CalculateCost("gpt-5.1", UsageTokens{
 		InputTokens:           20,
 		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
 		AudioInputTokens:      30,
 		OutputTokens:          35,
 		ImageOutputTokens:     15,

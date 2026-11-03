@@ -1254,7 +1254,7 @@ func TestRelay_GARealtimeUsageSeparatesAudioImageAndCachedTokens(t *testing.T) {
 	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
 		{
 			msgType: coderws.MessageText,
-			payload: []byte(`{"type":"response.done","response":{"id":"resp_ga","usage":{"input_tokens":100,"output_tokens":80,"input_token_details":{"text_tokens":20,"audio_tokens":30,"image_tokens":10,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_ga","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40,"cached_tokens_details":{"text_tokens":10,"audio_tokens":20,"image_tokens":10}},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
 		},
 	}, true)
 
@@ -1268,13 +1268,16 @@ func TestRelay_GARealtimeUsageSeparatesAudioImageAndCachedTokens(t *testing.T) {
 		},
 	})
 	require.Nil(t, relayExit)
-	require.Equal(t, 20, result.Usage.InputTokens)
-	require.Equal(t, 30, result.Usage.AudioInputTokens)
+	require.Equal(t, 60, result.Usage.InputTokens)
+	require.Equal(t, 22, result.Usage.AudioInputTokens)
 	require.Equal(t, 10, result.Usage.ImageInputTokens)
 	require.Equal(t, 40, result.Usage.CacheReadInputTokens)
+	require.Equal(t, 20, result.Usage.AudioCacheReadTokens)
+	require.Equal(t, 10, result.Usage.ImageCacheReadTokens)
 	require.Equal(t, 35, result.Usage.OutputTokens)
 	require.Equal(t, 30, result.Usage.AudioOutputTokens)
 	require.Equal(t, 15, result.Usage.ImageOutputTokens)
+	require.True(t, result.Usage.TokenBucketsSeparated)
 	require.Equal(t, result.Usage, turn.Usage)
 }
 
@@ -1285,7 +1288,7 @@ func TestRelay_GARealtimeUsagePrefersSingularDetailsOverResponsesCompatibilityFi
 	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
 		{
 			msgType: coderws.MessageText,
-			payload: []byte(`{"type":"response.done","response":{"id":"resp_detail_precedence","usage":{"input_tokens":100,"output_tokens":80,"input_token_details":{"text_tokens":20,"audio_tokens":30,"image_tokens":10,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15},"input_tokens_details":{"cached_tokens":99,"image_tokens":99},"output_tokens_details":{"image_tokens":99}}}}`),
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_detail_precedence","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40,"cached_tokens_details":{"text_tokens":10,"audio_tokens":20,"image_tokens":10}},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15},"input_tokens_details":{"cached_tokens":99,"image_tokens":99},"output_tokens_details":{"image_tokens":99}}}}`),
 		},
 	}, true)
 
@@ -1294,14 +1297,61 @@ func TestRelay_GARealtimeUsagePrefersSingularDetailsOverResponsesCompatibilityFi
 	})
 	require.Nil(t, relayExit)
 	require.Equal(t, Usage{
-		InputTokens:          20,
-		ImageInputTokens:     10,
-		AudioInputTokens:     30,
-		OutputTokens:         35,
-		CacheReadInputTokens: 40,
-		ImageOutputTokens:    15,
-		AudioOutputTokens:    30,
+		InputTokens:           60,
+		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
+		AudioInputTokens:      22,
+		AudioCacheReadTokens:  20,
+		OutputTokens:          35,
+		CacheReadInputTokens:  40,
+		ImageOutputTokens:     15,
+		AudioOutputTokens:     30,
+		TokenBucketsSeparated: true,
 	}, result.Usage)
+}
+
+func TestRelay_GARealtimeUsageFallsBackToAggregateWithoutCachedTokenDetails(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_missing_cache_details","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
+		},
+	}, true)
+
+	result, relayExit := Relay(context.Background(), clientConn, upstreamConn, nil, RelayOptions{
+		StartClientAfterFirstDownstream: true,
+	})
+	require.Nil(t, relayExit)
+	require.Equal(t, 132, result.Usage.InputTokens)
+	require.Equal(t, 40, result.Usage.CacheReadInputTokens)
+	require.Zero(t, result.Usage.ImageInputTokens)
+	require.Zero(t, result.Usage.AudioInputTokens)
+	require.False(t, result.Usage.TokenBucketsSeparated)
+}
+
+func TestRelay_GARealtimeUsageAggregateIsNotSeparatedForMixedTurns(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_separated","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40,"cached_tokens_details":{"text_tokens":10,"audio_tokens":20,"image_tokens":10}},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
+		},
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.done","response":{"id":"resp_aggregate","usage":{"input_tokens":132,"output_tokens":80,"input_token_details":{"text_tokens":70,"audio_tokens":42,"image_tokens":20,"cached_tokens":40},"output_token_details":{"text_tokens":35,"audio_tokens":30,"image_tokens":15}}}}`),
+		},
+	}, true)
+
+	result, relayExit := Relay(context.Background(), clientConn, upstreamConn, nil, RelayOptions{
+		StartClientAfterFirstDownstream: true,
+	})
+	require.Nil(t, relayExit)
+	require.False(t, result.Usage.TokenBucketsSeparated)
 }
 
 func TestRelay_DeduplicatesRepeatedTerminalResponse(t *testing.T) {
@@ -1322,7 +1372,7 @@ func TestRelay_DeduplicatesRepeatedTerminalResponse(t *testing.T) {
 		},
 	})
 	require.Nil(t, relayExit)
-	require.Equal(t, Usage{InputTokens: 3, OutputTokens: 2}, result.Usage)
+	require.Equal(t, Usage{InputTokens: 3, OutputTokens: 2, TokenBucketsSeparated: true}, result.Usage)
 	require.Len(t, turns, 1)
 	require.Equal(t, "resp_once", turns[0].RequestID)
 }

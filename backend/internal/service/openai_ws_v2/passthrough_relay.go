@@ -28,11 +28,16 @@ type Usage struct {
 	InputTokens              int
 	ImageInputTokens         int
 	AudioInputTokens         int
+	ImageCacheReadTokens     int
+	AudioCacheReadTokens     int
 	OutputTokens             int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 	ImageOutputTokens        int
 	AudioOutputTokens        int
+	// TokenBucketsSeparated is true only when every input and output bucket is
+	// mutually exclusive. Compatibility payloads retain aggregate totals.
+	TokenBucketsSeparated bool
 }
 
 type RelayResult struct {
@@ -104,6 +109,7 @@ type RelayTraceEvent struct {
 
 type relayState struct {
 	usage                   Usage
+	hasFinalizedTurnUsage   bool
 	turnUsage               Usage
 	turnWroteDownstream     atomic.Bool
 	requestModelMu          sync.RWMutex
@@ -1134,6 +1140,7 @@ func parseUsageAndAccumulate(
 	// relay remains backwards compatible.
 	realtimeInputDetails := usageResult.Get("input_token_details")
 	realtimeOutputDetails := usageResult.Get("output_token_details")
+	hasRealtimeDetails := realtimeInputDetails.Exists() || realtimeOutputDetails.Exists()
 	cachedResult := realtimeInputDetails.Get("cached_tokens")
 	if !cachedResult.Exists() {
 		cachedResult = usageResult.Get("input_tokens_details.cached_tokens")
@@ -1181,19 +1188,18 @@ func parseUsageAndAccumulate(
 	}
 	audioInputTokens := max(int(realtimeInputDetails.Get("audio_tokens").Int()), 0)
 	audioOutputTokens := max(int(realtimeOutputDetails.Get("audio_tokens").Int()), 0)
-	if realtimeInputDetails.Exists() {
-		if text := realtimeInputDetails.Get("text_tokens"); text.Exists() {
-			inputTokens = max(int(text.Int()), 0)
-		} else {
-			inputTokens = max(inputTokens-int(imageInputTokens)-audioInputTokens-cachedTokens, 0)
-		}
-	}
-	if realtimeOutputDetails.Exists() {
-		if text := realtimeOutputDetails.Get("text_tokens"); text.Exists() {
-			outputTokens = max(int(text.Int()), 0)
-		} else {
-			outputTokens = max(outputTokens-int(imageTokens)-audioOutputTokens, 0)
-		}
+	separatedInput, uncachedText, uncachedImage, uncachedAudio, cachedImage, cachedAudio := false, 0, 0, 0, 0, 0
+	separatedOutput, textOutputTokens := false, 0
+	if hasRealtimeDetails {
+		separatedInput, uncachedText, uncachedImage, uncachedAudio, cachedImage, cachedAudio = realtimeUsageInputBuckets(
+			inputTokens,
+			realtimeInputDetails,
+			cachedTokens,
+		)
+		separatedOutput, textOutputTokens = realtimeUsageOutputBuckets(
+			outputTokens,
+			realtimeOutputDetails,
+		)
 	}
 	reasoningTokens := usageResult.Get("output_tokens_details.reasoning_tokens").Int()
 	if reasoningTokens == 0 {
@@ -1214,6 +1220,23 @@ func parseUsageAndAccumulate(
 		ImageOutputTokens:        int(imageTokens),
 		AudioOutputTokens:        audioOutputTokens,
 	}
+	// cached_tokens is a subset of input_tokens. Only promote a GA payload to
+	// mutually exclusive buckets when cached_tokens_details proves how that
+	// subset is distributed across text, image, and audio. Without it, preserve
+	// aggregate input_tokens so downstream billing can safely charge the total
+	// once instead of guessing a modality split.
+	if separatedInput && separatedOutput {
+		parsedUsage.InputTokens = uncachedText
+		parsedUsage.ImageInputTokens = uncachedImage
+		parsedUsage.AudioInputTokens = uncachedAudio
+		parsedUsage.ImageCacheReadTokens = cachedImage
+		parsedUsage.AudioCacheReadTokens = cachedAudio
+		parsedUsage.OutputTokens = textOutputTokens
+		parsedUsage.TokenBucketsSeparated = true
+	} else if hasRealtimeDetails && !separatedInput {
+		parsedUsage.ImageInputTokens = 0
+		parsedUsage.AudioInputTokens = 0
+	}
 
 	if isTerminalEvent(strings.TrimSpace(eventType)) {
 		if relayUsageHasTokens(parsedUsage) || !relayUsageHasTokens(state.turnUsage) {
@@ -1226,11 +1249,54 @@ func parseUsageAndAccumulate(
 	return parsedUsage
 }
 
+// realtimeUsageInputBuckets returns non-overlapping input buckets for a GA
+// Realtime usage payload. cached_tokens_details is mandatory when there is a
+// cache hit because cached_tokens is a subset, not an additional bucket.
+func realtimeUsageInputBuckets(total int, details gjson.Result, cached int) (ok bool, text, image, audio, cachedImage, cachedAudio int) {
+	if !details.Exists() || total < 0 || cached < 0 {
+		return false, 0, 0, 0, 0, 0
+	}
+	textTotal := max(int(details.Get("text_tokens").Int()), 0)
+	imageTotal := max(int(details.Get("image_tokens").Int()), 0)
+	audioTotal := max(int(details.Get("audio_tokens").Int()), 0)
+	if textTotal+imageTotal+audioTotal != total {
+		return false, 0, 0, 0, 0, 0
+	}
+	if cached == 0 {
+		return true, textTotal, imageTotal, audioTotal, 0, 0
+	}
+	cachedDetails := details.Get("cached_tokens_details")
+	if !cachedDetails.Exists() {
+		return false, 0, 0, 0, 0, 0
+	}
+	cachedText := max(int(cachedDetails.Get("text_tokens").Int()), 0)
+	cachedImage = max(int(cachedDetails.Get("image_tokens").Int()), 0)
+	cachedAudio = max(int(cachedDetails.Get("audio_tokens").Int()), 0)
+	if cachedText+cachedImage+cachedAudio != cached ||
+		cachedText > textTotal || cachedImage > imageTotal || cachedAudio > audioTotal {
+		return false, 0, 0, 0, 0, 0
+	}
+	return true, textTotal - cachedText, imageTotal - cachedImage, audioTotal - cachedAudio, cachedImage, cachedAudio
+}
+
+func realtimeUsageOutputBuckets(total int, details gjson.Result) (bool, int) {
+	if !details.Exists() || total < 0 {
+		return false, 0
+	}
+	text := max(int(details.Get("text_tokens").Int()), 0)
+	image := max(int(details.Get("image_tokens").Int()), 0)
+	audio := max(int(details.Get("audio_tokens").Int()), 0)
+	if text+image+audio != total {
+		return false, 0
+	}
+	return true, text
+}
+
 func relayUsageHasTokens(usage Usage) bool {
 	return usage.InputTokens > 0 || usage.OutputTokens > 0 ||
 		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0 ||
-		usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0 ||
-		usage.AudioInputTokens > 0 || usage.AudioOutputTokens > 0
+		usage.ImageInputTokens > 0 || usage.ImageCacheReadTokens > 0 || usage.ImageOutputTokens > 0 ||
+		usage.AudioInputTokens > 0 || usage.AudioCacheReadTokens > 0 || usage.AudioOutputTokens > 0
 }
 
 func mergeRelayUsageNonZero(dst *Usage, src Usage) {
@@ -1252,14 +1318,23 @@ func mergeRelayUsageNonZero(dst *Usage, src Usage) {
 	if src.ImageInputTokens > 0 {
 		dst.ImageInputTokens = src.ImageInputTokens
 	}
+	if src.ImageCacheReadTokens > 0 {
+		dst.ImageCacheReadTokens = src.ImageCacheReadTokens
+	}
 	if src.ImageOutputTokens > 0 {
 		dst.ImageOutputTokens = src.ImageOutputTokens
 	}
 	if src.AudioInputTokens > 0 {
 		dst.AudioInputTokens = src.AudioInputTokens
 	}
+	if src.AudioCacheReadTokens > 0 {
+		dst.AudioCacheReadTokens = src.AudioCacheReadTokens
+	}
 	if src.AudioOutputTokens > 0 {
 		dst.AudioOutputTokens = src.AudioOutputTokens
+	}
+	if src.TokenBucketsSeparated {
+		dst.TokenBucketsSeparated = true
 	}
 }
 
@@ -1270,12 +1345,21 @@ func finalizeRelayTurnUsage(state *relayState) Usage {
 	turnUsage := state.turnUsage
 	state.usage.InputTokens += turnUsage.InputTokens
 	state.usage.ImageInputTokens += turnUsage.ImageInputTokens
+	state.usage.ImageCacheReadTokens += turnUsage.ImageCacheReadTokens
 	state.usage.OutputTokens += turnUsage.OutputTokens
 	state.usage.CacheCreationInputTokens += turnUsage.CacheCreationInputTokens
 	state.usage.CacheReadInputTokens += turnUsage.CacheReadInputTokens
 	state.usage.ImageOutputTokens += turnUsage.ImageOutputTokens
 	state.usage.AudioInputTokens += turnUsage.AudioInputTokens
+	state.usage.AudioCacheReadTokens += turnUsage.AudioCacheReadTokens
 	state.usage.AudioOutputTokens += turnUsage.AudioOutputTokens
+	if !state.hasFinalizedTurnUsage {
+		state.usage.TokenBucketsSeparated = turnUsage.TokenBucketsSeparated
+		state.hasFinalizedTurnUsage = true
+	} else {
+		// 汇总结果只有在每个已结束回合都已验证为互斥桶时才保持该标志。
+		state.usage.TokenBucketsSeparated = state.usage.TokenBucketsSeparated && turnUsage.TokenBucketsSeparated
+	}
 	state.turnUsage = Usage{}
 	return turnUsage
 }

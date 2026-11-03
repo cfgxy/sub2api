@@ -55,8 +55,9 @@ func (c realtimeFrameConn) Close() error {
 // both response.create.model and session.update.session.model, so validating
 // only the HTTP query would allow a client to switch models after admission.
 type realtimeModelBoundFrameConn struct {
-	upstream openaiwsv2.FrameConn
-	model    string
+	upstream            openaiwsv2.FrameConn
+	model               string
+	beforeClientForward func(ctx context.Context, payload []byte) error
 }
 
 func (c realtimeModelBoundFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
@@ -66,6 +67,11 @@ func (c realtimeModelBoundFrameConn) ReadFrame(ctx context.Context) (coderws.Mes
 	}
 	if err := ValidateRealtimeClientFrameModel(payload, c.model); err != nil {
 		return messageType, nil, err
+	}
+	if c.beforeClientForward != nil {
+		if err := c.beforeClientForward(ctx, payload); err != nil {
+			return messageType, nil, err
+		}
 	}
 	return messageType, payload, nil
 }
@@ -170,6 +176,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeWebSocket(
 	client *coderws.Conn,
 	account *Account,
 	model string,
+	beforeClientFrame func(ctx context.Context, payload []byte) error,
 	onTurnComplete func(openaiwsv2.RelayTurnResult),
 ) error {
 	if client == nil {
@@ -201,7 +208,11 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeWebSocket(
 	if !ok {
 		return errors.New("official realtime transport does not support raw frames")
 	}
-	clientFrames := realtimeModelBoundFrameConn{upstream: realtimeFrameConn{conn: client}, model: model}
+	clientFrames := realtimeModelBoundFrameConn{
+		upstream:            realtimeFrameConn{conn: client},
+		model:               model,
+		beforeClientForward: beforeClientFrame,
+	}
 	_, relayExit := openaiwsv2.Relay(ctx, clientFrames, upstreamFrames, nil, openaiwsv2.RelayOptions{
 		StartClientAfterFirstDownstream: true,
 		OnTurnComplete:                  onTurnComplete,

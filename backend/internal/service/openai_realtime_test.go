@@ -1,11 +1,43 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"testing"
 
+	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
+
+	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 )
+
+type realtimeTestFrameConn struct {
+	frames []struct {
+		messageType coderws.MessageType
+		payload     []byte
+	}
+}
+
+func (c *realtimeTestFrameConn) ReadFrame(context.Context) (coderws.MessageType, []byte, error) {
+	if len(c.frames) == 0 {
+		return coderws.MessageText, nil, io.EOF
+	}
+	frame := c.frames[0]
+	c.frames = c.frames[1:]
+	return frame.messageType, append([]byte(nil), frame.payload...), nil
+}
+
+func (c *realtimeTestFrameConn) WriteFrame(context.Context, coderws.MessageType, []byte) error {
+	return nil
+}
+
+func (c *realtimeTestFrameConn) Close() error {
+	return nil
+}
+
+var _ openaiwsv2.FrameConn = (*realtimeTestFrameConn)(nil)
 
 func TestOfficialRealtimeCapabilityRequiresOpenAIAPIKey(t *testing.T) {
 	t.Parallel()
@@ -76,6 +108,58 @@ func TestValidateRealtimeClientFrameModel(t *testing.T) {
 		"gpt-realtime",
 	))
 	require.Error(t, ValidateRealtimeClientFrameModel([]byte(`not json`), "gpt-realtime"))
+}
+
+func TestRealtimeModelBoundFrameConnAuditsValidatedClientFrames(t *testing.T) {
+	t.Parallel()
+
+	frames := &realtimeTestFrameConn{frames: []struct {
+		messageType coderws.MessageType
+		payload     []byte
+	}{
+		{messageType: coderws.MessageText, payload: []byte(`{"type":"input_audio_buffer.append","audio":"not-recorded"}`)},
+		{messageType: coderws.MessageText, payload: []byte(`{"type":"response.create","model":"gpt-realtime"}`)},
+	}}
+	var audited [][]byte
+	conn := realtimeModelBoundFrameConn{
+		upstream: frames,
+		model:    "gpt-realtime",
+		beforeClientForward: func(_ context.Context, payload []byte) error {
+			audited = append(audited, append([]byte(nil), payload...))
+			return nil
+		},
+	}
+
+	for range 2 {
+		messageType, payload, err := conn.ReadFrame(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, coderws.MessageText, messageType)
+		require.NotEmpty(t, payload)
+	}
+	require.Len(t, audited, 2)
+}
+
+func TestRealtimeModelBoundFrameConnStopsRejectedClientFrame(t *testing.T) {
+	t.Parallel()
+
+	rejected := errors.New("security audit rejected frame")
+	conn := realtimeModelBoundFrameConn{
+		upstream: &realtimeTestFrameConn{frames: []struct {
+			messageType coderws.MessageType
+			payload     []byte
+		}{
+			{messageType: coderws.MessageText, payload: []byte(`{"type":"response.create","model":"gpt-realtime"}`)},
+		}},
+		model: "gpt-realtime",
+		beforeClientForward: func(context.Context, []byte) error {
+			return rejected
+		},
+	}
+
+	messageType, payload, err := conn.ReadFrame(context.Background())
+	require.Equal(t, coderws.MessageText, messageType)
+	require.Nil(t, payload)
+	require.ErrorIs(t, err, rejected)
 }
 
 func TestRealtimeRequestType(t *testing.T) {

@@ -193,18 +193,24 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 	actualInputTokens = max(actualInputTokens, 0)
 	actualOutputTokens = max(actualOutputTokens, 0)
+	imageInputTokens := result.Usage.ImageInputTokens
+	if !result.Usage.TokenBucketsSeparated {
+		imageInputTokens = max(imageInputTokens-result.Usage.ImageCacheReadTokens, 0)
+	}
 
 	// Calculate cost
 	tokens := UsageTokens{
-		InputTokens:           actualInputTokens,
-		ImageInputTokens:      max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
-		ImageCacheReadTokens:  result.Usage.ImageCacheReadTokens,
-		AudioInputTokens:      result.Usage.AudioInputTokens,
-		OutputTokens:          actualOutputTokens,
-		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
-		CacheReadTokens:       result.Usage.CacheReadInputTokens,
-		ImageOutputTokens:     result.Usage.ImageOutputTokens,
-		AudioOutputTokens:     result.Usage.AudioOutputTokens,
+		InputTokens:          actualInputTokens,
+		ImageInputTokens:     imageInputTokens,
+		ImageCacheReadTokens: result.Usage.ImageCacheReadTokens,
+		AudioInputTokens:     result.Usage.AudioInputTokens,
+		OutputTokens:         actualOutputTokens,
+		CacheCreationTokens:  result.Usage.CacheCreationInputTokens,
+		CacheReadTokens:      result.Usage.CacheReadInputTokens,
+		ImageOutputTokens:    result.Usage.ImageOutputTokens,
+		AudioOutputTokens:    result.Usage.AudioOutputTokens,
+		// RecordUsage 已将上游聚合值归一化为互斥桶；这个内部计费表示
+		// 必须始终为 true，避免 computeTokenBreakdown 再次扣减图片/音频。
 		TokenBucketsSeparated: true,
 	}
 
@@ -393,6 +399,13 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		}
 		// Keep the image cache split in the existing usage_logs JSONB payload.
 		imageSizeBreakdown["image_cache_read_tokens"] = result.Usage.ImageCacheReadTokens
+	}
+	if result.Usage.AudioCacheReadTokens > 0 {
+		if imageSizeBreakdown == nil {
+			imageSizeBreakdown = make(map[string]int)
+		}
+		// usage_logs 现有 JSONB 明细同时保存音频缓存桶；成本仍使用上游给出的通用缓存读取价格。
+		imageSizeBreakdown["audio_cache_read_tokens"] = result.Usage.AudioCacheReadTokens
 	}
 	usageLog := &UsageLog{
 		UserID:                   user.ID,
