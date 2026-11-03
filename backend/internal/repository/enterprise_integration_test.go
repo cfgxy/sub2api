@@ -1352,6 +1352,7 @@ func cleanupEnterpriseFixture(t *testing.T, enterpriseID, userID int64, suffix s
 		{"DELETE FROM enterprise_sessions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_usage_attributions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM usage_logs WHERE user_id = $1", []any{userID}},
+		{"DELETE FROM enterprise_employee_usage_reservations WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_allocation_revisions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_weekly_allocations WHERE enterprise_id = $1", []any{enterpriseID}},
 		// enterprise_audit_events 由 243 迁移设为 append-only（触发器拦截 UPDATE/DELETE）；

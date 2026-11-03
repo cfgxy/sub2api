@@ -2567,6 +2567,12 @@ func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task serv
 	if task == nil {
 		return
 	}
+	// 员工预占已经在上游调用前持久化；丢弃结算任务会把已发生的
+	// 上游费用误判为未调用并释放预占，因此该路径必须同步回退。
+	if service.EnterpriseEmployeeUsageReservationFromContext(parent) != nil {
+		h.submitMandatoryUsageRecordTask(parent, task)
+		return
+	}
 	task, abandon := wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
 		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {

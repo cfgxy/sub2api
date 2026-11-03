@@ -131,11 +131,18 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			abortWithGoogleError(c, 403, "API Key 所属专属分组不再允许当前用户使用")
 			return
 		}
+		skipBilling := c.Request.URL.Path == "/v1/usage" ||
+			c.Request.URL.Path == "/v1/sub2api/billing" ||
+			isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
 		var subscription *service.UserSubscription
 
 		// 简易模式：跳过余额和订阅检查
 		if cfg.RunMode == config.RunModeSimple {
 			if finalizeErr := finalizeEnterpriseAttributionGoogle(c, apiKeyService, apiKey, apiKeyString, nil); finalizeErr != nil {
+				return
+			}
+			if !skipBilling && apiKey.EnterpriseEmployeeWeeklyLimit && (apiKey.RateLimit7d <= 0 || apiKey.Usage7d >= apiKey.RateLimit7d) {
+				abortWithGoogleError(c, http.StatusTooManyRequests, service.ErrAPIKeyRateLimit7dExceeded.Error())
 				return
 			}
 			c.Set(string(ContextKeyAPIKey), apiKey)

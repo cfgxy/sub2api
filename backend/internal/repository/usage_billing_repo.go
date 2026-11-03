@@ -5,10 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+)
+
+const (
+	enterpriseEmployeeReservationStatusReserved  = "reserved"
+	enterpriseEmployeeReservationStatusCommitted = "committed"
+	enterpriseEmployeeReservationStatusSettled   = "settled"
+	enterpriseEmployeeReservationStatusReleased  = "released"
 )
 
 type usageBillingRepository struct {
@@ -54,12 +62,480 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
+	if cmd.EnterpriseEmployeeReservation {
+		if err := persistEnterpriseEmployeeCommittedSettlement(ctx, tx, cmd); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
 	return result, nil
+}
+
+// persistEnterpriseEmployeeCommittedSettlement writes the exact charge in the
+// same transaction as the core billing effects. The later employee-side
+// settlement may retry safely after a process crash without replaying billing.
+func persistEnterpriseEmployeeCommittedSettlement(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	if cmd == nil || cmd.EnterpriseEmployeeActualUSD < 0 {
+		return service.ErrEnterpriseEmployeeReservationStateConflict
+	}
+
+	var reservationID int64
+	err := tx.QueryRowContext(ctx, `
+		UPDATE enterprise_employee_usage_reservations
+		SET actual_usd = $1, status = 'committed', committed_at = NOW(), updated_at = NOW()
+		WHERE request_id = $2 AND source_api_key_id = $3 AND status = 'reserved'
+		  AND reserved_usd + 0.000000001 >= $1
+		RETURNING id`, cmd.EnterpriseEmployeeActualUSD, cmd.RequestID, cmd.APIKeyID).Scan(&reservationID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	var reservedUSD float64
+	var status string
+	err = tx.QueryRowContext(ctx, `
+		SELECT reserved_usd, status
+		FROM enterprise_employee_usage_reservations
+		WHERE request_id = $1 AND source_api_key_id = $2`, cmd.RequestID, cmd.APIKeyID).Scan(&reservedUSD, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return service.ErrEnterpriseEmployeeReservationNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status == enterpriseEmployeeReservationStatusReserved && cmd.EnterpriseEmployeeActualUSD > reservedUSD+0.000000001 {
+		return service.ErrEnterpriseEmployeeSettlementExceedsReservation
+	}
+	return service.ErrEnterpriseEmployeeReservationStateConflict
+}
+
+func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Context, cmd *service.EnterpriseEmployeeUsageReservationCommand) (_ *service.EnterpriseEmployeeUsageReservationResult, err error) {
+	if cmd == nil {
+		return nil, service.ErrEnterpriseEmployeeReservationNotFound
+	}
+	if r == nil || r.db == nil {
+		return nil, errors.New("usage billing repository db is nil")
+	}
+	cmd.Normalize()
+	if cmd.RequestID == "" {
+		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+	if len(cmd.RequestFingerprint) != 64 || cmd.SourceAPIKeyID <= 0 || cmd.ReservedUSD <= 0 {
+		return nil, service.ErrEnterpriseEmployeeReservationStateConflict
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var enterpriseID, employeeID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT enterprise_id, employee_id
+		FROM enterprise_key_assignments
+		WHERE api_key_id = $1 AND status = 'active'
+		ORDER BY generation DESC, id DESC
+		LIMIT 1`, cmd.SourceAPIKeyID).Scan(&enterpriseID, &employeeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var ignored int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprise_employees
+		WHERE enterprise_id = $1 AND id = $2 AND status = 'active'
+		FOR UPDATE`, enterpriseID, employeeID).Scan(&ignored); err != nil {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprises WHERE id = $1 AND status = 'active' FOR UPDATE`, enterpriseID).Scan(&ignored); err != nil {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+
+	var generation, upstreamSubscriptionID, upstreamGroupID int64
+	var usage7d, rateLimit7d float64
+	var keyWindow time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT assignment.generation, assignment.upstream_user_subscription_id,
+		       assignment.upstream_group_id, api_key.usage_7d, api_key.rate_limit_7d,
+		       api_key.window_7d_start
+		FROM enterprise_key_assignments AS assignment
+		JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id AND api_key.deleted_at IS NULL
+		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
+		  AND assignment.api_key_id = $3 AND assignment.status = 'active'
+		FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID, cmd.SourceAPIKeyID).
+		Scan(&generation, &upstreamSubscriptionID, &upstreamGroupID, &usage7d, &rateLimit7d, &keyWindow)
+	if err != nil {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+
+	var enterpriseSubscriptionID int64
+	var anchor time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.deleted_at IS NULL
+		WHERE enterprise_subscription.enterprise_id = $1
+		  AND enterprise_subscription.upstream_user_subscription_id = $2
+		  AND enterprise_subscription.status = 'active'
+		  AND upstream_subscription.status = 'active'
+		  AND upstream_subscription.group_id = $3
+		  AND upstream_subscription.starts_at <= CURRENT_TIMESTAMP
+		  AND upstream_subscription.expires_at > CURRENT_TIMESTAMP
+		FOR UPDATE OF enterprise_subscription, upstream_subscription`, enterpriseID, upstreamSubscriptionID, upstreamGroupID).
+		Scan(&enterpriseSubscriptionID, &anchor)
+	if err != nil {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+	anchor = anchor.UTC()
+	if !keyWindow.UTC().Equal(anchor) {
+		return nil, service.ErrEnterpriseAttributionUnavailable
+	}
+
+	var allocation float64
+	err = tx.QueryRowContext(ctx, `
+		SELECT amount
+		FROM enterprise_weekly_allocations
+		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
+		  AND window_type = 'week' AND window_anchor = $4
+		FOR UPDATE`, enterpriseID, enterpriseSubscriptionID, employeeID, anchor).Scan(&allocation)
+	if errors.Is(err, sql.ErrNoRows) || allocation <= 0 || rateLimit7d <= 0 {
+		return nil, service.ErrAPIKeyRateLimit7dExceeded
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if existing, existingErr := loadEnterpriseEmployeeReservationForUpdate(ctx, tx, cmd.RequestID, cmd.SourceAPIKeyID); existingErr == nil {
+		if strings.TrimSpace(existing.RequestID) == "" {
+			return nil, service.ErrEnterpriseEmployeeReservationStateConflict
+		}
+		var existingFingerprint string
+		if scanErr := tx.QueryRowContext(ctx, `
+			SELECT request_fingerprint FROM enterprise_employee_usage_reservations WHERE id = $1`, existing.ReservationID).Scan(&existingFingerprint); scanErr != nil {
+			return nil, scanErr
+		}
+		if strings.TrimSpace(existingFingerprint) != cmd.RequestFingerprint {
+			return nil, service.ErrUsageBillingRequestConflict
+		}
+		existing.AlreadyExists = true
+		return existing, nil
+	} else if !errors.Is(existingErr, sql.ErrNoRows) {
+		return nil, existingErr
+	}
+
+	var reserved float64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(
+			CASE WHEN status = 'committed' THEN actual_usd ELSE reserved_usd END
+		), 0)
+		FROM enterprise_employee_usage_reservations
+		WHERE employee_id = $1 AND enterprise_subscription_id = $2
+		  AND weekly_window_anchor = $3 AND status IN ('reserved', 'committed')`, employeeID, enterpriseSubscriptionID, anchor).Scan(&reserved); err != nil {
+		return nil, err
+	}
+	if usage7d+reserved+cmd.ReservedUSD > allocation+0.000000001 {
+		return nil, service.ErrAPIKeyRateLimit7dExceeded
+	}
+
+	result := &service.EnterpriseEmployeeUsageReservationResult{}
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO enterprise_employee_usage_reservations (
+			request_id, request_fingerprint, source_api_key_id, enterprise_id,
+			enterprise_subscription_id, upstream_user_subscription_id, employee_id,
+			assignment_generation, weekly_window_anchor, reserved_usd
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id, request_id, source_api_key_id, enterprise_id,
+		          enterprise_subscription_id, upstream_user_subscription_id,
+		          employee_id, assignment_generation, weekly_window_anchor,
+		          reserved_usd, actual_usd, status`, cmd.RequestID, cmd.RequestFingerprint,
+		cmd.SourceAPIKeyID, enterpriseID, enterpriseSubscriptionID, upstreamSubscriptionID,
+		employeeID, generation, anchor, cmd.ReservedUSD).
+		Scan(&result.ReservationID, &result.RequestID, &result.SourceAPIKeyID, &result.EnterpriseID,
+			&result.EnterpriseSubscriptionID, &result.UpstreamUserSubscriptionID, &result.EmployeeID,
+			&result.AssignmentGeneration, &result.WeeklyWindowAnchor, &result.ReservedUSD,
+			&result.ActualUSD, &result.Status)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return result, nil
+}
+
+func (r *usageBillingRepository) SettleEnterpriseEmployeeUsage(ctx context.Context, cmd *service.EnterpriseEmployeeUsageSettlementCommand) (_ *service.EnterpriseEmployeeUsageReservationResult, err error) {
+	if cmd == nil || r == nil || r.db == nil {
+		return nil, service.ErrEnterpriseEmployeeReservationNotFound
+	}
+	cmd.Normalize()
+	if cmd.RequestID == "" {
+		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	reservation, err := loadEnterpriseEmployeeReservation(ctx, tx, cmd.RequestID, cmd.SourceAPIKeyID, false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrEnterpriseEmployeeReservationNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var ignored int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2 FOR UPDATE`, reservation.EnterpriseID, reservation.EmployeeID).Scan(&ignored); err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM enterprises WHERE id = $1 FOR UPDATE`, reservation.EnterpriseID).Scan(&ignored); err != nil {
+		return nil, err
+	}
+
+	var targetAPIKeyID, targetUpstreamSubscriptionID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT assignment.api_key_id, assignment.upstream_user_subscription_id
+		FROM enterprise_key_assignments AS assignment
+		JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id AND api_key.deleted_at IS NULL
+		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
+		ORDER BY CASE WHEN assignment.status = 'active' THEN 0 ELSE 1 END,
+		         assignment.generation DESC, assignment.id DESC
+		LIMIT 1 FOR UPDATE OF assignment, api_key`, reservation.EnterpriseID, reservation.EmployeeID).
+		Scan(&targetAPIKeyID, &targetUpstreamSubscriptionID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	var currentAnchor time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT upstream_subscription.weekly_window_start
+		FROM enterprise_subscriptions AS enterprise_subscription
+		JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.deleted_at IS NULL
+		WHERE enterprise_subscription.id = $1 AND enterprise_subscription.enterprise_id = $2
+		  AND enterprise_subscription.upstream_user_subscription_id = $3
+		FOR UPDATE OF enterprise_subscription, upstream_subscription`, reservation.EnterpriseSubscriptionID,
+		reservation.EnterpriseID, reservation.UpstreamUserSubscriptionID).Scan(&currentAnchor)
+	if err != nil {
+		return nil, err
+	}
+	reservation, err = loadEnterpriseEmployeeReservationForUpdate(ctx, tx, cmd.RequestID, cmd.SourceAPIKeyID)
+	if err != nil {
+		return nil, err
+	}
+	if reservation.Status == enterpriseEmployeeReservationStatusSettled {
+		if reservation.ActualUSD != nil && absFloat(*reservation.ActualUSD-cmd.ActualUSD) <= 0.000000001 {
+			return reservation, nil
+		}
+		return nil, service.ErrEnterpriseEmployeeReservationStateConflict
+	}
+	actualUSD := cmd.ActualUSD
+	if reservation.Status == enterpriseEmployeeReservationStatusCommitted {
+		if reservation.ActualUSD == nil {
+			return nil, service.ErrEnterpriseEmployeeReservationStateConflict
+		}
+		actualUSD = *reservation.ActualUSD
+	} else if reservation.Status != enterpriseEmployeeReservationStatusReserved {
+		return nil, service.ErrEnterpriseEmployeeReservationStateConflict
+	}
+	if actualUSD > reservation.ReservedUSD+0.000000001 {
+		return nil, service.ErrEnterpriseEmployeeSettlementExceedsReservation
+	}
+
+	if actualUSD > 0 && targetAPIKeyID > 0 && targetUpstreamSubscriptionID == reservation.UpstreamUserSubscriptionID && currentAnchor.UTC().Equal(reservation.WeeklyWindowAnchor.UTC()) {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE api_keys
+			SET usage_7d = usage_7d + $1, window_7d_start = $2, updated_at = NOW()
+			WHERE id = $3 AND deleted_at IS NULL`, actualUSD, reservation.WeeklyWindowAnchor, targetAPIKeyID); err != nil {
+			return nil, err
+		}
+		reservation.BilledAPIKeyID = targetAPIKeyID
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE enterprise_employee_usage_reservations
+		SET actual_usd = $1, status = 'settled',
+		    committed_at = COALESCE(committed_at, NOW()), settled_at = NOW(), updated_at = NOW()
+		WHERE id = $2`, actualUSD, reservation.ReservationID); err != nil {
+		return nil, err
+	}
+	actual := actualUSD
+	reservation.ActualUSD = &actual
+	reservation.Status = enterpriseEmployeeReservationStatusSettled
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return reservation, nil
+}
+
+func (r *usageBillingRepository) ReleaseEnterpriseEmployeeUsage(ctx context.Context, cmd *service.EnterpriseEmployeeUsageReleaseCommand) (_ *service.EnterpriseEmployeeUsageReservationResult, err error) {
+	if cmd == nil || r == nil || r.db == nil {
+		return nil, service.ErrEnterpriseEmployeeReservationNotFound
+	}
+	cmd.RequestID = strings.TrimSpace(cmd.RequestID)
+	if cmd.RequestID == "" {
+		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	reservation, err := loadEnterpriseEmployeeReservationForUpdate(ctx, tx, cmd.RequestID, cmd.SourceAPIKeyID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrEnterpriseEmployeeReservationNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if reservation.Status != enterpriseEmployeeReservationStatusReserved {
+		reservation.BillingCommitted = reservation.Status == enterpriseEmployeeReservationStatusCommitted
+		return reservation, nil
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE enterprise_employee_usage_reservations
+		SET status = 'released', released_at = NOW(), updated_at = NOW()
+		WHERE id = $1`, reservation.ReservationID); err != nil {
+		return nil, err
+	}
+	reservation.Status = enterpriseEmployeeReservationStatusReleased
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return reservation, nil
+}
+
+// RecoverEnterpriseEmployeeUsage settles committed reservations for the same
+// employee as sourceAPIKeyID. It deliberately invokes the normal settlement
+// transaction for each row, preserving the employee -> assignment ->
+// subscription locking order and settlement idempotency.
+func (r *usageBillingRepository) RecoverEnterpriseEmployeeUsage(ctx context.Context, sourceAPIKeyID int64) error {
+	if r == nil || r.db == nil || sourceAPIKeyID <= 0 {
+		return service.ErrEnterpriseEmployeeReservationNotFound
+	}
+
+	var enterpriseID, employeeID int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT enterprise_id, employee_id
+		FROM enterprise_key_assignments
+		WHERE api_key_id = $1
+		ORDER BY generation DESC, id DESC
+		LIMIT 1`, sourceAPIKeyID).Scan(&enterpriseID, &employeeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return service.ErrEnterpriseAttributionUnavailable
+	}
+	if err != nil {
+		return err
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT request_id, source_api_key_id, actual_usd
+		FROM enterprise_employee_usage_reservations
+		WHERE enterprise_id = $1 AND employee_id = $2 AND status = 'committed'
+		ORDER BY committed_at, id`, enterpriseID, employeeID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type pendingSettlement struct {
+		requestID      string
+		sourceAPIKeyID int64
+		actualUSD      float64
+	}
+	var pending []pendingSettlement
+	for rows.Next() {
+		var item pendingSettlement
+		if err := rows.Scan(&item.requestID, &item.sourceAPIKeyID, &item.actualUSD); err != nil {
+			return err
+		}
+		pending = append(pending, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range pending {
+		if _, err := r.SettleEnterpriseEmployeeUsage(ctx, &service.EnterpriseEmployeeUsageSettlementCommand{
+			RequestID: item.requestID, SourceAPIKeyID: item.sourceAPIKeyID, ActualUSD: item.actualUSD,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadEnterpriseEmployeeReservationForUpdate(ctx context.Context, tx *sql.Tx, requestID string, sourceAPIKeyID int64) (*service.EnterpriseEmployeeUsageReservationResult, error) {
+	return loadEnterpriseEmployeeReservation(ctx, tx, requestID, sourceAPIKeyID, true)
+}
+
+func loadEnterpriseEmployeeReservation(ctx context.Context, tx *sql.Tx, requestID string, sourceAPIKeyID int64, forUpdate bool) (*service.EnterpriseEmployeeUsageReservationResult, error) {
+	query := `
+		SELECT id, request_id, source_api_key_id, enterprise_id,
+		       enterprise_subscription_id, upstream_user_subscription_id,
+		       employee_id, assignment_generation, weekly_window_anchor,
+		       reserved_usd, actual_usd, status
+		FROM enterprise_employee_usage_reservations
+		WHERE request_id = $1 AND source_api_key_id = $2`
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
+	result := &service.EnterpriseEmployeeUsageReservationResult{}
+	err := tx.QueryRowContext(ctx, query, requestID, sourceAPIKeyID).Scan(
+		&result.ReservationID, &result.RequestID, &result.SourceAPIKeyID, &result.EnterpriseID,
+		&result.EnterpriseSubscriptionID, &result.UpstreamUserSubscriptionID, &result.EmployeeID,
+		&result.AssignmentGeneration, &result.WeeklyWindowAnchor, &result.ReservedUSD,
+		&result.ActualUSD, &result.Status,
+	)
+	return result, err
+}
+
+func usageBillingClaimExists(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64) (bool, error) {
+	var exists int
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2
+		UNION ALL
+		SELECT 1 FROM usage_billing_dedup_archive WHERE request_id = $1 AND api_key_id = $2
+		LIMIT 1`, requestID, apiKeyID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func absFloat(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {
@@ -207,7 +683,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		result.APIKeyQuotaExhausted = exhausted
 	}
 
-	if cmd.APIKeyRateLimitCost > 0 {
+	if cmd.APIKeyRateLimitCost > 0 && !cmd.EnterpriseEmployeeReservation {
 		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, apiKeyID, cmd.APIKeyRateLimitCost); err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
@@ -521,7 +997,7 @@ func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKe
 			usage_5h = CASE WHEN window_5h_start IS NOT NULL AND window_5h_start + INTERVAL '5 hours' <= NOW() THEN $1 ELSE usage_5h + $1 END,
 			usage_1d = CASE WHEN window_1d_start IS NOT NULL AND window_1d_start + INTERVAL '24 hours' <= NOW() THEN $1 ELSE usage_1d + $1 END,
 			usage_7d = CASE
-				WHEN EXISTS (SELECT 1 FROM enterprise_key_assignments assignment WHERE assignment.api_key_id = api_keys.id AND assignment.status = 'active') THEN LEAST(rate_limit_7d, usage_7d + $1)
+				WHEN EXISTS (SELECT 1 FROM enterprise_key_assignments assignment WHERE assignment.api_key_id = api_keys.id AND assignment.status = 'active') THEN usage_7d + $1
 				WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN $1 ELSE usage_7d + $1 END,
 			window_5h_start = CASE WHEN window_5h_start IS NULL OR window_5h_start + INTERVAL '5 hours' <= NOW() THEN NOW() ELSE window_5h_start END,
 			window_1d_start = CASE WHEN window_1d_start IS NULL OR window_1d_start + INTERVAL '24 hours' <= NOW() THEN date_trunc('day', NOW()) ELSE window_1d_start END,

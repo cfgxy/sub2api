@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,10 @@ import (
 // inflightReservationEstimator 估算单请求在途预留金额（USD）；false 表示无法定价。
 type inflightReservationEstimator interface {
 	EstimateInflightReservation(ctx context.Context, apiKey *service.APIKey, req service.InflightEstimateRequest) (float64, bool)
+}
+
+type enterpriseEmployeeUsageReserver interface {
+	ReserveEnterpriseEmployeeUsage(ctx context.Context, apiKey *service.APIKey, req service.InflightEstimateRequest) (*service.EnterpriseEmployeeUsageReservation, error)
 }
 
 // requestMaxOutputTokens 从请求体中提取输出 token 上限（兼容 Anthropic / OpenAI Chat / Responses / Gemini）。
@@ -26,11 +31,114 @@ func requestMaxOutputTokens(body []byte) int {
 // tokenInflightEstimate 文本类请求的估算输入。
 func tokenInflightEstimate(model string, body []byte) service.InflightEstimateRequest {
 	return service.InflightEstimateRequest{
-		Model:     model,
-		BodyBytes: len(body),
-		MaxTokens: requestMaxOutputTokens(body),
-		Kind:      service.InflightEstimateToken,
+		Model:                  model,
+		BodyBytes:              len(body),
+		MaxTokens:              requestMaxOutputTokens(body),
+		Kind:                   service.InflightEstimateToken,
+		RequestPayloadHash:     service.HashUsageRequestPayload(body),
+		HasExternalContext:     requestReferencesExternalContext(body),
+		HasUnboundedSurcharges: requestHasUnboundedToolSurcharge(body),
 	}
+}
+
+// requestReferencesExternalContext identifies request shapes where upstream
+// input billing can include server-side content absent from the request body.
+func requestReferencesExternalContext(body []byte) bool {
+	for _, path := range []string{"previous_response_id", "cachedContent", "cached_content", "conversation"} {
+		if gjson.GetBytes(body, path).Exists() {
+			return true
+		}
+	}
+	// Responses WebSocket 的 ingress 会为无 previous_response_id 的
+	// function_call_output 自动补上一轮响应 ID。预占发生在该改写之前，
+	// 因而此处必须把这类帧视为带有服务端上下文，避免仅按当前帧大小低估。
+	if gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
+		return true
+	}
+	return requestReferencesRemoteMedia(body)
+}
+
+// requestReferencesRemoteMedia identifies image or media URLs whose bytes and
+// resulting input-token charge are not contained in the request body. Data URLs
+// remain bounded by BodyBytes; remote URLs must fail closed for employee keys.
+func requestReferencesRemoteMedia(body []byte) bool {
+	isRemoteURL := func(value string) bool {
+		value = strings.ToLower(strings.TrimSpace(value))
+		return strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "gs://")
+	}
+	var visit func(gjson.Result) bool
+	visit = func(value gjson.Result) bool {
+		if value.IsArray() {
+			for _, child := range value.Array() {
+				if visit(child) {
+					return true
+				}
+			}
+			return false
+		}
+		if !value.IsObject() {
+			return false
+		}
+
+		typ := strings.ToLower(strings.TrimSpace(value.Get("type").String()))
+		if typ == "image_url" || typ == "input_image" || typ == "image" || typ == "input_video" || typ == "input_audio" ||
+			value.Get("file_data").Exists() || value.Get("fileData").Exists() {
+			for _, path := range []string{"image_url", "image_url.url", "url", "file_data.file_uri", "fileData.fileUri"} {
+				if isRemoteURL(value.Get(path).String()) {
+					return true
+				}
+			}
+		}
+		for _, child := range value.Map() {
+			if visit(child) {
+				return true
+			}
+		}
+		return false
+	}
+	return visit(gjson.ParseBytes(body))
+}
+
+// requestHasUnboundedToolSurcharge identifies tools whose charge cannot be
+// bounded from request fields alone. Enterprise employee requests fail closed
+// rather than reserve only the token portion of these calls.
+func requestHasUnboundedToolSurcharge(body []byte) bool {
+	// OAuth Responses 转换会根据历史 web_search_call 在后续补入搜索工具。
+	// 预占时顶层 tools 尚未出现该工具，但其附加收费仍不可由请求字段证明上界。
+	if gjson.GetBytes(body, `input.#(type=="web_search_call")`).Exists() {
+		return true
+	}
+
+	var visit func(gjson.Result) bool
+	visit = func(value gjson.Result) bool {
+		if value.IsArray() {
+			for _, child := range value.Array() {
+				if visit(child) {
+					return true
+				}
+			}
+			return false
+		}
+		if !value.IsObject() {
+			return false
+		}
+		for key, child := range value.Map() {
+			label := strings.ToLower(key)
+			if label == "type" {
+				label = strings.ToLower(child.String())
+			}
+			if strings.Contains(label, "web_search") ||
+				strings.Contains(label, "google_search") ||
+				strings.Contains(label, "image_generation") {
+				return true
+			}
+			if visit(child) {
+				return true
+			}
+		}
+		return false
+	}
+	return visit(gjson.GetBytes(body, "tools"))
 }
 
 func inflightNoop() {}
@@ -71,7 +179,22 @@ func reserveInflightBalanceCtx(
 	subscription *service.UserSubscription,
 	req service.InflightEstimateRequest,
 ) (context.Context, func(), error) {
-	if billing == nil || estimator == nil || apiKey == nil || apiKey.User == nil || !billing.InflightReservationEnabled() {
+	if estimator == nil || apiKey == nil || apiKey.User == nil {
+		return ctx, inflightNoop, nil
+	}
+	if apiKey.EnterpriseEmployeeWeeklyLimit {
+		reserver, ok := estimator.(enterpriseEmployeeUsageReserver)
+		if !ok {
+			return ctx, inflightNoop, service.ErrBillingServiceUnavailable
+		}
+		employee, err := reserver.ReserveEnterpriseEmployeeUsage(ctx, apiKey, req)
+		if err != nil {
+			return ctx, inflightNoop, err
+		}
+		res := service.AttachEnterpriseEmployeeUsageReservation(nil, employee)
+		return service.WithInflightReservation(ctx, res), res.HandlerDone, nil
+	}
+	if billing == nil || !billing.InflightReservationEnabled() {
 		return ctx, inflightNoop, nil
 	}
 	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && subscription != nil {

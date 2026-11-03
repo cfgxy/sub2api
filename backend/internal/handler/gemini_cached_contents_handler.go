@@ -735,10 +735,18 @@ func (h *GatewayHandler) cleanupGeminiCachedContentUpstream(reqLog *zap.Logger, 
 // 返回的 done 须在 handler 结束时调用；预留随计费任务交接，落库后释放。
 func (h *GatewayHandler) reserveGeminiCachedContentCharge(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription, amount float64) (func(), error) {
 	ctx := c.Request.Context()
-	res, err := h.billingCacheService.ReserveFixedCharge(ctx, apiKey.User, apiKey, apiKey.Group, subscription, amount)
+	employee, err := h.gatewayService.ReserveEnterpriseEmployeeFixedCharge(ctx, apiKey, amount)
 	if err != nil {
 		return inflightNoop, err
 	}
+	res, err := h.billingCacheService.ReserveFixedCharge(ctx, apiKey.User, apiKey, apiKey.Group, subscription, amount)
+	if err != nil {
+		if employee != nil {
+			_, _ = employee.Release(context.WithoutCancel(ctx))
+		}
+		return inflightNoop, err
+	}
+	res = service.AttachEnterpriseEmployeeUsageReservation(res, employee)
 	if res == nil {
 		return inflightNoop, nil
 	}

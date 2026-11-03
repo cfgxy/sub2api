@@ -16,11 +16,15 @@ import (
 
 type cyberUsageLogCaptureRepo struct {
 	service.UsageLogRepository
-	created chan *service.UsageLog
+	created  chan *service.UsageLog
+	contexts chan context.Context
 }
 
-func (r *cyberUsageLogCaptureRepo) Create(_ context.Context, log *service.UsageLog) (bool, error) {
+func (r *cyberUsageLogCaptureRepo) Create(ctx context.Context, log *service.UsageLog) (bool, error) {
 	r.created <- log
+	if r.contexts != nil {
+		r.contexts <- ctx
+	}
 	return true, nil
 }
 
@@ -44,7 +48,7 @@ func TestRecordCyberPolicyIfMarkedPreservesFrozenPricingAtThroughAsyncUsageWrite
 	apiKey := &service.APIKey{ID: 2, User: &service.User{ID: 1}}
 	account := &service.Account{ID: 3, Platform: service.PlatformOpenAI}
 
-	h.recordCyberPolicyIfMarked(c, apiKey, account, nil, "gpt-5.1", true, nil, service.ChannelUsageFields{}, "payload-hash", pricingAt)
+	h.recordCyberPolicyIfMarked(context.Background(), c, apiKey, account, nil, "gpt-5.1", true, nil, service.ChannelUsageFields{}, "payload-hash", pricingAt)
 
 	select {
 	case log := <-usageRepo.created:
@@ -54,6 +58,42 @@ func TestRecordCyberPolicyIfMarkedPreservesFrozenPricingAtThroughAsyncUsageWrite
 		require.Equal(t, service.RequestTypeCyberBlocked, log.RequestType)
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for asynchronous cyber usage write")
+	}
+}
+
+func TestRecordCyberPolicyIfMarkedHandsReservationToUsageWrite(t *testing.T) {
+	cache := newHandlerInflightCache(1)
+	cfg := &config.Config{}
+	cfg.Billing.InflightReservation = config.InflightReservationConfig{Enabled: true, TTLSeconds: 60}
+	billingCache := service.NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCache.Stop)
+	apiKey := &service.APIKey{ID: 2, User: &service.User{ID: 1}}
+	reservation, err := billingCache.ReserveInflight(context.Background(), apiKey.User, nil, nil, 0.9)
+	require.NoError(t, err)
+	defer reservation.HandlerDone()
+
+	usageRepo := &cyberUsageLogCaptureRepo{
+		created:  make(chan *service.UsageLog, 1),
+		contexts: make(chan context.Context, 1),
+	}
+	gatewaySvc := service.NewOpenAIGatewayService(
+		nil, usageRepo, nil, nil, nil, nil, nil, cfg, nil, nil,
+		service.NewBillingService(cfg, nil), nil, billingCache, nil,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+	)
+	h := &OpenAIGatewayHandler{gatewayService: gatewaySvc}
+	c := newTestGinContext()
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(`{"model":"gpt-5.1"}`))
+	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "blocked", UpstreamStatus: http.StatusBadRequest})
+
+	parent := service.WithInflightReservation(context.Background(), reservation)
+	h.recordCyberPolicyIfMarked(parent, c, apiKey, &service.Account{ID: 3, Platform: service.PlatformOpenAI}, nil, "gpt-5.1", true, nil, service.ChannelUsageFields{}, "payload-hash", time.Now())
+
+	select {
+	case usageCtx := <-usageRepo.contexts:
+		require.Same(t, reservation, service.InflightReservationFromContext(usageCtx))
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for cyber usage write context")
 	}
 }
 
@@ -71,7 +111,7 @@ func TestRecordCyberPolicyIfMarked_NoMark(t *testing.T) {
 	c := newTestGinContext()
 	h := &OpenAIGatewayHandler{}
 
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
+	h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
 
 	// Flag must NOT be set when there was no mark.
 	require.False(t, c.GetBool(cyberPolicyRecordedKey),
@@ -94,14 +134,14 @@ func TestRecordCyberPolicyIfMarked_WithMark(t *testing.T) {
 
 	// First call: should set the flag.
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
+		h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
 	})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey),
 		"cyberPolicyRecordedKey must be true after first call with a mark")
 
 	// Second call: flag already set — must be a no-op (idempotent).
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "", time.Time{})
+		h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "", time.Time{})
 	})
 	// Flag should still be true (not toggled or cleared).
 	require.True(t, c.GetBool(cyberPolicyRecordedKey),
@@ -122,7 +162,7 @@ func TestRecordCyberPolicyIfMarked_ForwardSuccessSkipsUsageLog(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false /* forwardErrored=false */, nil, service.ChannelUsageFields{}, "", time.Time{})
+		h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", false /* forwardErrored=false */, nil, service.ChannelUsageFields{}, "", time.Time{})
 	})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 }
@@ -135,7 +175,7 @@ func TestClearCyberPolicyTurnState(t *testing.T) {
 	h := &OpenAIGatewayHandler{}
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "turn1", UpstreamStatus: 200})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "", time.Time{})
+	h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "", time.Time{})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
 	clearCyberPolicyTurnState(c)
@@ -144,7 +184,7 @@ func TestClearCyberPolicyTurnState(t *testing.T) {
 
 	// turn2: a fresh cyber hit must be recordable again.
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "turn2", UpstreamStatus: 200})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "", time.Time{})
+	h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", false, nil, service.ChannelUsageFields{}, "", time.Time{})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 	require.Equal(t, "turn2", service.GetOpsCyberPolicy(c).Message)
 }
@@ -170,7 +210,7 @@ func TestClearCyberPolicyAttemptStatePreservesRecordedGuardDuringFailover(t *tes
 	h := &OpenAIGatewayHandler{}
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "account-a", UpstreamStatus: http.StatusOK})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
+	h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
 	clearCyberPolicyAttemptState(c, false)
@@ -178,7 +218,7 @@ func TestClearCyberPolicyAttemptStatePreservesRecordedGuardDuringFailover(t *tes
 	require.True(t, c.GetBool(cyberPolicyRecordedKey), "the same logical turn must not record again after failover")
 
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "account-b", UpstreamStatus: http.StatusOK})
-	h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
+	h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", true, nil, service.ChannelUsageFields{}, "", time.Time{})
 	require.Equal(t, "account-b", service.GetOpsCyberPolicy(c).Message)
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 
@@ -249,7 +289,7 @@ func TestRecordCyberPolicyIfMarked_BlockKeyPlumbed(t *testing.T) {
 	service.MarkOpsCyberPolicy(c, service.CyberPolicyMark{Message: "x", UpstreamStatus: 400})
 	h := &OpenAIGatewayHandler{}
 	require.NotPanics(t, func() {
-		h.recordCyberPolicyIfMarked(c, nil, nil, nil, "gpt-5", true, []byte(`{"input":"deadbeef"}`), service.ChannelUsageFields{}, "", time.Time{})
+		h.recordCyberPolicyIfMarked(context.Background(), c, nil, nil, nil, "gpt-5", true, []byte(`{"input":"deadbeef"}`), service.ChannelUsageFields{}, "", time.Time{})
 	})
 }
 

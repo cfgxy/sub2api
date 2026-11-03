@@ -178,6 +178,10 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if err := finalizeEnterpriseAttribution(c, apiKeyService, apiKey, apiKeyString, nil); err != nil {
 				return
 			}
+			if !skipBilling && apiKey.EnterpriseEmployeeWeeklyLimit && (apiKey.RateLimit7d <= 0 || apiKey.Usage7d >= apiKey.RateLimit7d) {
+				AbortWithError(c, http.StatusTooManyRequests, "API_KEY_RATE_LIMIT_EXCEEDED", service.ErrAPIKeyRateLimit7dExceeded.Error())
+				return
+			}
 			c.Set(string(ContextKeyAPIKey), apiKey)
 			c.Set(string(ContextKeyUser), AuthSubject{
 				UserID:      apiKey.User.ID,
@@ -300,7 +304,7 @@ func finalizeEnterpriseAttribution(
 	credential string,
 	subscription *service.UserSubscription,
 ) error {
-	// 有订阅上下文时由 service 从主库快照冻结归属；无订阅入口由 service 保持原有放行语义。
+	// 归属始终由 service 从主库解析；Simple Mode 无订阅上下文时也必须自解析有效企业订阅。
 	if err := apiKeyService.FinalizeEnterpriseUsageAttribution(c.Request.Context(), apiKey, credential, subscription); err != nil {
 		if errors.Is(err, service.ErrAPIKeyNotFound) {
 			recordInvalidAuthFailure(c, apiKeyService)

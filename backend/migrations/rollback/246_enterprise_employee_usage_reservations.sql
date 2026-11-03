@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS enterprise_employee_usage_reservations;

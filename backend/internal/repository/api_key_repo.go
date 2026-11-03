@@ -1178,11 +1178,19 @@ func (r *apiKeyRepository) SyncEnterpriseEmployeeWeeklyLimit(
 	if err = tx.QueryRowContext(ctx, `
 		UPDATE api_keys
 		SET rate_limit_7d = $1,
-		    usage_7d = CASE WHEN window_7d_start = $2 THEN usage_7d ELSE 0 END,
+		    usage_7d = CASE
+		        WHEN window_7d_start = $2 THEN usage_7d
+		        WHEN window_7d_start IS NOT NULL AND EXISTS (
+		            SELECT 1 FROM enterprise_subscription_windows AS known_window
+		            WHERE known_window.upstream_user_subscription_id = $4
+		              AND known_window.observed_weekly_window_start = api_keys.window_7d_start
+		        ) THEN 0
+		        ELSE usage_7d
+		    END,
 		    window_7d_start = $2,
 		    updated_at = NOW()
 		WHERE id = $3 AND deleted_at IS NULL
-		RETURNING usage_7d`, limit, anchor, apiKeyID).Scan(&state.Usage7d); err != nil {
+		RETURNING usage_7d`, limit, anchor, apiKeyID, identity.UpstreamSubscriptionID).Scan(&state.Usage7d); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, service.ErrAPIKeyNotFound
 		}

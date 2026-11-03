@@ -829,12 +829,6 @@ func (s *APIKeyService) FinalizeEnterpriseUsageAttribution(
 	if apiKey == nil || !apiKey.EnterpriseAttributionCandidate {
 		return nil
 	}
-	// 无订阅入口保持原有放行语义，不从企业表补猜订阅或员工归属。
-	// 主中间件、Google 入口和直接调用必须共享这一 fail-open 兼容边界。
-	if subscription == nil {
-		apiKey.EnterpriseAttributionIdentity = nil
-		return nil
-	}
 	resolver, ok := s.apiKeyRepo.(enterpriseUsageAttributionIdentityResolver)
 	if !ok {
 		return ErrEnterpriseAttributionUnavailable
