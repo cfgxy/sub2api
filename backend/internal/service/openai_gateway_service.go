@@ -270,6 +270,9 @@ type OpenAIForwardResult struct {
 	RequestedReasoningEffort *string
 	Stream                   bool
 	OpenAIWSMode             bool
+	// OpenAIRealtime marks usage produced by the public OpenAI Platform
+	// Realtime protocol. It must not be reported as private ChatGPT Live.
+	OpenAIRealtime bool
 	// UpstreamTerminalEvent is the normalized terminal event observed on an
 	// upstream Responses WebSocket turn. Empty preserves legacy/non-WS success.
 	UpstreamTerminalEvent string

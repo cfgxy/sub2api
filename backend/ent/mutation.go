@@ -22213,6 +22213,7 @@ type GroupMutation struct {
 	addsort_order                           *int
 	allow_messages_dispatch                 *bool
 	allow_live                              *bool
+	allow_realtime                          *bool
 	force_openai_fast                       *bool
 	free_openai_fast                        *bool
 	require_oauth_only                      *bool
@@ -25039,6 +25040,42 @@ func (m *GroupMutation) ResetAllowLive() {
 	m.allow_live = nil
 }
 
+// SetAllowRealtime sets the "allow_realtime" field.
+func (m *GroupMutation) SetAllowRealtime(b bool) {
+	m.allow_realtime = &b
+}
+
+// AllowRealtime returns the value of the "allow_realtime" field in the mutation.
+func (m *GroupMutation) AllowRealtime() (r bool, exists bool) {
+	v := m.allow_realtime
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAllowRealtime returns the old "allow_realtime" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAllowRealtime(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAllowRealtime is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAllowRealtime requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAllowRealtime: %w", err)
+	}
+	return oldValue.AllowRealtime, nil
+}
+
+// ResetAllowRealtime resets all changes to the "allow_realtime" field.
+func (m *GroupMutation) ResetAllowRealtime() {
+	m.allow_realtime = nil
+}
+
 // SetForceOpenaiFast sets the "force_openai_fast" field.
 func (m *GroupMutation) SetForceOpenaiFast(b bool) {
 	m.force_openai_fast = &b
@@ -26012,7 +26049,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 67)
+	fields := make([]string, 0, 68)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26168,6 +26205,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.allow_live != nil {
 		fields = append(fields, group.FieldAllowLive)
+	}
+	if m.allow_realtime != nil {
+		fields = append(fields, group.FieldAllowRealtime)
 	}
 	if m.force_openai_fast != nil {
 		fields = append(fields, group.FieldForceOpenaiFast)
@@ -26326,6 +26366,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.AllowMessagesDispatch()
 	case group.FieldAllowLive:
 		return m.AllowLive()
+	case group.FieldAllowRealtime:
+		return m.AllowRealtime()
 	case group.FieldForceOpenaiFast:
 		return m.ForceOpenaiFast()
 	case group.FieldFreeOpenaiFast:
@@ -26469,6 +26511,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldAllowMessagesDispatch(ctx)
 	case group.FieldAllowLive:
 		return m.OldAllowLive(ctx)
+	case group.FieldAllowRealtime:
+		return m.OldAllowRealtime(ctx)
 	case group.FieldForceOpenaiFast:
 		return m.OldForceOpenaiFast(ctx)
 	case group.FieldFreeOpenaiFast:
@@ -26871,6 +26915,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAllowLive(v)
+		return nil
+	case group.FieldAllowRealtime:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAllowRealtime(v)
 		return nil
 	case group.FieldForceOpenaiFast:
 		v, ok := value.(bool)
@@ -27643,6 +27694,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldAllowLive:
 		m.ResetAllowLive()
+		return nil
+	case group.FieldAllowRealtime:
+		m.ResetAllowRealtime()
 		return nil
 	case group.FieldForceOpenaiFast:
 		m.ResetForceOpenaiFast()

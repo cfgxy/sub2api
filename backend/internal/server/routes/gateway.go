@@ -210,6 +210,10 @@ func RegisterGatewayRoutes(
 		gateway.GET("/usage", h.Gateway.Usage)
 		gateway.POST("/live", h.OpenAIGateway.Live)
 		gateway.GET("/live/:call_id", h.OpenAIGateway.LiveSideband)
+		// Official Platform Realtime uses distinct paths so the existing Grok
+		// /v1/realtime and private ChatGPT /v1/live protocols remain unchanged.
+		gateway.GET("/realtime/openai", h.OpenAIGateway.OfficialRealtimeWebSocket)
+		gateway.POST("/realtime/calls", h.OpenAIGateway.OfficialRealtimeCall)
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
 			if isOpenAIResponsesCompatibleGatewayPlatform(c) {
