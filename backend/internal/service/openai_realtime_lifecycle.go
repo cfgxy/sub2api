@@ -163,12 +163,14 @@ func (s *OpenAIGatewayService) ensureOfficialRealtimeEmployeeTurn(record *Realti
 	if record == nil || start == nil {
 		return nil
 	}
-	if err := s.realtimeEmployeeTurnPreparationAllowed(record); err != nil {
-		return err
-	}
+	// 先登记 call 本地账本，再读取 controller。这样即使读取到过期的 pending，
+	// 后续开始的 finalizer 也能关闭该对象，阻止创建可续租的额度预留。
 	turns := s.realtimeEmployeeTurns(record.CallHash)
 	if turns == nil {
 		return ErrRealtimeCallNotFound
+	}
+	if err := s.realtimeEmployeeTurnPreparationAllowed(record); err != nil {
+		return err
 	}
 
 	turns.mu.Lock()

@@ -46,6 +46,23 @@ type realtimeLifecycleStore struct {
 	saveFailures            atomic.Int32
 }
 
+type staleRealtimeControllerStore struct {
+	*realtimeLifecycleStore
+	blockNextLookup atomic.Bool
+	lookupStarted   chan struct{}
+	lookupRelease   chan struct{}
+}
+
+func (s *staleRealtimeControllerStore) GetRealtimeController(ctx context.Context, callHash string) (string, error) {
+	controller, err := s.realtimeLifecycleStore.GetRealtimeController(ctx, callHash)
+	if err != nil || !s.blockNextLookup.CompareAndSwap(true, false) {
+		return controller, err
+	}
+	close(s.lookupStarted)
+	<-s.lookupRelease
+	return controller, nil
+}
+
 type realtimeUsageLeaseTestStore struct {
 	*realtimeLifecycleStore
 	claimOwner   string
@@ -517,6 +534,62 @@ func TestFinalizeOfficialRealtimeCallWaitsForPreparingEmployeeTurn(t *testing.T)
 	require.Nil(t, restarted.RealtimeEmployeeTurnReservation(persisted, "response-after-close"))
 	repo.mu.Lock()
 	require.Equal(t, 1, repo.releases[requestID])
+	repo.mu.Unlock()
+}
+
+func TestEnsureOfficialRealtimeEmployeeTurnDoesNotAdmitAfterStaleControllerRead(t *testing.T) {
+	baseStore := &realtimeLifecycleStore{}
+	store := &staleRealtimeControllerStore{
+		realtimeLifecycleStore: baseStore,
+		lookupStarted:          make(chan struct{}),
+		lookupRelease:          make(chan struct{}),
+	}
+	store.blockNextLookup.Store(true)
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-stale-controller-read", CallHash: hashRealtimeCallID("call-stale-controller-read"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, baseStore.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+
+	var admissions atomic.Int32
+	start := func(responseID, _ string) (*InflightReservation, error) {
+		admissions.Add(1)
+		result, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: "realtime-call:" + record.CallHash + ":" + responseID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result)), nil
+	}
+
+	prepared := make(chan error, 1)
+	go func() { prepared <- svc.EnsureOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start) }()
+	<-store.lookupStarted
+
+	finalized := make(chan struct{})
+	go func() {
+		svc.FinalizeOfficialRealtimeCall(record)
+		close(finalized)
+	}()
+	select {
+	case <-finalized:
+	case <-time.After(time.Second):
+		require.FailNow(t, "过期 controller 读取被阻塞时，finalization 未完成")
+	}
+	close(store.lookupRelease)
+	require.ErrorIs(t, <-prepared, ErrRealtimeControllerChanged)
+
+	require.Equal(t, int32(0), admissions.Load(), "closed call 在读取到过期 controller 后不得准入员工回合")
+	baseStore.mu.Lock()
+	require.Equal(t, RealtimeControllerClosed, baseStore.record.Controller)
+	require.Empty(t, baseStore.record.EmployeeTurnReservations)
+	baseStore.mu.Unlock()
+	_, exists := svc.realtimeEmployeeTurnReservations.Load(record.CallHash)
+	require.False(t, exists, "cleanup 必须移除 closed call 的内存员工回合账本")
+	repo.mu.Lock()
+	require.Empty(t, repo.reserved)
+	require.Empty(t, repo.releases)
+	require.Empty(t, repo.renewals)
 	repo.mu.Unlock()
 }
 
