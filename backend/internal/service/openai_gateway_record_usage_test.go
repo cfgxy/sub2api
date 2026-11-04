@@ -730,11 +730,11 @@ func TestOpenAIGatewayServiceRecordUsage_CapturesEnterpriseAttributionCandidate(
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, pricingAt, usageRepo.lastLog.AttributionRequestAt)
-	require.Equal(t, dayAnchor, *usageRepo.lastLog.AttributionDailyWindowAnchor)
-	require.Equal(t, weekAnchor, *usageRepo.lastLog.AttributionWeeklyWindowAnchor)
-	require.Equal(t, monthAnchor, *usageRepo.lastLog.AttributionMonthlyWindowAnchor)
 	require.True(t, usageRepo.lastLog.EnterpriseAttributionCandidate)
+	require.Equal(t, pricingAt, usageRepo.lastLog.AttributionRequestAt)
+	require.Nil(t, usageRepo.lastLog.AttributionDailyWindowAnchor)
+	require.Nil(t, usageRepo.lastLog.AttributionWeeklyWindowAnchor)
+	require.Nil(t, usageRepo.lastLog.AttributionMonthlyWindowAnchor)
 	require.Nil(t, usageRepo.lastLog.EnterpriseAttribution)
 }
 

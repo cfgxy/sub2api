@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"math"
@@ -127,6 +128,20 @@ type APIKeyRepository interface {
 
 type enterpriseUsageAttributionIdentityResolver interface {
 	ResolveEnterpriseUsageAttributionIdentity(context.Context, int64, string, *int64) (*EnterpriseUsageAttributionIdentity, error)
+}
+
+// enterpriseEmployeeWeeklyLimitSynchronizer updates the existing API-key 7d
+// fields from the authoritative employee allocation after identity resolution.
+// The state is intentionally kept on api_keys instead of creating a second
+// employee-usage ledger.
+type enterpriseEmployeeWeeklyLimitSynchronizer interface {
+	SyncEnterpriseEmployeeWeeklyLimit(context.Context, int64, *EnterpriseUsageAttributionIdentity) (*EnterpriseEmployeeWeeklyLimitState, error)
+}
+
+type EnterpriseEmployeeWeeklyLimitState struct {
+	RateLimit7d        float64
+	Usage7d            float64
+	WeeklyWindowAnchor time.Time
 }
 
 type apiKeyAllByUserIDLister interface {
@@ -814,12 +829,6 @@ func (s *APIKeyService) FinalizeEnterpriseUsageAttribution(
 	if apiKey == nil || !apiKey.EnterpriseAttributionCandidate {
 		return nil
 	}
-	// 无订阅入口保持原有放行语义，不从企业表补猜订阅或员工归属。
-	// 主中间件、Google 入口和直接调用必须共享这一 fail-open 兼容边界。
-	if subscription == nil {
-		apiKey.EnterpriseAttributionIdentity = nil
-		return nil
-	}
 	resolver, ok := s.apiKeyRepo.(enterpriseUsageAttributionIdentityResolver)
 	if !ok {
 		return ErrEnterpriseAttributionUnavailable
@@ -843,6 +852,32 @@ func (s *APIKeyService) FinalizeEnterpriseUsageAttribution(
 	copy.WeeklyWindowAnchor = cloneUsageAttributionTime(identity.WeeklyWindowAnchor)
 	copy.MonthlyWindowAnchor = cloneUsageAttributionTime(identity.MonthlyWindowAnchor)
 	apiKey.EnterpriseAttributionIdentity = &copy
+	if copy.EmployeeID == nil {
+		return nil
+	}
+	synchronizer, ok := s.apiKeyRepo.(enterpriseEmployeeWeeklyLimitSynchronizer)
+	if !ok {
+		return ErrEnterpriseAttributionUnavailable
+	}
+	state, err := synchronizer.SyncEnterpriseEmployeeWeeklyLimit(ctx, apiKey.ID, &copy)
+	if err != nil {
+		if errors.Is(err, ErrAPIKeyNotFound) {
+			return err
+		}
+		return ErrEnterpriseAttributionUnavailable
+	}
+	if state == nil {
+		return ErrEnterpriseAttributionUnavailable
+	}
+	anchor := state.WeeklyWindowAnchor.UTC()
+	apiKey.EnterpriseEmployeeWeeklyLimit = true
+	apiKey.EnterpriseWeeklyWindowAnchor = &anchor
+	apiKey.RateLimit7d = state.RateLimit7d
+	apiKey.Usage7d = state.Usage7d
+	apiKey.Window7dStart = &anchor
+	if s.rateLimitCacheInvalid != nil {
+		_ = s.rateLimitCacheInvalid.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
+	}
 	return nil
 }
 

@@ -74,6 +74,17 @@ func TestIsWindowExpired(t *testing.T) {
 	}
 }
 
+func TestAPIKeyHasRateLimits_EmployeeWeeklyLimitTreatsZeroAsConfigured(t *testing.T) {
+	ordinary := &APIKey{}
+	employee := &APIKey{EnterpriseEmployeeWeeklyLimit: true}
+	if ordinary.HasRateLimits() {
+		t.Fatal("ordinary zero-rate-limit key must remain unlimited")
+	}
+	if !employee.HasRateLimits() {
+		t.Fatal("employee zero allocation must enter the hard-limit check")
+	}
+}
+
 func TestAPIKey_EffectiveUsage(t *testing.T) {
 	now := time.Now()
 

@@ -304,6 +304,44 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Keep allocation changes in the same lock order as employee-key lifecycle
+	// and billing: employee, enterprise, assignment/key, subscription, window
+	// allocation. Do not add locks after the subscription row is held.
+	var ignoredEmployeeID int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT id FROM enterprise_employees
+		WHERE enterprise_id = $1 AND id = $2 AND status = 'active'
+		FOR UPDATE`, params.EnterpriseID, params.EmployeeID).Scan(&ignoredEmployeeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrEnterpriseAccessDenied
+		}
+		return nil, err
+	}
+	var dedicatedUserID int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT dedicated_upstream_user_id FROM enterprises
+		WHERE id = $1 AND status = 'active' FOR UPDATE`, params.EnterpriseID).Scan(&dedicatedUserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrEnterpriseAccessDenied
+		}
+		return nil, err
+	}
+	if dedicatedUserID != params.RequesterUserID {
+		return nil, ErrEnterpriseAccessDenied
+	}
+	var activeKeyID sql.NullInt64
+	var activeKey string
+	err = tx.QueryRowContext(ctx, `
+		SELECT assignment.api_key_id, api_key.key
+		FROM enterprise_key_assignments AS assignment
+		JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id AND api_key.deleted_at IS NULL
+		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2 AND assignment.status = 'active'
+		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC
+		LIMIT 1 FOR UPDATE OF assignment, api_key`, params.EnterpriseID, params.EmployeeID).Scan(&activeKeyID, &activeKey)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
 	var canonicalAnchorValue sql.NullTime
 	err = tx.QueryRowContext(ctx, `
 			SELECT CASE $1::text
@@ -311,24 +349,17 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 				WHEN 'week' THEN upstream_subscription.weekly_window_start
 				WHEN 'month' THEN upstream_subscription.monthly_window_start
 			END
-		FROM enterprise_subscriptions AS enterprise_subscription
-		JOIN enterprises AS enterprise
-		  ON enterprise.id = enterprise_subscription.enterprise_id
-		JOIN user_subscriptions AS upstream_subscription
+			FROM enterprise_subscriptions AS enterprise_subscription
+			JOIN user_subscriptions AS upstream_subscription
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
-		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+			 AND upstream_subscription.user_id = $4
 		 AND upstream_subscription.deleted_at IS NULL
-			JOIN enterprise_employees AS employee
-		  ON employee.enterprise_id = enterprise_subscription.enterprise_id
-		 AND employee.id = $5
-		 AND employee.status = 'active'
 		WHERE enterprise_subscription.enterprise_id = $2
 		  AND enterprise_subscription.id = $3
-		  AND enterprise.dedicated_upstream_user_id = $4
-		  AND enterprise.status = 'active'
+			  AND enterprise_subscription.status = 'active'
 			FOR UPDATE OF enterprise_subscription, upstream_subscription
 		`, params.WindowType, params.EnterpriseID, params.SubscriptionID,
-		params.RequesterUserID, params.EmployeeID).Scan(&canonicalAnchorValue)
+		dedicatedUserID).Scan(&canonicalAnchorValue)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrEnterpriseAccessDenied
 	}
@@ -402,6 +433,17 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 	if err != nil {
 		return nil, err
 	}
+	if params.WindowType == WindowTypeWeek && activeKeyID.Valid {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE api_keys
+			SET rate_limit_7d = $1::numeric,
+			    usage_7d = CASE WHEN window_7d_start = $2 THEN usage_7d ELSE 0 END,
+			    window_7d_start = $2,
+			    updated_at = NOW()
+			WHERE id = $3 AND deleted_at IS NULL`, credit, canonicalAnchor, activeKeyID.Int64); err != nil {
+			return nil, err
+		}
+	}
 
 	allocation.EnterpriseID = params.EnterpriseID
 	allocation.SubscriptionID = params.SubscriptionID
@@ -439,6 +481,9 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 
 	if err = tx.Commit(); err != nil {
 		return nil, err
+	}
+	if activeKeyID.Valid {
+		r.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, activeKey)
 	}
 	return allocation, nil
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -97,7 +98,8 @@ type postUsageBillingParams struct {
 var ErrSimpleModeKeyRateLimitBillingUnavailable = errors.New("simple mode api key rate-limit billing unavailable")
 
 func simpleModeKeyRateLimitBillingEnabled(cfg *config.Config, apiKey *APIKey) bool {
-	return cfg != nil && cfg.RunMode == config.RunModeSimple && cfg.SimpleModeKeyRateLimitEnabled && apiKey != nil && apiKey.HasRateLimits()
+	return cfg != nil && cfg.RunMode == config.RunModeSimple && apiKey != nil && apiKey.HasRateLimits() &&
+		(cfg.SimpleModeKeyRateLimitEnabled || apiKey.EnterpriseEmployeeWeeklyLimit)
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -363,6 +365,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
+	employeeReservation := EnterpriseEmployeeUsageReservationFromContext(ctx)
+	if cmd != nil && employeeReservation != nil {
+		cmd.RequestID = employeeReservation.RequestID()
+		cmd.RequestFingerprint = ""
+		cmd.EnterpriseEmployeeReservation = true
+		cmd.EnterpriseEmployeeActualUSD = p.Cost.ActualCost
+		cmd.Normalize()
+	}
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
 		if p.SimpleModeKeyRateLimitOnly {
 			return false, ErrSimpleModeKeyRateLimitBillingUnavailable
@@ -380,8 +390,23 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	if err != nil {
 		return false, err
 	}
+	if result == nil {
+		result = &UsageBillingApplyResult{}
+	}
+	if employeeReservation != nil {
+		settled, settleErr := settleEnterpriseEmployeeUsage(billingCtx, employeeReservation, p.Cost.ActualCost)
+		if settleErr != nil {
+			return result.Applied, fmt.Errorf("%w: %v", ErrEnterpriseEmployeeSettlementAfterBillingCommit, settleErr)
+		}
+		if settled != nil && settled.BilledAPIKeyID > 0 {
+			result.BilledAPIKeyID = settled.BilledAPIKeyID
+			if deps.billingCacheService != nil {
+				_ = deps.billingCacheService.InvalidateAPIKeyRateLimit(billingCtx, settled.BilledAPIKeyID)
+			}
+		}
+	}
 
-	if result == nil || !result.Applied {
+	if !result.Applied {
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 		return false, nil
 	}
@@ -390,6 +415,42 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
 	return true, nil
+}
+
+const (
+	employeeSettlementMaxAttempts = 3
+	employeeSettlementRetryDelay  = 50 * time.Millisecond
+)
+
+// settleEnterpriseEmployeeUsage retries only the employee-side transaction.
+// The core enterprise billing transaction has already committed and must never
+// be repeated or rolled back because this independent settlement is transiently
+// unavailable. A failed final attempt leaves a durable committed settlement;
+// the next employee admission or request-id replay reconciles it without
+// replaying core billing.
+func settleEnterpriseEmployeeUsage(ctx context.Context, reservation *EnterpriseEmployeeUsageReservation, actualUSD float64) (*EnterpriseEmployeeUsageReservationResult, error) {
+	if reservation == nil {
+		return nil, ErrEnterpriseEmployeeReservationNotFound
+	}
+	var lastErr error
+	for attempt := 1; attempt <= employeeSettlementMaxAttempts; attempt++ {
+		result, err := reservation.Settle(ctx, actualUSD)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if attempt == employeeSettlementMaxAttempts || ctx.Err() != nil {
+			break
+		}
+		timer := time.NewTimer(employeeSettlementRetryDelay * time.Duration(attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, lastErr
+		case <-timer.C:
+		}
+	}
+	return nil, lastErr
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -421,7 +482,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() && deps.billingCacheService != nil {
 		billedKeyID := billedAPIKeyID(p, result)
-		if billedKeyID != p.APIKey.ID {
+		if p.APIKey.EnterpriseEmployeeWeeklyLimit || billedKeyID != p.APIKey.ID {
 			// 数据库已向 successor 记账；直接失效缓存，避免缓存 miss 回填提交后数值后又异步重复累加。
 			_ = deps.billingCacheService.InvalidateAPIKeyRateLimit(ctx, billedKeyID)
 		} else {
@@ -921,7 +982,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {
-		usageLog.ActualCost = 0
+		if !errors.Is(billingErr, ErrEnterpriseEmployeeSettlementAfterBillingCommit) {
+			usageLog.ActualCost = 0
+		}
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
 		return billingErr
 	}

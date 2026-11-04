@@ -117,6 +117,7 @@ internal/handler/admin/idempotency_helper.go:99:6: unreachable func: executeAdmi
 internal/handler/auth_dingtalk_oauth.go:604:6: unreachable func: decideDingTalkStep34Strategy
 internal/handler/dto/mappers.go:550:6: unreachable func: ProxyWithAccountCountFromService
 internal/handler/dto/mappers.go:863:6: unreachable func: SettingFromService
+internal/handler/openai_gateway_handler.go:4592:6: unreachable func: clearCyberPolicyTurnState
 internal/handler/ops_error_logger.go:272:6: unreachable func: StopOpsErrorLogWorkers
 internal/handler/ops_error_logger.go:282:6: unreachable func: stopOpsErrorLogWorkers
 internal/handler/ops_error_logger.go:314:6: unreachable func: OpsErrorLogQueueLength
@@ -343,6 +344,7 @@ pkg/pluginapi/v1/runtime.go:78:6: unreachable func: Serve
 internal/domain/platforms.go:62:6: unreachable func: Platforms
 internal/pkg/apicompat/chatcompletions_anthropic_bridge.go:42:6: unreachable func: AnthropicToChatCompletionsRequest
 internal/pkg/apicompat/chatcompletions_to_responses.go:20:6: unreachable func: ChatCompletionsToResponses
+internal/service/billing_inflight_reservation.go:1046:6: unreachable func: EstimateInflightReservationCost
 internal/service/openai_gateway_request_body.go:1433:6: unreachable func: normalizeOpenAIResponsesWebSocketCompatibilityBody
 internal/service/openai_responses_ingress_compat.go:16:6: unreachable func: normalizeOpenAIResponsesLegacyIngress
 internal/service/platform_catalog.go:45:6: unreachable func: BuildPlatformCatalog

@@ -44,6 +44,14 @@ func TestEnterpriseUsageLogAttributionSurvivesNanosecondRequestAt(t *testing.T) 
 	loadedAPIKey, err := NewAPIKeyRepository(testEntClient(t), integrationDB).GetByID(ctx, fixture.apiKeyID)
 	require.NoError(t, err)
 	require.True(t, loadedAPIKey.EnterpriseAttributionCandidate)
+	var credential string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT key FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&credential))
+	identity, err := newAPIKeyRepositoryWithSQL(integrationEntClient, integrationDB).
+		ResolveEnterpriseUsageAttributionIdentity(ctx, fixture.apiKeyID, credential, &fixture.upstreamSubscriptionID)
+	require.NoError(t, err)
+	require.NotNil(t, identity)
+	loadedAPIKey.EnterpriseAttributionIdentity = identity
 
 	requestID := fmt.Sprintf("shan322-attrib-precision-%d", time.Now().UnixNano())
 	input := &service.RecordUsageInput{

@@ -18,8 +18,9 @@ func TestSetAllocationVersionMismatchOnExistingRowWritesRejectedAudit(t *testing
 	anchor := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	expectSetAllocationLockPrefix(mock, 7, 22, 0)
 	mock.ExpectQuery(`(?s)SELECT CASE \$1::text.*FROM enterprise_subscriptions`).
-		WithArgs(WindowTypeWeek, int64(7), int64(11), int64(0), int64(22)).
+		WithArgs(WindowTypeWeek, int64(7), int64(11), int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"current_anchor"}).AddRow(anchor))
 	mock.ExpectQuery(`(?s)SELECT id, amount::text, version, created_at, updated_at\s+FROM enterprise_weekly_allocations`).
 		WithArgs(int64(7), int64(11), int64(22), WindowTypeWeek, anchor).
@@ -48,8 +49,9 @@ func TestSetAllocationVersionMismatchOnMissingRowWritesRejectedAudit(t *testing.
 	anchor := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	expectSetAllocationLockPrefix(mock, 7, 22, 0)
 	mock.ExpectQuery(`(?s)SELECT CASE \$1::text.*FROM enterprise_subscriptions`).
-		WithArgs(WindowTypeWeek, int64(7), int64(11), int64(0), int64(22)).
+		WithArgs(WindowTypeWeek, int64(7), int64(11), int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"current_anchor"}).AddRow(anchor))
 	mock.ExpectQuery(`(?s)SELECT id, amount::text, version, created_at, updated_at\s+FROM enterprise_weekly_allocations`).
 		WithArgs(int64(7), int64(11), int64(22), WindowTypeWeek, anchor).
@@ -70,4 +72,16 @@ func TestSetAllocationVersionMismatchOnMissingRowWritesRejectedAudit(t *testing.
 
 	require.ErrorIs(t, err, ErrAllocationVersionConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func expectSetAllocationLockPrefix(mock sqlmock.Sqlmock, enterpriseID, employeeID, requesterUserID int64) {
+	mock.ExpectQuery(`(?s)SELECT id FROM enterprise_employees`).
+		WithArgs(enterpriseID, employeeID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(employeeID))
+	mock.ExpectQuery(`(?s)SELECT dedicated_upstream_user_id FROM enterprises`).
+		WithArgs(enterpriseID).
+		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(requesterUserID))
+	mock.ExpectQuery(`(?s)SELECT assignment.api_key_id, api_key.key`).
+		WithArgs(enterpriseID, employeeID).
+		WillReturnError(sql.ErrNoRows)
 }

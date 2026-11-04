@@ -8,12 +8,19 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
 
 var ErrUsageBillingRequestIDRequired = errors.New("usage billing request_id is required")
 var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerprint conflict")
+var ErrEnterpriseEmployeeReservationReplay = errors.New("enterprise employee request is already reserved")
+var ErrEnterpriseEmployeeReservationNotFound = errors.New("enterprise employee usage reservation not found")
+var ErrEnterpriseEmployeeReservationStateConflict = errors.New("enterprise employee usage reservation state conflict")
+var ErrEnterpriseEmployeeSettlementExceedsReservation = errors.New("enterprise employee actual cost exceeds reservation")
+var ErrEnterpriseEmployeeMaximumCostUnknown = errors.New("enterprise employee maximum request cost is unknown")
+var ErrEnterpriseEmployeeSettlementAfterBillingCommit = errors.New("enterprise employee settlement failed after billing commit")
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
@@ -45,6 +52,14 @@ type UsageBillingCommand struct {
 	APIKeyQuotaCost     float64
 	APIKeyRateLimitCost float64
 	AccountQuotaCost    float64
+
+	// EnterpriseEmployeeReservation means APIKeyRateLimitCost is settled in a
+	// separate employee reservation transaction after the core billing commit.
+	EnterpriseEmployeeReservation bool
+	// EnterpriseEmployeeActualUSD is atomically persisted with the core billing
+	// commit. The separate employee settlement reads this durable value instead
+	// of trusting a later in-memory usage task.
+	EnterpriseEmployeeActualUSD float64
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -90,6 +105,7 @@ func (c *UsageBillingCommand) quantizeMonetaryFields() {
 	c.APIKeyQuotaCost = QuantizeUsageBillingAmount(c.APIKeyQuotaCost)
 	c.APIKeyRateLimitCost = QuantizeUsageBillingAmount(c.APIKeyRateLimitCost)
 	c.AccountQuotaCost = QuantizeUsageBillingAmount(c.AccountQuotaCost)
+	c.EnterpriseEmployeeActualUSD = QuantizeUsageBillingAmount(c.EnterpriseEmployeeActualUSD)
 }
 
 // QuantizeUsageBillingAmount 把金额舍入到 UsageBillingMonetaryScale 位小数，
@@ -111,7 +127,7 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		return ""
 	}
 	raw := fmt.Sprintf(
-		"%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f",
+		"%d|%d|%d|%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d|%0.10f|%0.10f|%0.10f|%0.10f|%0.10f|%t|%0.10f",
 		c.UserID,
 		c.AccountID,
 		c.APIKeyID,
@@ -132,6 +148,8 @@ func buildUsageBillingFingerprint(c *UsageBillingCommand) string {
 		c.APIKeyQuotaCost,
 		c.APIKeyRateLimitCost,
 		c.AccountQuotaCost,
+		c.EnterpriseEmployeeReservation,
+		c.EnterpriseEmployeeActualUSD,
 	)
 	if payloadHash := strings.TrimSpace(c.RequestPayloadHash); payloadHash != "" {
 		raw += "|" + payloadHash
@@ -173,6 +191,79 @@ type UsageBillingApplyResult struct {
 	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
 	BalanceOverdrafted   bool               // true when the sufficient-balance guard missed and debt was still recorded
 	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+}
+
+type EnterpriseEmployeeUsageReservationCommand struct {
+	RequestID          string
+	RequestFingerprint string
+	SourceAPIKeyID     int64
+	ReservedUSD        float64
+	MaximumCostKnown   bool
+}
+
+func (c *EnterpriseEmployeeUsageReservationCommand) Normalize() {
+	if c == nil {
+		return
+	}
+	c.RequestID = strings.TrimSpace(c.RequestID)
+	c.RequestFingerprint = strings.TrimSpace(c.RequestFingerprint)
+	c.ReservedUSD = QuantizeUsageBillingAmount(c.ReservedUSD)
+}
+
+type EnterpriseEmployeeUsageReservationResult struct {
+	ReservationID              int64
+	RequestID                  string
+	SourceAPIKeyID             int64
+	EnterpriseID               int64
+	EnterpriseSubscriptionID   int64
+	UpstreamUserSubscriptionID int64
+	EmployeeID                 int64
+	AssignmentGeneration       int64
+	WeeklyWindowAnchor         time.Time
+	ReservedUSD                float64
+	MaximumCostKnown           bool
+	ActualUSD                  *float64
+	Status                     string
+	AlreadyExists              bool
+	BilledAPIKeyID             int64
+	BillingCommitted           bool
+}
+
+type EnterpriseEmployeeUsageSettlementCommand struct {
+	RequestID      string
+	SourceAPIKeyID int64
+	ActualUSD      float64
+}
+
+func (c *EnterpriseEmployeeUsageSettlementCommand) Normalize() {
+	if c == nil {
+		return
+	}
+	c.RequestID = strings.TrimSpace(c.RequestID)
+	c.ActualUSD = QuantizeUsageBillingAmount(c.ActualUSD)
+}
+
+type EnterpriseEmployeeUsageReleaseCommand struct {
+	RequestID      string
+	SourceAPIKeyID int64
+}
+
+type EnterpriseEmployeeUsageRenewCommand struct {
+	RequestID      string
+	SourceAPIKeyID int64
+}
+
+type EnterpriseEmployeeUsageReservationRepository interface {
+	ReserveEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageReservationCommand) (*EnterpriseEmployeeUsageReservationResult, error)
+	SettleEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageSettlementCommand) (*EnterpriseEmployeeUsageReservationResult, error)
+	ReleaseEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageReleaseCommand) (*EnterpriseEmployeeUsageReservationResult, error)
+	RenewEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageRenewCommand) (bool, error)
+}
+
+// EnterpriseEmployeeUsageRecoveryRepository recovers committed employee
+// settlements without replaying the core enterprise billing transaction.
+type EnterpriseEmployeeUsageRecoveryRepository interface {
+	RecoverEnterpriseEmployeeUsage(context.Context, int64) error
 }
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.

@@ -579,6 +579,28 @@ func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey 
 
 // checkAPIKeyRateLimitsWithPending 在窗口用量上叠加 pending（即将扣除的金额）后检查限速窗口。
 func (s *BillingCacheService) checkAPIKeyRateLimitsWithPending(ctx context.Context, apiKey *APIKey, pending float64) error {
+	// Enterprise employee allocations are hard limits. Their canonical window is
+	// user_subscriptions.weekly_window_start, so this path deliberately bypasses
+	// the ordinary Redis snapshot and its fail-open compatibility behavior.
+	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
+		if s.apiKeyRateLimitLoader == nil || apiKey.EnterpriseWeeklyWindowAnchor == nil {
+			return ErrAPIKeyRateLimit7dExceeded
+		}
+		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
+		if err != nil || data.Window7dStart == nil || !data.Window7dStart.UTC().Equal(apiKey.EnterpriseWeeklyWindowAnchor.UTC()) {
+			return ErrAPIKeyRateLimit7dExceeded
+		}
+		if apiKey.RateLimit7d <= 0 || data.Usage7d >= apiKey.RateLimit7d || data.Usage7d+pending > apiKey.RateLimit7d {
+			return ErrAPIKeyRateLimit7dExceeded
+		}
+		// Employee keys normally do not carry 5h/1d limits. Preserve those
+		// fields if an existing key has them, without applying rolling-window
+		// expiry semantics to the subscription-anchored 7d value.
+		key := *apiKey
+		key.RateLimit7d = 0
+		return s.evaluateRateLimits(ctx, &key, data.Usage5h, data.Usage1d, data.Usage7d,
+			data.Window5hStart, data.Window1dStart, data.Window7dStart, pending)
+	}
 	if s.cache == nil {
 		// No cache: fall back to reading from DB directly
 		if s.apiKeyRateLimitLoader == nil {
@@ -746,6 +768,9 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	// balance/subscription/platform checks bypassed while enforcing the three
 	// API-key monetary windows from the database source of truth.
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
+			return s.checkAPIKeyRateLimitsWithPending(ctx, apiKey, 0)
+		}
 		if s.cfg.SimpleModeKeyRateLimitEnabled {
 			return s.checkSimpleModeAPIKeyRateLimits(ctx, apiKey)
 		}
@@ -862,6 +887,9 @@ func (s *BillingCacheService) checkFixedChargeSubscription(ctx context.Context, 
 
 // checkFixedChargeAPIKey 按库中 Key 用量校验总额度与限速窗口覆盖 pending；未接入仓储时使用请求上下文与限速缓存中的用量。
 func (s *BillingCacheService) checkFixedChargeAPIKey(ctx context.Context, apiKey *APIKey, pending float64) error {
+	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
+		return s.checkAPIKeyRateLimitsWithPending(ctx, apiKey, pending)
+	}
 	if apiKey.Quota <= 0 && !apiKey.HasRateLimits() {
 		return nil
 	}

@@ -497,6 +497,14 @@ func TestEnterpriseAttributionPreservesFrozenIdentityAcrossLifecycle(t *testing.
 			_, err := integrationDB.ExecContext(ctx,
 				`UPDATE groups SET subscription_type = 'subscription' WHERE id = $1`, fixture.groupID)
 			require.NoError(t, err)
+			allocationRepo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+			_, err = allocationRepo.SetAllocation(ctx, enterprise.SetAllocationParams{
+				RequesterUserID: fixture.enterpriseUserID, EnterpriseID: fixture.enterpriseID,
+				SubscriptionID: fixture.subscriptionID, EmployeeID: fixture.employeeID,
+				WindowType: enterprise.WindowTypeWeek, WindowAnchor: fixture.anchor,
+				Amount: "100", Reason: "frozen attribution lifecycle regression",
+			})
+			require.NoError(t, err)
 			var credential string
 			require.NoError(t, integrationDB.QueryRowContext(ctx,
 				`SELECT key FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&credential))
@@ -640,27 +648,6 @@ func TestEnterpriseAttributionPreservesFrozenIdentityAcrossLifecycle(t *testing.
 				c.Status(http.StatusNoContent)
 			})
 
-			lifecycleStarted = true
-			go func() {
-				params := enterprise.EmployeeKeyMutationParams{
-					EnterpriseID:     fixture.enterpriseID,
-					EmployeeID:       fixture.employeeID,
-					ExpectedAPIKeyID: fixture.apiKeyID,
-					IdempotencyKey:   fmt.Sprintf("attribution-frozen-%s-%d", tc.name, time.Now().UnixNano()),
-					ActorRef:         "test:attribution-frozen",
-				}
-				var mutationErr error
-				if tc.rotate {
-					params.Plaintext = fmt.Sprintf("sk-attribution-frozen-%d", time.Now().UnixNano())
-					mutationResult, mutationErr = lifecycleRepo.RotateEmployeeKey(ctx, params)
-				} else {
-					mutationResult, mutationErr = lifecycleRepo.DisableEmployeeKey(ctx, params)
-				}
-				lifecycleDone <- mutationErr
-				close(lifecycleDone)
-			}()
-			requireEmployeeKeyApplicationWaitingOnLock(t, ctx, lifecycleApplication, lifecycleDone)
-
 			response := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, "/lifecycle-frozen-attribution", nil).WithContext(ctx)
 			request.Header.Set("x-api-key", credential)
@@ -687,6 +674,27 @@ func TestEnterpriseAttributionPreservesFrozenIdentityAcrossLifecycle(t *testing.
 			require.Equal(t, originalIdentity.AssignmentGeneration, observed.assignmentGeneration)
 			require.Equal(t, originalIdentity.EnterpriseSubscriptionID, observed.subscriptionID)
 			require.Equal(t, originalIdentity.Classification, observed.classification)
+
+			lifecycleStarted = true
+			go func() {
+				params := enterprise.EmployeeKeyMutationParams{
+					EnterpriseID:     fixture.enterpriseID,
+					EmployeeID:       fixture.employeeID,
+					ExpectedAPIKeyID: fixture.apiKeyID,
+					IdempotencyKey:   fmt.Sprintf("attribution-frozen-%s-%d", tc.name, time.Now().UnixNano()),
+					ActorRef:         "test:attribution-frozen",
+				}
+				var mutationErr error
+				if tc.rotate {
+					params.Plaintext = fmt.Sprintf("sk-attribution-frozen-%d", time.Now().UnixNano())
+					mutationResult, mutationErr = lifecycleRepo.RotateEmployeeKey(ctx, params)
+				} else {
+					mutationResult, mutationErr = lifecycleRepo.DisableEmployeeKey(ctx, params)
+				}
+				lifecycleDone <- mutationErr
+				close(lifecycleDone)
+			}()
+			requireEmployeeKeyApplicationWaitingOnLock(t, ctx, lifecycleApplication, lifecycleDone)
 
 			var prematureUsageCount int
 			require.NoError(t, integrationDB.QueryRowContext(ctx,
@@ -790,17 +798,23 @@ func TestEnterpriseCandidateAuthWithoutSubscriptionContext(t *testing.T) {
 		runMode                 string
 		path                    string
 		withSubscriptionService bool
+		wantStatus              int
+		wantHandlerCalls        int32
 	}{
 		{
 			name:                    "standard_billing_info",
 			runMode:                 config.RunModeStandard,
 			path:                    "/v1/sub2api/billing",
 			withSubscriptionService: true,
+			wantStatus:              http.StatusNoContent,
+			wantHandlerCalls:        1,
 		},
 		{
-			name:    "simple_mode",
-			runMode: config.RunModeSimple,
-			path:    "/simple-auth",
+			name:             "simple_mode_missing_allocation",
+			runMode:          config.RunModeSimple,
+			path:             "/simple-auth",
+			wantStatus:       http.StatusTooManyRequests,
+			wantHandlerCalls: 0,
 		},
 	}
 
@@ -866,8 +880,8 @@ func TestEnterpriseCandidateAuthWithoutSubscriptionContext(t *testing.T) {
 			router.ServeHTTP(response, request)
 
 			require.NotEqual(t, http.StatusServiceUnavailable, response.Code)
-			require.Equal(t, http.StatusNoContent, response.Code)
-			require.Equal(t, int32(1), handlerCalls.Load())
+			require.Equal(t, tc.wantStatus, response.Code)
+			require.Equal(t, tc.wantHandlerCalls, handlerCalls.Load())
 		})
 	}
 }

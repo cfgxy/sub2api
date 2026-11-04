@@ -1072,6 +1072,14 @@ func TestGatewayRecordUsagePersistsFrozenEnterpriseWindowThroughRealRepository(t
 	loadedAPIKey, err := NewAPIKeyRepository(testEntClient(t), integrationDB).GetByID(ctx, fixture.apiKeyID)
 	require.NoError(t, err)
 	require.True(t, loadedAPIKey.EnterpriseAttributionCandidate)
+	var credential string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT key FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&credential))
+	identity, err := newAPIKeyRepositoryWithSQL(integrationEntClient, integrationDB).
+		ResolveEnterpriseUsageAttributionIdentity(ctx, fixture.apiKeyID, credential, &fixture.upstreamSubscriptionID)
+	require.NoError(t, err)
+	require.NotNil(t, identity)
+	loadedAPIKey.EnterpriseAttributionIdentity = identity
 
 	input := &service.RecordUsageInput{
 		Result: &service.ForwardResult{
@@ -1352,6 +1360,7 @@ func cleanupEnterpriseFixture(t *testing.T, enterpriseID, userID int64, suffix s
 		{"DELETE FROM enterprise_sessions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_usage_attributions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM usage_logs WHERE user_id = $1", []any{userID}},
+		{"DELETE FROM enterprise_employee_usage_reservations WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_allocation_revisions WHERE enterprise_id = $1", []any{enterpriseID}},
 		{"DELETE FROM enterprise_weekly_allocations WHERE enterprise_id = $1", []any{enterpriseID}},
 		// enterprise_audit_events 由 243 迁移设为 append-only（触发器拦截 UPDATE/DELETE）；

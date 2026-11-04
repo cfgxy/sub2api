@@ -268,6 +268,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
+	if reservation := service.InflightReservationFromContext(parent); reservation != nil {
+		base = service.WithInflightReservation(base, reservation)
+	}
 	return base
 }
 
@@ -2701,6 +2704,44 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	defer inflightDone()
 	ctx = inflightCtx
+	// WebSocket 的每个 turn 都是独立的可计费上游调用。首轮预占已经
+	// 挂在连接 context 上；后续 turn 必须使用各自的 request-id 与预占，
+	// 不能复用首轮已结算记录。
+	var employeeTurnReservations struct {
+		sync.Mutex
+		byTurn map[int]*service.InflightReservation
+	}
+	if service.EnterpriseEmployeeUsageReservationFromContext(ctx) != nil {
+		first := service.InflightReservationFromContext(ctx)
+		employeeTurnReservations.byTurn = map[int]*service.InflightReservation{1: first}
+	}
+	// 后续 turn 的预占只应由该 turn 的计费任务或确认未生成可计费用量的
+	// 错误路径结束；连接意外退出时也必须释放，不能永久占住周额度。
+	takeEmployeeTurnReservation := func(turn int) *service.InflightReservation {
+		if turn <= 1 {
+			return nil // 首轮由外层 inflightDone 管理。
+		}
+		employeeTurnReservations.Lock()
+		reservation := employeeTurnReservations.byTurn[turn]
+		delete(employeeTurnReservations.byTurn, turn)
+		employeeTurnReservations.Unlock()
+		return reservation
+	}
+	defer func() {
+		employeeTurnReservations.Lock()
+		pending := employeeTurnReservations.byTurn
+		employeeTurnReservations.byTurn = nil
+		employeeTurnReservations.Unlock()
+		for turn, reservation := range pending {
+			if turn > 1 && reservation != nil {
+				reservation.HandlerDone()
+			}
+		}
+	}()
+	var employeeTurnRequests struct {
+		sync.Mutex
+		byTurn map[int]service.InflightEstimateRequest
+	}
 
 	// A WebSocket may outlive a key's remaining spending window. Recheck
 	// after acquiring turn slots, including the first account-selection wait.
@@ -2999,6 +3040,25 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if cyberBlockedThisConn && !h.cyberPolicyLogOnly(c, apiKey) {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, cyberSessionBlockedClientMsg, nil)
 				}
+				if service.EnterpriseEmployeeUsageReservationFromContext(ctx) != nil {
+					model := strings.TrimSpace(originalModel)
+					if model == "" {
+						model = strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+					}
+					if model == "" {
+						model = reqModel
+					}
+					if first := service.EnterpriseEmployeeUsageReservationFromContext(ctx); first != nil {
+						req := tokenInflightEstimate(model, payload)
+						req.RequestID = fmt.Sprintf("%s:turn:%d", first.RequestID(), turn)
+						employeeTurnRequests.Lock()
+						if employeeTurnRequests.byTurn == nil {
+							employeeTurnRequests.byTurn = make(map[int]service.InflightEstimateRequest)
+						}
+						employeeTurnRequests.byTurn[turn] = req
+						employeeTurnRequests.Unlock()
+					}
+				}
 				if turn == 1 {
 					return nil
 				}
@@ -3101,7 +3161,26 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
 				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
-				return checkSimpleModeTurnBilling()
+				if err := checkSimpleModeTurnBilling(); err != nil {
+					return err
+				}
+				if service.EnterpriseEmployeeUsageReservationFromContext(ctx) != nil {
+					employeeTurnRequests.Lock()
+					req, ok := employeeTurnRequests.byTurn[turn]
+					employeeTurnRequests.Unlock()
+					if !ok {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "employee billing reservation missing", nil)
+					}
+					reservation, reserveErr := h.gatewayService.ReserveEnterpriseEmployeeUsage(ctx, apiKey, req)
+					if reserveErr != nil {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", reserveErr)
+					}
+					handle := service.AttachEnterpriseEmployeeUsageReservation(nil, reservation)
+					employeeTurnReservations.Lock()
+					employeeTurnReservations.byTurn[turn] = handle
+					employeeTurnReservations.Unlock()
+				}
+				return nil
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
 				turnStart := getTurnStart(turn)
@@ -3135,6 +3214,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnUsageFields := turnMapping.ToUsageFields(turnRequestedModel, turnUpstreamModel)
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
 				turnRecordPricingAt := openAIWSCyberPricingAt(&turnPricing, turnStart)
+				turnBillingCtx := ctx
+				turnReservation := takeEmployeeTurnReservation(turn)
+				if turnReservation != nil && turn > 1 {
+					turnBillingCtx = service.WithInflightReservation(turnBillingCtx, turnReservation)
+				}
 				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash, turnRecordPricingAt)
 				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
 					cyberBlockedThisConn,
@@ -3144,11 +3228,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				)
 				if turnErr != nil {
 					if result == nil || result.ImageCount <= 0 {
+						if turnReservation != nil && turn > 1 {
+							turnReservation.HandlerDone()
+						}
 						return
 					}
 					// cyber 命中时该 turn 的用量已由 recordCyberPolicyIfMarked(forwardErrored=true)
 					// 按真实 token 记录，这里不再走下方 RecordUsage，避免对同一 turn 双写/双扣费。
 					if service.GetOpsCyberPolicy(c) != nil {
+						if turnReservation != nil && turn > 1 {
+							turnReservation.HandlerDone()
+						}
 						return
 					}
 					reqLog.Warn("openai.websocket_partial_error_with_image_result",
@@ -3158,6 +3248,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					)
 				}
 				if result == nil {
+					if turnReservation != nil && turn > 1 {
+						turnReservation.HandlerDone()
+					}
 					return
 				}
 				result.BillingModel = openAIWSTurnBillingModel(result, turnMapping, turnRequestedModel, turnUpstreamModel)
@@ -3182,7 +3275,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				sessionID := service.ExtractClientSessionID(c)
 				turnBillingAPIKey := turnBillingAPIKeys.forTurn(turn, apiKey)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
+				h.submitOpenAIUsageRecordTask(turnBillingCtx, result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,
 						APIKey:             turnBillingAPIKey,
@@ -3208,6 +3301,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						)
 					}
 				})
+				if turnReservation != nil && turn > 1 {
+					turnReservation.HandlerDone()
+				}
 			},
 		}
 
@@ -3454,6 +3550,12 @@ func getContextInt64(c *gin.Context, key string) (int64, bool) {
 
 func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
 	if task == nil {
+		return
+	}
+	// 员工预占已经在上游调用前持久化；丢弃结算任务会把已发生的
+	// 上游费用误判为未调用并释放预占，因此该路径必须同步回退。
+	if service.EnterpriseEmployeeUsageReservationFromContext(parent) != nil {
+		h.submitMandatoryUsageRecordTask(parent, task)
 		return
 	}
 	task, abandon := wrapUsageRecordTaskContext(parent, task)

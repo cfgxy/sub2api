@@ -67,7 +67,7 @@ func (s *enterpriseAttributionResolverStub) ResolveEnterpriseUsageAttributionIde
 	return nil, nil
 }
 
-func TestFinalizeEnterpriseUsageAttributionWithoutSubscriptionIsNoop(t *testing.T) {
+func TestFinalizeEnterpriseUsageAttributionWithoutSubscriptionSelfResolves(t *testing.T) {
 	resolver := &enterpriseAttributionResolverStub{}
 	svc := NewAPIKeyService(resolver, nil, nil, nil, nil, nil, nil)
 	apiKey := &APIKey{
@@ -77,7 +77,7 @@ func TestFinalizeEnterpriseUsageAttributionWithoutSubscriptionIsNoop(t *testing.
 	}
 
 	require.NoError(t, svc.FinalizeEnterpriseUsageAttribution(context.Background(), apiKey, "redacted-credential", nil))
-	require.Zero(t, resolver.calls)
+	require.Equal(t, 1, resolver.calls)
 	require.Nil(t, apiKey.EnterpriseAttributionIdentity)
 }
 
