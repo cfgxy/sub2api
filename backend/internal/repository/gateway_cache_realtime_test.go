@@ -142,7 +142,7 @@ func TestGatewayCacheRealtimeFinalizationSeparatesActualAndConservativeUsage(t *
 	}
 	require.NoError(t, cache.SaveRealtimeCall(ctx, record, time.Hour))
 
-	claimed, err := cache.ClaimRealtimeFinalization(ctx, record.CallHash, "finalizer", time.Hour)
+	claimed, err := cache.ClaimRealtimeFinalization(ctx, record.CallHash, "finalizer", time.Minute, time.Hour)
 	require.NoError(t, err)
 	require.True(t, claimed)
 	claimed, err = cache.ClaimRealtimeUsage(ctx, record.CallHash, "actual", "actual-owner", time.Second)
@@ -164,6 +164,41 @@ func TestGatewayCacheRealtimeFinalizationSeparatesActualAndConservativeUsage(t *
 	controller, err := cache.GetRealtimeController(ctx, record.CallHash)
 	require.NoError(t, err)
 	require.Equal(t, service.RealtimeControllerClosed, controller)
+}
+
+func TestGatewayCacheRealtimeFinalizationLeaseTransfersAfterOwnerExit(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	cache, ok := NewGatewayCache(client).(interface {
+		service.RealtimeCallStore
+		service.RealtimeFinalizationStore
+	})
+	require.True(t, ok)
+	ctx := context.Background()
+	record := &service.RealtimeCallRecord{
+		CallID: "call-owner-exit", CallHash: "call-owner-exit-hash", AccountID: 1, APIKeyID: 2,
+		UserID: 3, Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+		Controller: service.RealtimeControllerPending,
+	}
+	require.NoError(t, cache.SaveRealtimeCall(ctx, record, time.Hour))
+
+	claimed, err := cache.ClaimRealtimeFinalization(ctx, record.CallHash, "owner-a", 20*time.Millisecond, time.Hour)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	claimed, err = cache.ClaimRealtimeFinalization(ctx, record.CallHash, "owner-b", 20*time.Millisecond, time.Hour)
+	require.NoError(t, err)
+	require.False(t, claimed)
+
+	time.Sleep(30 * time.Millisecond)
+	claimed, err = cache.ClaimRealtimeFinalization(ctx, record.CallHash, "owner-b", 20*time.Millisecond, time.Hour)
+	require.NoError(t, err)
+	require.True(t, claimed, "过期 owner lease 必须允许新进程接管")
+	closed, err := cache.CommitRealtimeFinalization(ctx, record.CallHash, "owner-a", time.Hour)
+	require.NoError(t, err)
+	require.False(t, closed, "过期 owner 不得关闭已接管的会话")
+	closed, err = cache.CommitRealtimeFinalization(ctx, record.CallHash, "owner-b", time.Hour)
+	require.NoError(t, err)
+	require.True(t, closed)
 }
 
 func TestGatewayCacheListActiveRealtimeCallsSkipsClosedRecords(t *testing.T) {

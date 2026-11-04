@@ -524,6 +524,10 @@ type OpenAIGatewayService struct {
 	realtimeCallbacks atomic.Value // *realtimeLifecycleCallbacks
 	// realtimeFinalizationRetries 为每个持久化 finalizing 账本保留至多一个重试器。
 	realtimeFinalizationRetries sync.Map // key: string(call hash), value: struct{}
+	// realtimeReservationRestoreRetries 为每个需要恢复的会话保留至多一个重试器。
+	realtimeReservationRestoreRetries sync.Map // key: string(call hash), value: struct{}
+	// realtimeUsageCommitRetries 保留已完成业务计费但尚未提交 Redis 幂等标记的 claim。
+	realtimeUsageCommitRetries sync.Map // key: string(call hash + response id), value: struct{}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

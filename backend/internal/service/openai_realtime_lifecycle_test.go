@@ -13,11 +13,13 @@ import (
 
 type realtimeLifecycleStore struct {
 	GatewayCache
-	mu        sync.Mutex
-	record    *RealtimeCallRecord
-	usage     map[string]struct{}
-	committed map[string]struct{}
-	finalizer string
+	mu                      sync.Mutex
+	record                  *RealtimeCallRecord
+	usage                   map[string]struct{}
+	committed               map[string]struct{}
+	finalizer               string
+	finalizerCommitFailures atomic.Int32
+	usageCommitFailures     atomic.Int32
 }
 
 func (s *realtimeLifecycleStore) SaveRealtimeCall(_ context.Context, record *RealtimeCallRecord, _ time.Duration) error {
@@ -86,7 +88,7 @@ func (s *realtimeLifecycleStore) MarkRealtimeCallClosed(_ context.Context, callH
 	return true, nil
 }
 
-func (s *realtimeLifecycleStore) ClaimRealtimeFinalization(_ context.Context, callHash, owner string, _ time.Duration) (bool, error) {
+func (s *realtimeLifecycleStore) ClaimRealtimeFinalization(_ context.Context, callHash, owner string, _, _ time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.record == nil || s.record.CallHash != callHash || s.record.Controller == RealtimeControllerClosed || (s.record.Controller == RealtimeControllerFinalizing && s.finalizer != "" && s.finalizer != owner) {
@@ -108,6 +110,9 @@ func (s *realtimeLifecycleStore) ReleaseRealtimeFinalization(_ context.Context, 
 }
 
 func (s *realtimeLifecycleStore) CommitRealtimeFinalization(_ context.Context, callHash, owner string, _ time.Duration) (bool, error) {
+	if s.finalizerCommitFailures.Add(-1) >= 0 {
+		return false, errors.New("temporary finalizer commit failure")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.record == nil || s.record.CallHash != callHash || s.record.Controller != RealtimeControllerFinalizing || s.finalizer != owner {
@@ -137,6 +142,9 @@ func (s *realtimeLifecycleStore) ClaimRealtimeUsage(ctx context.Context, callHas
 }
 
 func (s *realtimeLifecycleStore) CommitRealtimeUsageClaim(_ context.Context, callHash, responseID, _ string, _ time.Duration) (bool, error) {
+	if s.usageCommitFailures.Add(-1) >= 0 {
+		return false, errors.New("temporary usage commit failure")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := callHash + ":" + responseID
@@ -407,6 +415,70 @@ func TestFinalizeOfficialRealtimeCallRetriesConservativeSettlement(t *testing.T)
 	releases = concurrency.releases
 	concurrency.mu.Unlock()
 	require.Equal(t, 1, releases)
+}
+
+func TestFinalizeOfficialRealtimeCallRetriesFinalizationCommit(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call-finalization-commit", CallHash: hashRealtimeCallID("call-finalization-commit"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-finalization-commit", Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	store.finalizerCommitFailures.Store(1)
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	concurrency := &realtimeLifecycleConcurrencyCache{}
+	svc := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(concurrency)}
+
+	svc.finalizeOfficialRealtimeCall(record)
+	require.Eventually(t, func() bool {
+		controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+		return err == nil && controller == RealtimeControllerClosed
+	}, 2*time.Second, 10*time.Millisecond)
+	concurrency.mu.Lock()
+	defer concurrency.mu.Unlock()
+	require.Equal(t, 1, concurrency.releases, "终态提交成功前不得释放会话租约")
+}
+
+func TestRealtimeUsageBusinessSuccessRetriesIdempotencyCommit(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call-usage-commit", CallHash: hashRealtimeCallID("call-usage-commit"), Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	store.usageCommitFailures.Store(1)
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store}
+	claim, claimed, err := svc.claimRealtimeUsage(store, record.CallHash, "response-1")
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	var businessCalls atomic.Int32
+	businessCalls.Add(1) // 上游 RecordUsage 已成功；仅 Redis 幂等提交暂态失败。
+	svc.commitRealtimeUsageClaim(record, "response-1", claim)
+	require.Eventually(t, func() bool {
+		used, err := store.HasCommittedRealtimeUsage(context.Background(), record.CallHash)
+		return err == nil && used
+	}, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(1), businessCalls.Load(), "重试不得再次执行业务扣费")
+}
+
+func TestFinalizeOfficialRealtimeCallWaitsForPendingUsageAlongsideCommittedUsage(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call-mixed-usage", CallHash: hashRealtimeCallID("call-mixed-usage"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-mixed-usage", ReservationUSD: 0.9, Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	concurrency := &realtimeLifecycleConcurrencyCache{}
+	svc := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(concurrency)}
+
+	claimed, err := store.ClaimRealtimeUsage(context.Background(), record.CallHash, "committed", "owner-committed", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	committed, err := store.CommitRealtimeUsageClaim(context.Background(), record.CallHash, "committed", "owner-committed", time.Hour)
+	require.NoError(t, err)
+	require.True(t, committed)
+	claimed, err = store.ClaimRealtimeUsage(context.Background(), record.CallHash, "pending", "owner-pending", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	svc.finalizeOfficialRealtimeCall(record)
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerFinalizing, controller, "任一 pending usage 必须优先阻止关闭")
+	concurrency.mu.Lock()
+	require.Equal(t, 0, concurrency.releases)
+	concurrency.mu.Unlock()
 }
 
 func TestRecoverOfficialRealtimeCallsRestartsObserverFromLedger(t *testing.T) {

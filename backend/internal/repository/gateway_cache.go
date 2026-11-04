@@ -412,21 +412,28 @@ var claimRealtimeFinalizationScript = redis.NewScript(`
 	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
 	local controller = redis.call('HGET', key, 'controller')
 	local current_owner = redis.call('HGET', key, 'finalizer_owner')
-	if controller == 'finalizing' and current_owner ~= '' and current_owner ~= ARGV[1] then return 0 end
-	redis.call('HSET', key, 'controller', 'finalizing', 'controller_owner', '', 'finalizer_owner', ARGV[1])
-	redis.call('EXPIRE', key, ARGV[2])
+	local time = redis.call('TIME')
+	local now = time[1] * 1000 + math.floor(time[2] / 1000)
+	local owner_until = tonumber(redis.call('HGET', key, 'finalizer_owner_until')) or 0
+	if controller == 'finalizing' and current_owner ~= '' and current_owner ~= ARGV[1] and owner_until > now then return 0 end
+	redis.call('HSET', key, 'controller', 'finalizing', 'controller_owner', '', 'finalizer_owner', ARGV[1], 'finalizer_owner_until', now + ARGV[2])
+	redis.call('EXPIRE', key, ARGV[3])
 	return 1
 `)
 
 var releaseRealtimeFinalizationScript = redis.NewScript(`
 	if redis.call('HGET', KEYS[1], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[1], 'finalizer_owner') ~= ARGV[1] then return 0 end
-	redis.call('HSET', KEYS[1], 'finalizer_owner', '')
+	redis.call('HSET', KEYS[1], 'finalizer_owner', '', 'finalizer_owner_until', '0')
 	return 1
 `)
 
 var commitRealtimeFinalizationScript = redis.NewScript(`
 	if redis.call('HGET', KEYS[1], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[1], 'finalizer_owner') ~= ARGV[1] then return 0 end
-	redis.call('HSET', KEYS[1], 'controller', 'closed', 'controller_owner', '', 'finalizer_owner', '')
+	local time = redis.call('TIME')
+	local now = time[1] * 1000 + math.floor(time[2] / 1000)
+	local owner_until = tonumber(redis.call('HGET', KEYS[1], 'finalizer_owner_until')) or 0
+	if owner_until <= now then return 0 end
+	redis.call('HSET', KEYS[1], 'controller', 'closed', 'controller_owner', '', 'finalizer_owner', '', 'finalizer_owner_until', '0')
 	redis.call('EXPIRE', KEYS[1], ARGV[2])
 	return 1
 `)
@@ -453,6 +460,10 @@ var claimRealtimeUsageScript = redis.NewScript(`
 
 var claimRealtimeConservativeUsageScript = redis.NewScript(`
 	if redis.call('HGET', KEYS[2], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[2], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	local time = redis.call('TIME')
+	local now = time[1] * 1000 + math.floor(time[2] / 1000)
+	local owner_until = tonumber(redis.call('HGET', KEYS[2], 'finalizer_owner_until')) or 0
+	if owner_until <= now then return 0 end
 	local current = redis.call('GET', KEYS[1])
 	if current == false then
 		redis.call('PSETEX', KEYS[1], ARGV[3], 'pending:' .. ARGV[2])
@@ -740,11 +751,11 @@ func (c *gatewayCache) MarkRealtimeCallClosed(ctx context.Context, callHash stri
 	return result == 1, err
 }
 
-func (c *gatewayCache) ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error) {
-	if strings.TrimSpace(owner) == "" || ttl <= 0 {
+func (c *gatewayCache) ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, lease, recordTTL time.Duration) (bool, error) {
+	if strings.TrimSpace(owner) == "" || lease <= 0 || recordTTL <= 0 {
 		return false, errors.New("invalid realtime finalization claim")
 	}
-	result, err := claimRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner, int64(ttl.Seconds())).Int()
+	result, err := claimRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner, lease.Milliseconds(), int64(recordTTL.Seconds())).Int()
 	return result == 1, err
 }
 

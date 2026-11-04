@@ -195,6 +195,18 @@ type memInflightCache struct {
 	scopeContextCanceled atomic.Bool
 }
 
+type failingScopeRestoreInflightCache struct {
+	*memInflightCache
+	failingScope string
+}
+
+func (m *failingScopeRestoreInflightCache) RestoreInflightScope(ctx context.Context, scope, requestID string, amount float64, ttl time.Duration) error {
+	if scope == m.failingScope {
+		return errors.New("temporary scope restore failure")
+	}
+	return m.memInflightCache.RestoreInflightScope(ctx, scope, requestID, amount, ttl)
+}
+
 func newMemInflightCache(balance float64) *memInflightCache {
 	return &memInflightCache{balance: balance, res: map[string]float64{}, exp: map[string]time.Time{}, scopes: map[string]time.Time{}, scopeAmounts: map[string]float64{}}
 }
@@ -466,7 +478,8 @@ func TestInflightReservation_RestoreRealtimeReservationRenewsAllRecordedDimensio
 
 	// Realtime 账本可同时记录余额与两个 scope 的预留。
 	// 恢复必须以同一 request ID 重建并续期全部维度。
-	release := svc.RestoreInflightReservation(apiKey.User.ID, requestID, 0.9, true, scopes)
+	release, err := svc.RestoreInflightReservation(apiKey.User.ID, requestID, 0.9, true, scopes)
+	require.NoError(t, err)
 	time.Sleep(2500 * time.Millisecond)
 	require.Equal(t, 1, cache.count(), "recovered balance reservation must outlive its original TTL")
 	require.Equal(t, 2, cache.scopeCount(), "recovered subscription and API key reservations must outlive their original TTL")
@@ -475,6 +488,20 @@ func TestInflightReservation_RestoreRealtimeReservationRenewsAllRecordedDimensio
 	release()
 	require.Equal(t, 0, cache.count())
 	require.Equal(t, 0, cache.scopeCount())
+}
+
+func TestInflightReservation_RestoreFailureReleasesPartialDimensions(t *testing.T) {
+	firstScope := inflightSubscriptionScope(6)
+	secondScope := inflightAPIKeyScope(8)
+	cache := &failingScopeRestoreInflightCache{memInflightCache: newMemInflightCache(10), failingScope: secondScope}
+	svc := newInflightSvc(t, cache, 60)
+
+	release, err := svc.RestoreInflightReservation(3, "partial-restore", 0.9, true, []string{firstScope, secondScope})
+	require.Error(t, err)
+	require.Nil(t, release)
+	require.Equal(t, 0, cache.count(), "恢复失败必须释放已恢复的余额预留")
+	require.Equal(t, 0, cache.scopeCount(), "恢复失败必须释放此前成功恢复的 scope")
+	require.GreaterOrEqual(t, cache.releaseCt.Load(), int32(1))
 }
 
 func TestRecoverOfficialRealtimeFinalizingCallRenewsAndReleasesReservation(t *testing.T) {

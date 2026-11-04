@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -336,17 +337,17 @@ func (s *BillingCacheService) ReserveInflightForAPIKey(ctx context.Context, user
 
 // RestoreInflightReservation 从活动 Realtime ledger 重建预留成员并恢复独立续期。
 // ledger 仅在通过准入后写入，因此此处不重跑额度检查，也不分配新的 request ID。
-func (s *BillingCacheService) RestoreInflightReservation(userID int64, requestID string, amount float64, hasBalance bool, scopes []string) func() {
+func (s *BillingCacheService) RestoreInflightReservation(userID int64, requestID string, amount float64, hasBalance bool, scopes []string) (func(), error) {
 	if s == nil || userID <= 0 || requestID == "" || amount <= 0 {
-		return noopRelease
+		return noopRelease, nil
 	}
 	cfg, ok := s.inflightReservationConfig()
 	if !ok {
-		return noopRelease
+		return noopRelease, nil
 	}
 	restorer, ok := s.cache.(InflightReservationRestorer)
 	if !ok || restorer == nil {
-		return noopRelease
+		return nil, fmt.Errorf("inflight reservation restorer unavailable")
 	}
 	ttl := defaultInflightReservationTTL
 	if cfg.TTLSeconds > 0 {
@@ -354,12 +355,16 @@ func (s *BillingCacheService) RestoreInflightReservation(userID int64, requestID
 	}
 	r := &InflightReservation{userID: userID, requestID: requestID, amount: amount, ttl: ttl}
 	r.refs.Store(1)
-	ctx, cancel := context.WithTimeout(context.Background(), inflightReservationReserveTimeout)
-	defer cancel()
 	if hasBalance {
 		cache, ok := s.cache.(InflightBalanceReservationCache)
-		if !ok || cache == nil || restorer.RestoreInflightBalance(ctx, userID, requestID, amount, ttl) != nil {
-			return noopRelease
+		if !ok || cache == nil {
+			return nil, fmt.Errorf("inflight balance reservation restorer unavailable")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), inflightReservationReserveTimeout)
+		err := restorer.RestoreInflightBalance(ctx, userID, requestID, amount, ttl)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("restore inflight balance reservation: %w", err)
 		}
 		r.cache = cache
 	}
@@ -367,22 +372,25 @@ func (s *BillingCacheService) RestoreInflightReservation(userID int64, requestID
 		cache, ok := s.cache.(InflightScopeReservationCache)
 		if !ok || cache == nil {
 			r.Release()
-			return noopRelease
-		}
-		for _, scope := range scopes {
-			if restorer.RestoreInflightScope(ctx, scope, requestID, amount, ttl) != nil {
-				r.Release()
-				return noopRelease
-			}
+			return nil, fmt.Errorf("inflight scope reservation restorer unavailable")
 		}
 		r.scopeCache = cache
-		r.scopes = append(r.scopes, scopes...)
+		for _, scope := range scopes {
+			ctx, cancel := context.WithTimeout(context.Background(), inflightReservationReserveTimeout)
+			err := restorer.RestoreInflightScope(ctx, scope, requestID, amount, ttl)
+			cancel()
+			if err != nil {
+				r.Release()
+				return nil, fmt.Errorf("restore inflight scope reservation %q: %w", scope, err)
+			}
+			r.scopes = append(r.scopes, scope)
+		}
 	}
 	if r.cache == nil && len(r.scopes) == 0 {
-		return noopRelease
+		return noopRelease, nil
 	}
 	r.startRenewal(s.inflightBalanceRenewer(), s.inflightScopeRenewer())
-	return r.Release
+	return r.Release, nil
 }
 
 func (s *BillingCacheService) inflightBalanceRenewer() InflightBalanceReservationRenewer {

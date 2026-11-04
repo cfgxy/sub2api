@@ -108,7 +108,10 @@ func (s *OpenAIGatewayService) RecoverOfficialRealtimeCalls() {
 		if record == nil {
 			continue
 		}
-		s.restoreRealtimeReservation(record)
+		if !s.restoreRealtimeReservation(record) {
+			s.scheduleRealtimeReservationRestoreRetry(record)
+			continue
+		}
 		if record.Controller == RealtimeControllerFinalizing {
 			go s.finalizeOfficialRealtimeCall(record)
 			continue
@@ -127,15 +130,51 @@ func (s *OpenAIGatewayService) RecoverOfficialRealtimeCalls() {
 	}
 }
 
-func (s *OpenAIGatewayService) restoreRealtimeReservation(record *RealtimeCallRecord) {
+func (s *OpenAIGatewayService) restoreRealtimeReservation(record *RealtimeCallRecord) bool {
 	if s == nil || s.billingCacheService == nil || record == nil || record.ReservationUSD <= 0 || record.ReservationRequestID == "" {
-		return
+		return true
 	}
 	if _, restored := s.realtimeFinalizers.Load(record.CallHash); restored {
+		return true
+	}
+	release, err := s.billingCacheService.RestoreInflightReservation(record.UserID, record.ReservationRequestID, record.ReservationUSD, record.ReservationHasBalance, record.ReservationScopes)
+	if err != nil {
+		return false
+	}
+	s.realtimeFinalizers.Store(record.CallHash, release)
+	return true
+}
+
+func (s *OpenAIGatewayService) scheduleRealtimeReservationRestoreRetry(record *RealtimeCallRecord) {
+	if record == nil {
 		return
 	}
-	release := s.billingCacheService.RestoreInflightReservation(record.UserID, record.ReservationRequestID, record.ReservationUSD, record.ReservationHasBalance, record.ReservationScopes)
-	s.realtimeFinalizers.Store(record.CallHash, release)
+	if _, loaded := s.realtimeReservationRestoreRetries.LoadOrStore(record.CallHash, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer s.realtimeReservationRestoreRetries.Delete(record.CallHash)
+		ticker := time.NewTicker(realtimeObserverRetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if !s.restoreRealtimeReservation(record) {
+				continue
+			}
+			if record.Controller == RealtimeControllerFinalizing {
+				s.finalizeOfficialRealtimeCall(record)
+				return
+			}
+			if !time.Now().Before(record.ExpiresAt) {
+				s.terminateOfficialRealtimeCall(record)
+				return
+			}
+			go s.maintainRealtimeCall(record)
+			if callbacks := s.realtimeCallbacksSnapshot(); callbacks != nil && callbacks.observe != nil {
+				go callbacks.observe(record)
+			}
+			return
+		}
+	}()
 }
 
 func (s *OpenAIGatewayService) claimRealtimeUsage(store RealtimeCallStore, callHash, responseID string) (*realtimeUsageClaim, bool, error) {
@@ -169,6 +208,34 @@ func (s *OpenAIGatewayService) claimRealtimeUsage(store RealtimeCallStore, callH
 		},
 		release: func(ctx context.Context) { _ = store.ReleaseRealtimeUsage(ctx, callHash, responseID) },
 	}, true, nil
+}
+
+// commitRealtimeUsageClaim 在业务计费成功后保留 owner-bound pending claim，
+// 直至 Redis 持久化该幂等结果。
+func (s *OpenAIGatewayService) commitRealtimeUsageClaim(record *RealtimeCallRecord, responseID string, claim *realtimeUsageClaim) {
+	if record == nil || claim == nil {
+		return
+	}
+	if err := claim.commit(context.Background()); err == nil {
+		s.retryFinalizingOfficialRealtimeCall(record)
+		return
+	}
+	key := record.CallHash + ":" + responseID
+	if _, loaded := s.realtimeUsageCommitRetries.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer s.realtimeUsageCommitRetries.Delete(key)
+		ticker := time.NewTicker(realtimeObserverRetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := claim.commit(context.Background()); err != nil {
+				continue
+			}
+			s.retryFinalizingOfficialRealtimeCall(record)
+			return
+		}
+	}()
 }
 
 func (s *OpenAIGatewayService) realtimeConcurrencyCache() (RealtimeConcurrencyCache, error) {
@@ -510,8 +577,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 				return
 			}
 			if onTurn == nil || onTurn(turn) == nil {
-				_ = claim.commit(context.Background())
-				s.retryFinalizingOfficialRealtimeCall(record)
+				s.commitRealtimeUsageClaim(record, turn.RequestID, claim)
 				return
 			}
 			claim.release(context.Background())
@@ -633,8 +699,7 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 			}
 			if claimed {
 				if onTurn == nil || onTurn(turn) == nil {
-					_ = claim.commit(context.Background())
-					s.retryFinalizingOfficialRealtimeCall(record)
+					s.commitRealtimeUsageClaim(record, turn.RequestID, claim)
 				} else {
 					claim.release(context.Background())
 				}
@@ -738,9 +803,10 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 	}
 	owner := uuid.NewString()
 	ctx, cancel := context.WithTimeout(context.Background(), realtimeOperationTimeout)
-	claimed, err := finalization.ClaimRealtimeFinalization(ctx, record.CallHash, owner, realtimeClosedRecordTTL)
+	claimed, err := finalization.ClaimRealtimeFinalization(ctx, record.CallHash, owner, realtimeReplayClaimLease, realtimeClosedRecordTTL)
 	cancel()
 	if err != nil || !claimed {
+		s.scheduleRealtimeFinalizationRetry(record)
 		return
 	}
 	complete := func() {
@@ -748,6 +814,8 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 		closed, err := finalization.CommitRealtimeFinalization(ctx, record.CallHash, owner, realtimeClosedRecordTTL)
 		cancel()
 		if err != nil || !closed {
+			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+			s.scheduleRealtimeFinalizationRetry(record)
 			return
 		}
 		s.realtimeFinalizationRetries.Delete(record.CallHash)
@@ -755,6 +823,17 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 		if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
 			finalizer.(func())()
 		}
+	}
+	pending, err := claims.HasPendingRealtimeUsage(context.Background(), record.CallHash)
+	if err != nil {
+		_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+		s.scheduleRealtimeFinalizationRetry(record)
+		return
+	}
+	if pending {
+		_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+		s.scheduleRealtimeFinalizationRetry(record)
+		return
 	}
 	used, err := claims.HasCommittedRealtimeUsage(context.Background(), record.CallHash)
 	if err != nil {
@@ -764,12 +843,6 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 	}
 	if used || record.ReservationUSD <= 0 {
 		complete()
-		return
-	}
-	pending, err := claims.HasPendingRealtimeUsage(context.Background(), record.CallHash)
-	if err != nil || pending {
-		_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
-		s.scheduleRealtimeFinalizationRetry(record)
 		return
 	}
 	responseID := "realtime-conservative:" + record.CallHash

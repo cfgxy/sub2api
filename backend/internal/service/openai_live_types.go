@@ -207,7 +207,10 @@ type RealtimeConservativeUsageClaimStore interface {
 // RealtimeFinalizationStore 持久化终态，直到实际 usage 或保守结算提交完成。
 // 这能避免可重试的计费决策尚未持久化时提前释放额度。
 type RealtimeFinalizationStore interface {
-	ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error)
+	// ClaimRealtimeFinalization grants a short, renewable owner lease while keeping
+	// the call ledger itself for recordTTL. A later process may take over only after
+	// the prior owner lease expires.
+	ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, lease, recordTTL time.Duration) (bool, error)
 	ReleaseRealtimeFinalization(ctx context.Context, callHash, owner string) (bool, error)
 	CommitRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error)
 }
