@@ -18,6 +18,9 @@ import (
 const stickySessionPrefix = "sticky_session:"
 const openAIResponsesSessionWindowPrefix = "openai_responses_session_window:"
 const liveCallPrefix = "live:call:"
+const realtimeCallPrefix = "realtime:call:"
+const realtimeUsagePrefix = "realtime:usage:"
+const realtimeWebhookPrefix = "realtime:webhook:"
 
 type gatewayCache struct {
 	rdb *redis.Client
@@ -227,6 +230,7 @@ func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key string) e
 // Compile-time assertion: gatewayCache must implement CyberSessionBlockStore.
 var _ service.CyberSessionBlockStore = (*gatewayCache)(nil)
 var _ service.LiveCallStore = (*gatewayCache)(nil)
+var _ service.RealtimeCallStore = (*gatewayCache)(nil)
 
 const reasoningContentPrefix = "reasoning_content:"
 
@@ -382,6 +386,34 @@ var markLiveCallClosedScript = redis.NewScript(`
 	return 1
 `)
 
+var claimRealtimeControllerScript = redis.NewScript(`
+	local key = KEYS[1]
+	local target = ARGV[1]
+	local owner = ARGV[2]
+	local current = redis.call('HGET', key, 'controller')
+	if current == false or current == 'closed' then return 0 end
+	if target == 'observer' and current ~= 'pending' then return 0 end
+	if target == 'proxy' and current ~= 'pending' and current ~= 'observer' and
+		(current ~= 'proxy' or redis.call('HGET', key, 'controller_owner') ~= owner) then return 0 end
+	redis.call('HSET', key, 'controller', target, 'controller_owner', owner)
+	return 1
+`)
+
+var markRealtimeCallClosedScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
+	redis.call('HSET', key, 'controller', 'closed', 'controller_owner', '')
+	redis.call('EXPIRE', key, ARGV[1])
+	return 1
+`)
+
+var releaseRealtimeControllerScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('HGET', key, 'controller') ~= 'proxy' or redis.call('HGET', key, 'controller_owner') ~= ARGV[1] then return 0 end
+	redis.call('HSET', key, 'controller', 'pending', 'controller_owner', '')
+	return 1
+`)
+
 var releaseLiveControllerScript = redis.NewScript(`
 	local key = KEYS[1]
 	if redis.call('HGET', key, 'controller') ~= 'proxy' or
@@ -394,6 +426,15 @@ var releaseLiveControllerScript = redis.NewScript(`
 
 func liveCallKey(callHash string) string {
 	return liveCallPrefix + callHash
+}
+
+func realtimeCallKey(callHash string) string {
+	return realtimeCallPrefix + callHash
+}
+
+func realtimeUsageKey(callHash, responseID string) string {
+	sum := sha256.Sum256([]byte(responseID))
+	return realtimeUsagePrefix + callHash + ":" + hex.EncodeToString(sum[:])
 }
 
 func HashLiveCallID(callID string) string {
@@ -504,4 +545,102 @@ func (c *gatewayCache) ReleaseLiveController(ctx context.Context, callHash, owne
 func (c *gatewayCache) MarkLiveCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error) {
 	result, err := markLiveCallClosedScript.Run(ctx, c.rdb, []string{liveCallKey(callHash)}, int64(ttl.Seconds())).Int()
 	return result == 1, err
+}
+
+func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.RealtimeCallRecord, ttl time.Duration) error {
+	if record == nil || record.CallHash == "" || record.CallID == "" || record.PricingAt.IsZero() {
+		return errors.New("invalid realtime call record")
+	}
+	var attribution string
+	if record.EnterpriseAttribution != nil {
+		raw, err := json.Marshal(record.EnterpriseAttribution)
+		if err != nil {
+			return err
+		}
+		attribution = string(raw)
+	}
+	values := map[string]any{
+		"call_id": record.CallID, "account_id": record.AccountID, "api_key_id": record.APIKeyID,
+		"user_id": record.UserID, "group_id": record.GroupID, "subscription_id": record.SubscriptionID,
+		"lease_id": record.LeaseID, "model": record.Model, "pricing_at": record.PricingAt.UnixMilli(),
+		"created_at": record.CreatedAt.UnixMilli(), "expires_at": record.ExpiresAt.UnixMilli(),
+		"controller": record.Controller, "controller_owner": record.ControllerOwner,
+		"user_agent": record.UserAgent, "ip_address": record.IPAddress, "inbound_endpoint": record.InboundEndpoint,
+		"enterprise_attribution": attribution,
+	}
+	pipe := c.rdb.TxPipeline()
+	pipe.HSet(ctx, realtimeCallKey(record.CallHash), values)
+	pipe.Expire(ctx, realtimeCallKey(record.CallHash), ttl)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*service.RealtimeCallRecord, error) {
+	values, err := c.rdb.HGetAll(ctx, realtimeCallKey(callHash)).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, service.ErrRealtimeCallNotFound
+	}
+	parseInt := func(field string) int64 { value, _ := strconv.ParseInt(values[field], 10, 64); return value }
+	pricingAtMillis, err := strconv.ParseInt(values["pricing_at"], 10, 64)
+	if err != nil || pricingAtMillis <= 0 {
+		return nil, errors.New("realtime call record has no pricing timestamp")
+	}
+	record := &service.RealtimeCallRecord{
+		CallID: values["call_id"], CallHash: callHash, AccountID: parseInt("account_id"), APIKeyID: parseInt("api_key_id"),
+		UserID: parseInt("user_id"), GroupID: parseInt("group_id"), SubscriptionID: parseInt("subscription_id"),
+		LeaseID: values["lease_id"], Model: values["model"], PricingAt: time.UnixMilli(pricingAtMillis),
+		CreatedAt: time.UnixMilli(parseInt("created_at")), ExpiresAt: time.UnixMilli(parseInt("expires_at")),
+		Controller: values["controller"], ControllerOwner: values["controller_owner"], UserAgent: values["user_agent"],
+		IPAddress: values["ip_address"], InboundEndpoint: values["inbound_endpoint"],
+	}
+	if raw := values["enterprise_attribution"]; raw != "" {
+		var snapshot service.EnterpriseUsageAttributionSnapshot
+		if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+			return nil, err
+		}
+		record.EnterpriseAttribution = &snapshot
+	}
+	return record, nil
+}
+
+func (c *gatewayCache) ClaimRealtimeController(ctx context.Context, callHash, controller, owner string) (bool, error) {
+	result, err := claimRealtimeControllerScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, controller, owner).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) GetRealtimeController(ctx context.Context, callHash string) (string, error) {
+	value, err := c.rdb.HGet(ctx, realtimeCallKey(callHash), "controller").Result()
+	if errors.Is(err, redis.Nil) {
+		return "", service.ErrRealtimeCallNotFound
+	}
+	return value, err
+}
+
+func (c *gatewayCache) ReleaseRealtimeController(ctx context.Context, callHash, owner string) (bool, error) {
+	result, err := releaseRealtimeControllerScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) MarkRealtimeCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error) {
+	result, err := markRealtimeCallClosedScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, int64(ttl.Seconds())).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) ClaimRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || ttl <= 0 {
+		return false, errors.New("invalid realtime response id")
+	}
+	return c.rdb.SetNX(ctx, realtimeUsageKey(callHash, responseID), "1", ttl).Result()
+}
+
+func (c *gatewayCache) ClaimRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(webhookID) == "" || ttl <= 0 {
+		return false, errors.New("invalid realtime webhook id")
+	}
+	hash := sha256.Sum256([]byte(webhookID))
+	key := realtimeWebhookPrefix + hex.EncodeToString(hash[:])
+	return c.rdb.SetNX(ctx, key, "1", ttl).Result()
 }

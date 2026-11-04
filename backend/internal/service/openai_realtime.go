@@ -29,9 +29,10 @@ type RealtimeCallRequest struct {
 }
 
 type RealtimeCallCreated struct {
-	SDP      []byte
-	CallID   string
-	Location string
+	SDP        []byte
+	CallID     string
+	Location   string
+	StatusCode int
 }
 
 type realtimeFrameConn struct {
@@ -282,7 +283,7 @@ func (s *OpenAIGatewayService) CreateOfficialRealtimeCall(
 	if err != nil {
 		return nil, err
 	}
-	return &RealtimeCallCreated{SDP: responseBody, CallID: callID, Location: location}, nil
+	return &RealtimeCallCreated{SDP: responseBody, CallID: callID, Location: location, StatusCode: response.StatusCode}, nil
 }
 
 func realtimeCallIDFromLocation(location string) (string, error) {

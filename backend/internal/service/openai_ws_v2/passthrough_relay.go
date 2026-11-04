@@ -935,6 +935,28 @@ func emitTurnComplete(
 	})
 }
 
+// ParseRealtimeTerminalEvent extracts the billable terminal result emitted by
+// an official Realtime sideband observer. It deliberately shares the relay's
+// token-bucket parser so server-owned SIP sidebands follow the same accounting
+// rules as client-owned WebRTC sidebands.
+func ParseRealtimeTerminalEvent(message []byte, startedAt, now time.Time) (RelayTurnResult, bool) {
+	if len(message) == 0 {
+		return RelayTurnResult{}, false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	state := &relayState{}
+	state.setPendingTurnStartedAt(startedAt)
+	observed := observeUpstreamMessage(state, message, now, func() time.Time { return now }, nil)
+	if !observed.terminal {
+		return RelayTurnResult{}, false
+	}
+	var turn RelayTurnResult
+	emitTurnComplete(func(result RelayTurnResult) { turn = result }, state, observed)
+	return turn, strings.TrimSpace(turn.TerminalEventType) != ""
+}
+
 func firstRelayResponseModel(message []byte) string {
 	if len(message) == 0 {
 		return ""

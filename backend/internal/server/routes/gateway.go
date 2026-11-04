@@ -37,6 +37,12 @@ func RegisterGatewayRoutes(
 	endpointNorm := handler.InboundEndpointMiddleware()
 	compositeTarget := compositeTargetPlatformMiddleware(compositeResolver)
 	compositeGeminiTarget := compositeGeminiTargetPlatformMiddleware(compositeResolver)
+	if h.OpenAIGateway != nil {
+		h.OpenAIGateway.SetSubscriptionService(subscriptionService)
+	}
+	// OpenAI calls this endpoint directly, so it must remain outside API Key
+	// middleware. The handler verifies the signed raw webhook body before any action.
+	r.POST("/v1/realtime/webhooks/openai", h.OpenAIGateway.OfficialRealtimeSIPWebhook)
 
 	// 未分组 Key 拦截中间件（按协议格式区分错误响应）
 	requireGroupAnthropic := middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter)
@@ -214,6 +220,8 @@ func RegisterGatewayRoutes(
 		// /v1/realtime and private ChatGPT /v1/live protocols remain unchanged.
 		gateway.GET("/realtime/openai", h.OpenAIGateway.OfficialRealtimeWebSocket)
 		gateway.POST("/realtime/calls", h.OpenAIGateway.OfficialRealtimeCall)
+		gateway.GET("/realtime/calls/:call_id", h.OpenAIGateway.OfficialRealtimeSideband)
+		gateway.POST("/realtime/calls/:call_id/hangup", h.OpenAIGateway.OfficialRealtimeHangup)
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
 			if isOpenAIResponsesCompatibleGatewayPlatform(c) {

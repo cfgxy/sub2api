@@ -103,3 +103,78 @@ type LiveConcurrencyCache interface {
 	RefreshLiveLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) (bool, error)
 	ReleaseLiveLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) error
 }
+
+const (
+	RealtimeControllerPending  = "pending"
+	RealtimeControllerObserver = "observer"
+	RealtimeControllerProxy    = "proxy"
+	RealtimeControllerClosed   = "closed"
+)
+
+var (
+	ErrRealtimeCallNotFound      = errors.New("realtime call not found")
+	ErrRealtimeIdentityMismatch  = errors.New("realtime call identity mismatch")
+	ErrRealtimeControllerChanged = errors.New("realtime controller changed")
+	ErrRealtimeConcurrencyFull   = errors.New("realtime concurrency is full")
+)
+
+// RealtimeCallIdentity contains the immutable attribution captured when the
+// authenticated WebRTC call is created. It is deliberately distinct from Live:
+// this is an OpenAI Platform API call, not a ChatGPT Live session.
+type RealtimeCallIdentity struct {
+	APIKeyID              int64
+	UserID                int64
+	GroupID               *int64
+	SubscriptionID        *int64
+	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot
+	Model                 string
+	PricingAt             time.Time
+	UserAgent             string
+	IPAddress             string
+	InboundEndpoint       string
+}
+
+// RealtimeCallRecord is the Redis-backed ownership and lifecycle ledger for a
+// public OpenAI Platform Realtime Call. CallID itself is never used as a Redis
+// key, preventing an upstream identifier from becoming part of the keyspace.
+type RealtimeCallRecord struct {
+	CallID                string
+	CallHash              string
+	AccountID             int64
+	APIKeyID              int64
+	UserID                int64
+	GroupID               int64
+	SubscriptionID        int64
+	LeaseID               string
+	Model                 string
+	PricingAt             time.Time
+	CreatedAt             time.Time
+	ExpiresAt             time.Time
+	Controller            string
+	ControllerOwner       string
+	UserAgent             string
+	IPAddress             string
+	InboundEndpoint       string
+	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot
+}
+
+// RealtimeCallStore is intentionally a separate cache capability so a Live
+// record can never be mistaken for an official Platform Realtime call.
+type RealtimeCallStore interface {
+	SaveRealtimeCall(ctx context.Context, record *RealtimeCallRecord, ttl time.Duration) error
+	GetRealtimeCall(ctx context.Context, callHash string) (*RealtimeCallRecord, error)
+	ClaimRealtimeController(ctx context.Context, callHash, controller, owner string) (bool, error)
+	ReleaseRealtimeController(ctx context.Context, callHash, owner string) (bool, error)
+	GetRealtimeController(ctx context.Context, callHash string) (string, error)
+	MarkRealtimeCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error)
+	ClaimRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error)
+	ClaimRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error)
+}
+
+// RealtimeConcurrencyCache owns the long lease that replaces the short HTTP
+// admission slots for an actual WebRTC/SIP call.
+type RealtimeConcurrencyCache interface {
+	AcquireRealtimeLease(ctx context.Context, accountID int64, accountMax int, userID int64, userMax int, apiKeyID int64, leaseID string, replacingRegularSlots bool) (bool, error)
+	RefreshRealtimeLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) (bool, error)
+	ReleaseRealtimeLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) error
+}

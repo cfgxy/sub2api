@@ -517,6 +517,9 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
+	// realtimeFinalizers 仅保存本进程的会话预留释放函数。进程退出后由 Redis
+	// 预留 TTL 兜底，不能把它误认为跨进程持久资源。
+	realtimeFinalizers sync.Map // key: string(call hash), value: func()
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

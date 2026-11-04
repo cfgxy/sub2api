@@ -39,6 +39,7 @@ type OpenAIGatewayHandler struct {
 	gatewayService             *service.OpenAIGatewayService
 	billingCacheService        *service.BillingCacheService
 	apiKeyService              *service.APIKeyService
+	subscriptionService        *service.SubscriptionService
 	usageRecordWorkerPool      *service.UsageRecordWorkerPool
 	errorPassthroughService    *service.ErrorPassthroughService
 	contentModerationService   *service.ContentModerationService
@@ -49,6 +50,14 @@ type OpenAIGatewayHandler struct {
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	cfg                        *config.Config
+}
+
+// SetSubscriptionService wires the optional lookup used only by server-originated
+// Realtime SIP calls. Normal API-key paths obtain their subscription in middleware.
+func (h *OpenAIGatewayHandler) SetSubscriptionService(s *service.SubscriptionService) {
+	if h != nil {
+		h.subscriptionService = s
+	}
 }
 
 type openAIWSTurnChannelMappingSnapshot struct {
