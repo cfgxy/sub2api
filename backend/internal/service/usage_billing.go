@@ -213,6 +213,7 @@ func (c *EnterpriseEmployeeUsageReservationCommand) Normalize() {
 type EnterpriseEmployeeUsageReservationResult struct {
 	ReservationID              int64
 	RequestID                  string
+	RequestFingerprint         string
 	SourceAPIKeyID             int64
 	EnterpriseID               int64
 	EnterpriseSubscriptionID   int64

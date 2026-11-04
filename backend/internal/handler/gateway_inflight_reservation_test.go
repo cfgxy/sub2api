@@ -115,6 +115,21 @@ func TestEnterpriseEmployeeUnknownMaximumStopsBeforeUpstreamCall(t *testing.T) {
 	require.Zero(t, upstreamCalls)
 }
 
+func TestReserveRealtimeSessionInflightSkipsEnterpriseEmployeeReservation(t *testing.T) {
+	estimator := &failClosedEmployeeEstimator{}
+	apiKey := &service.APIKey{
+		ID: 1, User: &service.User{ID: 2}, EnterpriseEmployeeWeeklyLimit: true,
+	}
+
+	done, err := reserveRealtimeSessionInflightBalance(
+		newInflightTestGinContext(), nil, estimator, apiKey, nil,
+		tokenInflightEstimate("gpt-realtime", []byte(`{"type":"response.create"}`)),
+	)
+	require.NoError(t, err)
+	done()
+	require.Zero(t, estimator.reserveCalls, "Realtime session admission must not create a reusable employee reservation")
+}
+
 // handlerInflightCache 内存版余额缓存 + 在途预留（语义同 Redis Lua）。
 type handlerInflightCache struct {
 	service.BillingCache

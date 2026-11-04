@@ -671,6 +671,14 @@ func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.Rea
 		}
 		attribution = string(raw)
 	}
+	var employeeTurnReservations string
+	if len(record.EmployeeTurnReservations) > 0 {
+		raw, err := json.Marshal(record.EmployeeTurnReservations)
+		if err != nil {
+			return err
+		}
+		employeeTurnReservations = string(raw)
+	}
 	values := map[string]any{
 		"call_id": record.CallID, "account_id": record.AccountID, "api_key_id": record.APIKeyID,
 		"user_id": record.UserID, "group_id": record.GroupID, "subscription_id": record.SubscriptionID,
@@ -680,8 +688,9 @@ func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.Rea
 		"user_agent": record.UserAgent, "ip_address": record.IPAddress, "inbound_endpoint": record.InboundEndpoint,
 		"enterprise_attribution": attribution, "reservation_usd": strconv.FormatFloat(record.ReservationUSD, 'f', -1, 64),
 		"reservation_request_id": record.ReservationRequestID, "reservation_has_balance": strconv.FormatBool(record.ReservationHasBalance),
-		"reservation_scopes": strings.Join(record.ReservationScopes, ","),
-		"cleanup_pending":    strconv.FormatBool(record.CleanupPending),
+		"reservation_scopes":         strings.Join(record.ReservationScopes, ","),
+		"employee_turn_reservations": employeeTurnReservations,
+		"cleanup_pending":            strconv.FormatBool(record.CleanupPending),
 	}
 	pipe := c.rdb.TxPipeline()
 	pipe.HSet(ctx, realtimeCallKey(record.CallHash), values)
@@ -726,6 +735,11 @@ func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*s
 			return nil, err
 		}
 		record.EnterpriseAttribution = &snapshot
+	}
+	if raw := values["employee_turn_reservations"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &record.EmployeeTurnReservations); err != nil {
+			return nil, err
+		}
 	}
 	return record, nil
 }

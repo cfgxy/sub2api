@@ -22,6 +22,9 @@ func TestGatewayCacheRealtimeCallControllerAndIdempotency(t *testing.T) {
 		UserID: 33, GroupID: 44, LeaseID: "lease", Model: "gpt-realtime",
 		PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
 		Controller: service.RealtimeControllerPending,
+		EmployeeTurnReservations: []service.RealtimeEmployeeTurnReservation{{
+			ResponseID: "resp_123", RequestID: "realtime-call:call_hash:resp_123", RequestFingerprint: "fingerprint", SourceAPIKeyID: 22, ReservedUSD: 1.25,
+		}},
 	}
 	require.NoError(t, cache.SaveRealtimeCall(context.Background(), record, time.Hour))
 
@@ -29,6 +32,7 @@ func TestGatewayCacheRealtimeCallControllerAndIdempotency(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, record.CallID, loaded.CallID)
 	require.Equal(t, record.PricingAt.UnixMilli(), loaded.PricingAt.UnixMilli())
+	require.Equal(t, record.EmployeeTurnReservations, loaded.EmployeeTurnReservations)
 	claimed, err := cache.ClaimRealtimeController(context.Background(), record.CallHash, service.RealtimeControllerObserver, "observer-1")
 	require.NoError(t, err)
 	require.True(t, claimed)

@@ -165,8 +165,25 @@ type RealtimeCallRecord struct {
 	ReservationRequestID  string
 	ReservationHasBalance bool
 	ReservationScopes     []string
+	// EmployeeTurnReservations holds the durable per-response employee holds.
+	// It is deliberately persisted with the call ledger so an observer started
+	// after a process restart can resume their leases instead of admitting an
+	// unbounded call after the original in-memory handle disappears.
+	EmployeeTurnReservations []RealtimeEmployeeTurnReservation
 	// CleanupPending 表示终态已持久化，但并发 lease 与预留尚未完成释放。
 	CleanupPending bool
+}
+
+// RealtimeEmployeeTurnReservation is the recoverable identity for exactly one
+// official Realtime response. RequestFingerprint and ReservedUSD are frozen at
+// admission so a later pricing change cannot turn recovery into a conflicting
+// new reservation.
+type RealtimeEmployeeTurnReservation struct {
+	ResponseID         string
+	RequestID          string
+	RequestFingerprint string
+	SourceAPIKeyID     int64
+	ReservedUSD        float64
 }
 
 // RealtimeCallStore is intentionally a separate cache capability so a Live

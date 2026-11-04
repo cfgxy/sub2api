@@ -23,6 +23,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -67,7 +68,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 	}
 	pricingCtx, pricingAt := service.WithGatewayTokenRequestPricing(c.Request.Context())
 	c.Request = c.Request.WithContext(pricingCtx)
-	reservationDone, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(model, nil))
+	reservationDone, err := reserveRealtimeSessionInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(model, nil))
 	if err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -143,8 +144,58 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 	}
 	attribution := realtimeEnterpriseAttribution(apiKey, subscription)
 	account := selection.Account
-	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model, auditClientFrame,
+	var employeeTurns struct {
+		sync.Mutex
+		reservations []*service.InflightReservation
+	}
+	takeEmployeeTurn := func() *service.InflightReservation {
+		employeeTurns.Lock()
+		defer employeeTurns.Unlock()
+		if len(employeeTurns.reservations) == 0 {
+			return nil
+		}
+		reservation := employeeTurns.reservations[0]
+		employeeTurns.reservations = employeeTurns.reservations[1:]
+		return reservation
+	}
+	defer func() {
+		employeeTurns.Lock()
+		pending := employeeTurns.reservations
+		employeeTurns.reservations = nil
+		employeeTurns.Unlock()
+		for _, reservation := range pending {
+			if reservation != nil {
+				reservation.HandlerDone()
+			}
+		}
+	}()
+	reserveEmployeeTurn := func(frameCtx context.Context, payload []byte) error {
+		if !apiKey.EnterpriseEmployeeWeeklyLimit || !realtimeResponseCreateFrame(payload) {
+			return nil
+		}
+		req := tokenInflightEstimate(model, payload)
+		req.RequestID = "realtime-ws:" + uuid.NewString()
+		employee, reserveErr := h.gatewayService.ReserveEnterpriseEmployeeUsage(frameCtx, apiKey, req)
+		if reserveErr != nil {
+			return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", reserveErr)
+		}
+		handle := service.AttachEnterpriseEmployeeUsageReservation(nil, employee)
+		employeeTurns.Lock()
+		employeeTurns.reservations = append(employeeTurns.reservations, handle)
+		employeeTurns.Unlock()
+		return nil
+	}
+	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model, func(frameCtx context.Context, payload []byte) error {
+		if err := auditClientFrame(frameCtx, payload); err != nil {
+			return err
+		}
+		return reserveEmployeeTurn(frameCtx, payload)
+	},
 		func(turn openaiwsv2.RelayTurnResult) {
+			turnReservation := takeEmployeeTurn()
+			if turnReservation != nil {
+				defer turnReservation.HandlerDone()
+			}
 			if !realtimeUsageHasTokens(turn.Usage) {
 				return
 			}
@@ -161,7 +212,11 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 				Duration:              turn.Duration,
 				FirstTokenMs:          turn.FirstTokenMs,
 			}
-			if err := h.gatewayService.RecordUsage(c.Request.Context(), &service.OpenAIRecordUsageInput{
+			billingCtx := c.Request.Context()
+			if turnReservation != nil {
+				billingCtx = service.WithInflightReservation(billingCtx, turnReservation)
+			}
+			if err := h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
 				Result:                result,
 				APIKey:                apiKey,
 				User:                  apiKey.User,
@@ -216,7 +271,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeCall(c *gin.Context) {
 		h.openAISecurityAuditError(c, decision)
 		return
 	}
-	reservationDone, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(model, request.Session))
+	reservationDone, err := reserveRealtimeSessionInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(model, request.Session))
 	if err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -336,7 +391,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSideband(c *gin.Context) {
 	defer func() { _ = downstream.CloseNow() }()
 	reqLog := requestLogger(c, "handler.openai_gateway.official_realtime_sideband",
 		zap.Int64("user_id", record.UserID), zap.Int64("api_key_id", record.APIKeyID), zap.Int64("account_id", record.AccountID))
-	if err := h.gatewayService.ProxyOfficialRealtimeSideband(c.Request.Context(), record, downstream, func(turn openaiwsv2.RelayTurnResult) error {
+	if err := h.gatewayService.ProxyOfficialRealtimeSideband(c.Request.Context(), record, downstream, h.realtimeTurnStart(record, billingAPIKey), func(turn openaiwsv2.RelayTurnResult) error {
 		if !realtimeUsageHasTokens(turn.Usage) {
 			return nil
 		}
@@ -364,7 +419,12 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSideband(c *gin.Context) {
 				return errors.New("realtime frozen subscription unavailable")
 			}
 		}
-		if err := h.gatewayService.RecordUsage(c.Request.Context(), &service.OpenAIRecordUsageInput{
+		billingCtx, billingDone, err := h.realtimeTurnBillingContext(c.Request.Context(), record, billingAPIKey, turn)
+		if err != nil {
+			return err
+		}
+		defer billingDone()
+		if err := h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
 			Result:                result,
 			APIKey:                billingAPIKey,
 			User:                  billingAPIKey.User,
@@ -507,7 +567,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSIPWebhook(c *gin.Context) {
 		return
 	}
 	pricingCtx, pricingAt := service.WithGatewayTokenRequestPricing(c.Request.Context())
-	pricingCtx, reservationDone, err := reserveInflightBalanceCtx(pricingCtx, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(config.Model, nil))
+	pricingCtx, reservationDone, err := reserveRealtimeSessionInflightBalanceCtx(pricingCtx, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(config.Model, nil))
 	if err != nil {
 		reject()
 		c.Status(http.StatusPaymentRequired)
@@ -563,7 +623,7 @@ func (h *OpenAIGatewayHandler) observeOfficialRealtimeSIPCall(record *service.Re
 	if h == nil || h.gatewayService == nil || record == nil || apiKey == nil || apiKey.User == nil || account == nil {
 		return
 	}
-	h.gatewayService.ObserveOfficialRealtimeCall(record, func(turn openaiwsv2.RelayTurnResult) error {
+	h.gatewayService.ObserveOfficialRealtimeCall(record, h.realtimeTurnStart(record, apiKey), func(turn openaiwsv2.RelayTurnResult) error {
 		if !realtimeUsageHasTokens(turn.Usage) {
 			return nil
 		}
@@ -591,7 +651,12 @@ func (h *OpenAIGatewayHandler) observeOfficialRealtimeSIPCall(record *service.Re
 				return errors.New("realtime frozen subscription unavailable")
 			}
 		}
-		if err := h.gatewayService.RecordUsage(context.Background(), &service.OpenAIRecordUsageInput{
+		billingCtx, billingDone, err := h.realtimeTurnBillingContext(context.Background(), record, apiKey, turn)
+		if err != nil {
+			return err
+		}
+		defer billingDone()
+		if err := h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
 			Result:                result,
 			APIKey:                apiKey,
 			User:                  apiKey.User,
@@ -878,6 +943,52 @@ func realtimeUsageHasTokens(usage openaiwsv2.Usage) bool {
 		usage.ImageInputTokens > 0 || usage.ImageCacheReadTokens > 0 || usage.ImageOutputTokens > 0 ||
 		usage.AudioInputTokens > 0 || usage.AudioCacheReadTokens > 0 || usage.AudioOutputTokens > 0 ||
 		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0
+}
+
+func realtimeResponseCreateFrame(payload []byte) bool {
+	return strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create"
+}
+
+// realtimeTurnBillingContext binds one terminal Realtime response to one durable
+// enterprise employee reservation. The identifier is stable across sideband
+// reconnects and SIP observer recovery, while remaining distinct for every
+// upstream response in the call.
+func (h *OpenAIGatewayHandler) realtimeTurnBillingContext(ctx context.Context, record *service.RealtimeCallRecord, apiKey *service.APIKey, turn openaiwsv2.RelayTurnResult) (context.Context, func(), error) {
+	if h == nil || h.gatewayService == nil || record == nil || apiKey == nil || !apiKey.EnterpriseEmployeeWeeklyLimit {
+		return ctx, inflightNoop, nil
+	}
+	responseID := strings.TrimSpace(turn.RequestID)
+	if responseID == "" {
+		return ctx, inflightNoop, errors.New("realtime usage response id is required")
+	}
+	if reservation := h.gatewayService.RealtimeEmployeeTurnReservation(record, responseID); reservation != nil {
+		return service.WithInflightReservation(ctx, reservation), inflightNoop, nil
+	}
+	model := firstNonEmptyRealtime(turn.RequestModel, turn.ResponseModel, record.Model)
+	req := tokenInflightEstimate(model, nil)
+	req.RequestID = "realtime-call:" + record.CallHash + ":" + responseID
+	employee, err := h.gatewayService.ReserveEnterpriseEmployeeUsage(ctx, apiKey, req)
+	if err != nil {
+		return ctx, inflightNoop, err
+	}
+	reservation := service.AttachEnterpriseEmployeeUsageReservation(nil, employee)
+	return service.WithInflightReservation(ctx, reservation), reservation.HandlerDone, nil
+}
+
+func (h *OpenAIGatewayHandler) realtimeTurnStart(record *service.RealtimeCallRecord, apiKey *service.APIKey) service.RealtimeTurnStartFunc {
+	if h == nil || h.gatewayService == nil || record == nil || apiKey == nil || !apiKey.EnterpriseEmployeeWeeklyLimit {
+		return nil
+	}
+	return func(responseID, responseModel string) (*service.InflightReservation, error) {
+		model := firstNonEmptyRealtime(responseModel, record.Model)
+		req := tokenInflightEstimate(model, nil)
+		req.RequestID = "realtime-call:" + record.CallHash + ":" + strings.TrimSpace(responseID)
+		employee, err := h.gatewayService.ReserveEnterpriseEmployeeUsage(context.Background(), apiKey, req)
+		if err != nil {
+			return nil, err
+		}
+		return service.AttachEnterpriseEmployeeUsageReservation(nil, employee), nil
+	}
 }
 
 func firstNonEmptyRealtime(values ...string) string {

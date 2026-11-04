@@ -520,6 +520,10 @@ type OpenAIGatewayService struct {
 	// realtimeFinalizers 仅保存本进程的会话预留释放函数。进程退出后由 Redis
 	// 预留 TTL 兜底，不能把它误认为跨进程持久资源。
 	realtimeFinalizers sync.Map // key: string(call hash), value: func()
+	// realtimeEmployeeTurnReservations owns renewable employee holds for active
+	// Realtime responses. Their durable identities are mirrored in the call
+	// ledger so RecoverOfficialRealtimeCalls can rebuild this process-local map.
+	realtimeEmployeeTurnReservations sync.Map // key: string(call hash), value: *realtimeEmployeeTurnReservations
 	// realtimeCallbacks 由 handler 注入，以冻结账本记录重建 observer 和终态保守计费。
 	realtimeCallbacks atomic.Value // *realtimeLifecycleCallbacks
 	// realtimeFinalizationRetries 为每个持久化 finalizing 账本保留至多一个重试器。

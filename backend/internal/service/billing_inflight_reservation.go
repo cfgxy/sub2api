@@ -134,6 +134,21 @@ func (r *EnterpriseEmployeeUsageReservation) SourceAPIKeyID() int64 {
 	return r.result.SourceAPIKeyID
 }
 
+// RealtimeSnapshot returns the immutable database identity required to resume
+// a still-running Realtime response after a process restart.
+func (r *EnterpriseEmployeeUsageReservation) RealtimeSnapshot(responseID string) RealtimeEmployeeTurnReservation {
+	if r == nil {
+		return RealtimeEmployeeTurnReservation{}
+	}
+	return RealtimeEmployeeTurnReservation{
+		ResponseID:         strings.TrimSpace(responseID),
+		RequestID:          r.result.RequestID,
+		RequestFingerprint: r.result.RequestFingerprint,
+		SourceAPIKeyID:     r.result.SourceAPIKeyID,
+		ReservedUSD:        r.result.ReservedUSD,
+	}
+}
+
 func (r *EnterpriseEmployeeUsageReservation) Settle(ctx context.Context, actualUSD float64) (*EnterpriseEmployeeUsageReservationResult, error) {
 	if r == nil || r.repo == nil {
 		return nil, ErrEnterpriseEmployeeReservationNotFound
@@ -1023,7 +1038,19 @@ func reserveEnterpriseEmployeeUsage(ctx context.Context, repo UsageBillingReposi
 	if result == nil {
 		return nil, ErrEnterpriseEmployeeReservationNotFound
 	}
+	// Production repositories return the durable row, while lightweight test
+	// repositories may omit this derived field. The command is authoritative:
+	// a conflicting fingerprint would already have been rejected by the unique
+	// request reservation before reaching this point.
+	result.RequestFingerprint = buildEnterpriseEmployeeReservationFingerprint(apiKey.ID, req, maximum)
 	if result.AlreadyExists {
+		// Realtime observers can reconnect after a process restart while a response
+		// is still running. Reattaching the same reserved handle is safe: the
+		// response ID is part of the request ID and the usage-billing repository is
+		// still the exactly-once commit boundary.
+		if result.Status == "reserved" {
+			return newEnterpriseEmployeeUsageReservation(reservationRepo, result), nil
+		}
 		if result.Status == "committed" {
 			if recoveryRepo, ok := repo.(EnterpriseEmployeeUsageRecoveryRepository); ok && recoveryRepo != nil {
 				if err := recoveryRepo.RecoverEnterpriseEmployeeUsage(ctx, apiKey.ID); err != nil {

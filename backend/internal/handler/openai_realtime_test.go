@@ -33,6 +33,12 @@ func TestOfficialRealtimeSidebandLocation(t *testing.T) {
 	require.Equal(t, "/v1/realtime/calls/call%2F123", officialRealtimeSidebandLocation("call/123"))
 }
 
+func TestRealtimeResponseCreateFrame(t *testing.T) {
+	require.True(t, realtimeResponseCreateFrame([]byte(`{"type":"response.create"}`)))
+	require.False(t, realtimeResponseCreateFrame([]byte(`{"type":"session.update"}`)))
+	require.False(t, realtimeResponseCreateFrame([]byte(`not-json`)))
+}
+
 func TestRealtimeCallIdentityFreezesAuthenticatedFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	request := httptest.NewRequest(http.MethodPost, "/v1/realtime/calls", nil)

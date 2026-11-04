@@ -35,6 +35,58 @@ type realtimeUsageLeaseTestStore struct {
 	renewals     atomic.Int32
 }
 
+type realtimeEmployeeTurnReservationRepo struct {
+	UsageBillingRepository
+	mu       sync.Mutex
+	reserved map[string]EnterpriseEmployeeUsageReservationResult
+	releases map[string]int
+	renewals map[string]int
+}
+
+func (r *realtimeEmployeeTurnReservationRepo) ReserveEnterpriseEmployeeUsage(_ context.Context, cmd *EnterpriseEmployeeUsageReservationCommand) (*EnterpriseEmployeeUsageReservationResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reserved == nil {
+		r.reserved = make(map[string]EnterpriseEmployeeUsageReservationResult)
+	}
+	result, exists := r.reserved[cmd.RequestID]
+	if !exists {
+		result = EnterpriseEmployeeUsageReservationResult{
+			ReservationID: 1, RequestID: cmd.RequestID, RequestFingerprint: cmd.RequestFingerprint,
+			SourceAPIKeyID: cmd.SourceAPIKeyID, ReservedUSD: cmd.ReservedUSD, Status: "reserved",
+		}
+		r.reserved[cmd.RequestID] = result
+	} else {
+		result.AlreadyExists = true
+	}
+	copy := result
+	return &copy, nil
+}
+
+func (r *realtimeEmployeeTurnReservationRepo) SettleEnterpriseEmployeeUsage(context.Context, *EnterpriseEmployeeUsageSettlementCommand) (*EnterpriseEmployeeUsageReservationResult, error) {
+	return nil, errors.New("unexpected employee turn settlement")
+}
+
+func (r *realtimeEmployeeTurnReservationRepo) ReleaseEnterpriseEmployeeUsage(_ context.Context, cmd *EnterpriseEmployeeUsageReleaseCommand) (*EnterpriseEmployeeUsageReservationResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.releases == nil {
+		r.releases = make(map[string]int)
+	}
+	r.releases[cmd.RequestID]++
+	return &EnterpriseEmployeeUsageReservationResult{RequestID: cmd.RequestID, SourceAPIKeyID: cmd.SourceAPIKeyID, Status: "released"}, nil
+}
+
+func (r *realtimeEmployeeTurnReservationRepo) RenewEnterpriseEmployeeUsage(_ context.Context, cmd *EnterpriseEmployeeUsageRenewCommand) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.renewals == nil {
+		r.renewals = make(map[string]int)
+	}
+	r.renewals[cmd.RequestID]++
+	return true, nil
+}
+
 func (s *realtimeUsageLeaseTestStore) ClaimRealtimeUsage(_ context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -81,6 +133,45 @@ func (s *realtimeLifecycleStore) SaveRealtimeCall(_ context.Context, record *Rea
 	copy := *record
 	s.record = &copy
 	return nil
+}
+
+func TestRealtimeEmployeeTurnReservationSurvivesRecoveryAndReleasesOnce(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{
+		CallID: "call-employee-turn", CallHash: hashRealtimeCallID("call-employee-turn"),
+		Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour),
+	}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+
+	service := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+	requestID := "realtime-call:" + record.CallHash + ":response-1"
+	require.NoError(t, service.beginRealtimeEmployeeTurn(record, "response-1", "gpt-realtime", func(responseID, _ string) (*InflightReservation, error) {
+		employee, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: requestID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1.25,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, employee)), nil
+	}))
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, []RealtimeEmployeeTurnReservation{{
+		ResponseID: "response-1", RequestID: requestID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1.25,
+	}}, persisted.EmployeeTurnReservations)
+
+	restarted := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+	require.True(t, restarted.restoreRealtimeReservation(persisted))
+	require.NotNil(t, restarted.RealtimeEmployeeTurnReservation(persisted, "response-1"))
+
+	restarted.completeRealtimeEmployeeTurn(persisted, "response-1")
+	persisted, err = store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Empty(t, persisted.EmployeeTurnReservations)
+	repo.mu.Lock()
+	require.Equal(t, 1, repo.releases[requestID])
+	repo.mu.Unlock()
 }
 
 func (s *realtimeLifecycleStore) GetRealtimeCall(_ context.Context, callHash string) (*RealtimeCallRecord, error) {
