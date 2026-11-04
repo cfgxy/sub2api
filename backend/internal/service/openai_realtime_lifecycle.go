@@ -343,7 +343,7 @@ func (s *OpenAIGatewayService) dialOfficialRealtimeSideband(ctx context.Context,
 
 // ProxyOfficialRealtimeSideband owns only the control channel. Media remains
 // between the client and OpenAI through WebRTC or SIP.
-func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context, record *RealtimeCallRecord, downstream *coderws.Conn, onTurn func(openaiwsv2.RelayTurnResult)) error {
+func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context, record *RealtimeCallRecord, downstream *coderws.Conn, onTurn func(openaiwsv2.RelayTurnResult) error) error {
 	if record == nil || downstream == nil {
 		return ErrRealtimeCallNotFound
 	}
@@ -388,13 +388,15 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 			if strings.TrimSpace(turn.RequestID) == "" {
 				return
 			}
-			claimed, claimErr := store.ClaimRealtimeUsage(context.Background(), record.CallHash, turn.RequestID, realtimeClosedRecordTTL)
+			claimed, claimErr := store.BeginRealtimeUsage(context.Background(), record.CallHash, turn.RequestID, realtimeClosedRecordTTL)
 			if claimErr != nil || !claimed {
 				return
 			}
-			if onTurn != nil {
-				onTurn(turn)
+			if onTurn == nil || onTurn(turn) == nil {
+				_ = store.CommitRealtimeUsage(context.Background(), record.CallHash, turn.RequestID, realtimeClosedRecordTTL)
+				return
 			}
+			_ = store.ReleaseRealtimeUsage(context.Background(), record.CallHash, turn.RequestID)
 		},
 	})
 	releaseController()
@@ -416,7 +418,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 // ObserveOfficialRealtimeCall owns the server-side sideband for an accepted
 // SIP call. The observer has no media path; it only settles terminal usage and
 // detects provider-reported session termination.
-func (s *OpenAIGatewayService) ObserveOfficialRealtimeCall(record *RealtimeCallRecord, onTurn func(openaiwsv2.RelayTurnResult)) {
+func (s *OpenAIGatewayService) ObserveOfficialRealtimeCall(record *RealtimeCallRecord, onTurn func(openaiwsv2.RelayTurnResult) error) {
 	if record == nil {
 		return
 	}
@@ -461,7 +463,7 @@ func (s *OpenAIGatewayService) ObserveOfficialRealtimeCall(record *RealtimeCallR
 	}
 }
 
-func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *RealtimeCallRecord, upstream openaiwsv2.FrameConn, onTurn func(openaiwsv2.RelayTurnResult)) error {
+func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *RealtimeCallRecord, upstream openaiwsv2.FrameConn, onTurn func(openaiwsv2.RelayTurnResult) error) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	frameCh := make(chan []byte, 1)
@@ -507,12 +509,16 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 			if !terminal || strings.TrimSpace(turn.RequestID) == "" {
 				continue
 			}
-			claimed, claimErr := store.ClaimRealtimeUsage(context.Background(), record.CallHash, turn.RequestID, realtimeClosedRecordTTL)
+			claimed, claimErr := store.BeginRealtimeUsage(context.Background(), record.CallHash, turn.RequestID, realtimeClosedRecordTTL)
 			if claimErr != nil {
 				return claimErr
 			}
-			if claimed && onTurn != nil {
-				onTurn(turn)
+			if claimed {
+				if onTurn == nil || onTurn(turn) == nil {
+					_ = store.CommitRealtimeUsage(context.Background(), record.CallHash, turn.RequestID, realtimeClosedRecordTTL)
+				} else {
+					_ = store.ReleaseRealtimeUsage(context.Background(), record.CallHash, turn.RequestID)
+				}
 			}
 		case err := <-errCh:
 			return err

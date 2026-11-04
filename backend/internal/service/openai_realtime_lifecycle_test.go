@@ -82,7 +82,7 @@ func (s *realtimeLifecycleStore) MarkRealtimeCallClosed(_ context.Context, callH
 	return true, nil
 }
 
-func (s *realtimeLifecycleStore) ClaimRealtimeUsage(_ context.Context, callHash, responseID string, _ time.Duration) (bool, error) {
+func (s *realtimeLifecycleStore) BeginRealtimeUsage(_ context.Context, callHash, responseID string, _ time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.usage == nil {
@@ -96,9 +96,25 @@ func (s *realtimeLifecycleStore) ClaimRealtimeUsage(_ context.Context, callHash,
 	return true, nil
 }
 
-func (s *realtimeLifecycleStore) ClaimRealtimeWebhook(context.Context, string, time.Duration) (bool, error) {
+func (*realtimeLifecycleStore) CommitRealtimeUsage(context.Context, string, string, time.Duration) error {
+	return nil
+}
+
+func (s *realtimeLifecycleStore) ReleaseRealtimeUsage(_ context.Context, callHash, responseID string) error {
+	s.mu.Lock()
+	delete(s.usage, callHash+":"+responseID)
+	s.mu.Unlock()
+	return nil
+}
+
+func (*realtimeLifecycleStore) BeginRealtimeWebhook(context.Context, string, time.Duration) (bool, error) {
 	return true, nil
 }
+
+func (*realtimeLifecycleStore) CommitRealtimeWebhook(context.Context, string, time.Duration) error {
+	return nil
+}
+func (*realtimeLifecycleStore) ReleaseRealtimeWebhook(context.Context, string) error { return nil }
 
 type realtimeLifecycleConcurrencyCache struct {
 	ConcurrencyCache

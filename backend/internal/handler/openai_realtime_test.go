@@ -61,6 +61,8 @@ func TestVerifyOfficialRealtimeWebhook(t *testing.T) {
 	now := time.Unix(1793793600, 0)
 
 	require.True(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1,invalid", "v1," + signature}, body, 5*time.Minute, now))
+	require.True(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1,invalid v1," + signature}, body, 5*time.Minute, now))
+	require.True(t, verifyOfficialRealtimeWebhook(string(key), webhookID, timestamp, []string{"v1," + signature}, body, 5*time.Minute, now))
 	require.False(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1," + signature}, append(body, 'x'), 5*time.Minute, now))
 	require.False(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1," + signature}, body, 5*time.Minute, now.Add(5*time.Minute+time.Second)))
 	require.False(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1," + signature}, body, 5*time.Minute, now.Add(-5*time.Minute-time.Second)))

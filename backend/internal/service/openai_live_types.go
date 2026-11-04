@@ -167,8 +167,12 @@ type RealtimeCallStore interface {
 	ReleaseRealtimeController(ctx context.Context, callHash, owner string) (bool, error)
 	GetRealtimeController(ctx context.Context, callHash string) (string, error)
 	MarkRealtimeCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error)
-	ClaimRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error)
-	ClaimRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error)
+	BeginRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error)
+	CommitRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) error
+	ReleaseRealtimeUsage(ctx context.Context, callHash, responseID string) error
+	BeginRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error)
+	CommitRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) error
+	ReleaseRealtimeWebhook(ctx context.Context, webhookID string) error
 }
 
 // RealtimeConcurrencyCache owns the long lease that replaces the short HTTP

@@ -36,6 +36,12 @@ type InflightScopeReservationCache interface {
 	ReleaseInflightScope(ctx context.Context, scope, requestID string) error
 }
 
+// InflightScopeReservationRenewer extends a subscription/API-key reservation
+// together with its balance reservation for long-lived sessions.
+type InflightScopeReservationRenewer interface {
+	RenewInflightScope(ctx context.Context, scope, requestID string, ttl time.Duration) (bool, error)
+}
+
 // InflightBalanceReservationRenewer 可选：续期仍存活的预留（流式长请求期间防止 TTL 过期）。
 type InflightBalanceReservationRenewer interface {
 	// RenewInflightBalance 若 requestID 仍存在则把其过期时间推迟到 now+ttl；返回是否仍存在。
@@ -58,11 +64,11 @@ const (
 //   - 创建时持有 1 个「handler」引用，并启动续期协程（每 ttl/3 续期一次）。
 //   - handler 提交计费任务时通过 Acquire 再取一个引用，由计费任务在余额缓存
 //     实际扣减之后归还（任务被丢弃时由提交方立即归还）。
-//   - handler 返回时调用 HandlerDone：停止续期并归还 handler 引用。
+//   - handler 返回时调用 HandlerDone：归还 handler 引用；其他持有者仍在时继续续期。
 //
 // 因此预留会一直保持到「handler 结束 且 所有计费任务已完成扣减」，
-// 从而消除「handler 已返回、异步计费尚未落地」窗口内的透支。handler 结束后
-// 不再续期，所以最长持有时间受 TTL 约束（计费任务卡死时预留自动过期）。
+// 从而消除「handler 已返回、异步计费尚未落地」窗口内的透支。Realtime 会话持有
+// 一个额外引用，故其 reservation 会覆盖真实会话而非仅覆盖 SDP HTTP 请求。
 // 所有方法对 nil 接收者安全。
 type InflightReservation struct {
 	// cache 为 nil 表示未登记余额维度的预留。
@@ -116,7 +122,6 @@ func (r *InflightReservation) HandlerDone() {
 		return
 	}
 	r.stopOnce.Do(func() {
-		r.stopRenewal()
 		r.decRef()
 	})
 }
@@ -183,6 +188,14 @@ func (r *InflightReservation) startRenewal(renewer InflightBalanceReservationRen
 				}
 				if !alive {
 					return
+				}
+				if scopeRenewer, ok := r.scopeCache.(InflightScopeReservationRenewer); ok {
+					for _, scope := range r.scopes {
+						alive, err := scopeRenewer.RenewInflightScope(ctx, scope, r.requestID, r.ttl)
+						if err != nil || !alive {
+							return
+						}
+					}
 				}
 			}
 		}

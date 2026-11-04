@@ -437,6 +437,11 @@ func realtimeUsageKey(callHash, responseID string) string {
 	return realtimeUsagePrefix + callHash + ":" + hex.EncodeToString(sum[:])
 }
 
+func realtimeWebhookKey(webhookID string) string {
+	hash := sha256.Sum256([]byte(webhookID))
+	return realtimeWebhookPrefix + hex.EncodeToString(hash[:])
+}
+
 func HashLiveCallID(callID string) string {
 	sum := sha256.Sum256([]byte(callID))
 	return hex.EncodeToString(sum[:])
@@ -629,18 +634,32 @@ func (c *gatewayCache) MarkRealtimeCallClosed(ctx context.Context, callHash stri
 	return result == 1, err
 }
 
-func (c *gatewayCache) ClaimRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error) {
+func (c *gatewayCache) BeginRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error) {
 	if strings.TrimSpace(responseID) == "" || ttl <= 0 {
 		return false, errors.New("invalid realtime response id")
 	}
-	return c.rdb.SetNX(ctx, realtimeUsageKey(callHash, responseID), "1", ttl).Result()
+	return c.rdb.SetNX(ctx, realtimeUsageKey(callHash, responseID), "pending", ttl).Result()
 }
 
-func (c *gatewayCache) ClaimRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error) {
+func (c *gatewayCache) CommitRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) error {
+	return c.rdb.Set(ctx, realtimeUsageKey(callHash, responseID), "committed", ttl).Err()
+}
+
+func (c *gatewayCache) ReleaseRealtimeUsage(ctx context.Context, callHash, responseID string) error {
+	return c.rdb.Del(ctx, realtimeUsageKey(callHash, responseID)).Err()
+}
+
+func (c *gatewayCache) BeginRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error) {
 	if strings.TrimSpace(webhookID) == "" || ttl <= 0 {
 		return false, errors.New("invalid realtime webhook id")
 	}
-	hash := sha256.Sum256([]byte(webhookID))
-	key := realtimeWebhookPrefix + hex.EncodeToString(hash[:])
-	return c.rdb.SetNX(ctx, key, "1", ttl).Result()
+	return c.rdb.SetNX(ctx, realtimeWebhookKey(webhookID), "pending", ttl).Result()
+}
+
+func (c *gatewayCache) CommitRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) error {
+	return c.rdb.Set(ctx, realtimeWebhookKey(webhookID), "committed", ttl).Err()
+}
+
+func (c *gatewayCache) ReleaseRealtimeWebhook(ctx context.Context, webhookID string) error {
+	return c.rdb.Del(ctx, realtimeWebhookKey(webhookID)).Err()
 }

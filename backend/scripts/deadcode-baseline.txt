@@ -277,6 +277,17 @@ internal/service/openai_images.go:1386:6: unreachable func: mergeOpenAIImagePoin
 internal/service/openai_images.go:1422:33: unreachable func: openAIImagePointerInfo.identityKey
 internal/service/openai_images.go:1439:6: unreachable func: mergeOpenAIImagePointerInfo
 internal/service/openai_images.go:1459:6: unreachable func: resolveOpenAIImageBytes
+ent/schema/group.go:317:14: unreachable func: Group.Edges
+ent/schema/group.go:334:14: unreachable func: Group.Indexes
+ent/schema/usage_log.go:203:17: unreachable func: UsageLog.Edges
+ent/schema/usage_log.go:232:17: unreachable func: UsageLog.Indexes
+internal/config/config.go:1842:6: unreachable func: Load
+internal/handler/dto/mappers.go:551:6: unreachable func: ProxyWithAccountCountFromService
+internal/handler/dto/mappers.go:864:6: unreachable func: SettingFromService
+internal/handler/openai_gateway_handler.go:4499:6: unreachable func: clearCyberPolicyTurnState
+internal/repository/gateway_cache.go:445:6: unreachable func: HashLiveCallID
+internal/service/billing_inflight_reservation.go:704:6: unreachable func: EstimateInflightReservationCost
+internal/service/billing_service.go:1923:26: unreachable func: BillingService.applyModelSpecificPricingPolicy
 internal/service/openai_images.go:1504:6: unreachable func: collectOpenAIImageInlineAssets
 internal/service/openai_images.go:1517:6: unreachable func: walkOpenAIImageInlineAssets
 internal/service/openai_images.go:1560:6: unreachable func: isLikelyOpenAIImageDownloadURL

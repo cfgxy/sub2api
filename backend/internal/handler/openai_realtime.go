@@ -317,9 +317,9 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSideband(c *gin.Context) {
 	defer func() { _ = downstream.CloseNow() }()
 	reqLog := requestLogger(c, "handler.openai_gateway.official_realtime_sideband",
 		zap.Int64("user_id", record.UserID), zap.Int64("api_key_id", record.APIKeyID), zap.Int64("account_id", record.AccountID))
-	if err := h.gatewayService.ProxyOfficialRealtimeSideband(c.Request.Context(), record, downstream, func(turn openaiwsv2.RelayTurnResult) {
+	if err := h.gatewayService.ProxyOfficialRealtimeSideband(c.Request.Context(), record, downstream, func(turn openaiwsv2.RelayTurnResult) error {
 		if !realtimeUsageHasTokens(turn.Usage) {
-			return
+			return nil
 		}
 		result := &service.OpenAIForwardResult{
 			RequestID:             turn.RequestID,
@@ -334,25 +334,36 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSideband(c *gin.Context) {
 			Duration:              turn.Duration,
 			FirstTokenMs:          turn.FirstTokenMs,
 		}
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:                result,
-				APIKey:                billingAPIKey,
-				User:                  billingAPIKey.User,
-				Account:               account,
-				Subscription:          subscription,
-				InboundEndpoint:       record.InboundEndpoint,
-				UpstreamEndpoint:      "/v1/realtime",
-				UserAgent:             record.UserAgent,
-				IPAddress:             record.IPAddress,
-				APIKeyService:         h.apiKeyService,
-				QuotaPlatform:         service.QuotaPlatform(ctx, billingAPIKey),
-				PricingAt:             record.PricingAt,
-				EnterpriseAttribution: record.EnterpriseAttribution,
-			}); err != nil {
-				reqLog.Error("official_realtime_sideband_record_usage_failed", zap.String("request_id", turn.RequestID), zap.Error(err))
+		var frozenSubscription *service.UserSubscription
+		if record.SubscriptionID > 0 {
+			if h.subscriptionService == nil {
+				return errors.New("realtime frozen subscription service unavailable")
 			}
-		})
+			var err error
+			frozenSubscription, err = h.subscriptionService.GetByID(c.Request.Context(), record.SubscriptionID)
+			if err != nil || frozenSubscription == nil || frozenSubscription.UserID != record.UserID || frozenSubscription.GroupID != record.GroupID {
+				return errors.New("realtime frozen subscription unavailable")
+			}
+		}
+		if err := h.gatewayService.RecordUsage(c.Request.Context(), &service.OpenAIRecordUsageInput{
+			Result:                result,
+			APIKey:                billingAPIKey,
+			User:                  billingAPIKey.User,
+			Account:               account,
+			Subscription:          frozenSubscription,
+			InboundEndpoint:       record.InboundEndpoint,
+			UpstreamEndpoint:      "/v1/realtime",
+			UserAgent:             record.UserAgent,
+			IPAddress:             record.IPAddress,
+			APIKeyService:         h.apiKeyService,
+			QuotaPlatform:         service.QuotaPlatform(c.Request.Context(), billingAPIKey),
+			PricingAt:             record.PricingAt,
+			EnterpriseAttribution: record.EnterpriseAttribution,
+		}); err != nil {
+			reqLog.Error("official_realtime_sideband_record_usage_failed", zap.String("request_id", turn.RequestID), zap.Error(err))
+			return err
+		}
+		return nil
 	}); err != nil {
 		if errors.Is(err, service.ErrRealtimeControllerChanged) {
 			_ = downstream.Close(coderws.StatusPolicyViolation, "realtime sideband controller unavailable")
@@ -401,7 +412,8 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSIPWebhook(c *gin.Context) {
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
-	claimed, err := store.ClaimRealtimeWebhook(c.Request.Context(), c.GetHeader("webhook-id"), realtimeWebhookReplayTTL)
+	webhookID := c.GetHeader("webhook-id")
+	claimed, err := store.BeginRealtimeWebhook(c.Request.Context(), webhookID, realtimeWebhookReplayTTL)
 	if err != nil {
 		c.Status(http.StatusServiceUnavailable)
 		return
@@ -410,6 +422,12 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSIPWebhook(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 		return
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = store.ReleaseRealtimeWebhook(context.Background(), webhookID)
+		}
+	}()
 	account, accountErr := h.gatewayService.GetOfficialRealtimeAccountByID(c.Request.Context(), config.AccountID)
 	if accountErr != nil {
 		c.Status(http.StatusServiceUnavailable)
@@ -482,6 +500,12 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSIPWebhook(c *gin.Context) {
 		c.Status(http.StatusBadGateway)
 		return
 	}
+	if err := store.CommitRealtimeWebhook(c.Request.Context(), webhookID, realtimeWebhookReplayTTL); err != nil {
+		h.gatewayService.FinalizeOfficialRealtimeCall(record)
+		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+	committed = true
 	go h.observeOfficialRealtimeSIPCall(record, apiKey, account, subscription)
 	c.Status(http.StatusNoContent)
 }
@@ -490,9 +514,9 @@ func (h *OpenAIGatewayHandler) observeOfficialRealtimeSIPCall(record *service.Re
 	if h == nil || h.gatewayService == nil || record == nil || apiKey == nil || apiKey.User == nil || account == nil {
 		return
 	}
-	h.gatewayService.ObserveOfficialRealtimeCall(record, func(turn openaiwsv2.RelayTurnResult) {
+	h.gatewayService.ObserveOfficialRealtimeCall(record, func(turn openaiwsv2.RelayTurnResult) error {
 		if !realtimeUsageHasTokens(turn.Usage) {
-			return
+			return nil
 		}
 		result := &service.OpenAIForwardResult{
 			RequestID:             turn.RequestID,
@@ -507,25 +531,36 @@ func (h *OpenAIGatewayHandler) observeOfficialRealtimeSIPCall(record *service.Re
 			Duration:              turn.Duration,
 			FirstTokenMs:          turn.FirstTokenMs,
 		}
-		h.submitOpenAIUsageRecordTask(context.Background(), result, func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:                result,
-				APIKey:                apiKey,
-				User:                  apiKey.User,
-				Account:               account,
-				Subscription:          subscription,
-				InboundEndpoint:       record.InboundEndpoint,
-				UpstreamEndpoint:      "/v1/realtime",
-				UserAgent:             record.UserAgent,
-				IPAddress:             record.IPAddress,
-				APIKeyService:         h.apiKeyService,
-				QuotaPlatform:         service.QuotaPlatform(ctx, apiKey),
-				PricingAt:             record.PricingAt,
-				EnterpriseAttribution: record.EnterpriseAttribution,
-			}); err != nil {
-				logger.L().Warn("official_realtime_sip_record_usage_failed", zap.String("request_id", turn.RequestID), zap.Error(err))
+		frozenSubscription := subscription
+		if record.SubscriptionID > 0 {
+			if h.subscriptionService == nil {
+				return errors.New("realtime frozen subscription service unavailable")
 			}
-		})
+			var err error
+			frozenSubscription, err = h.subscriptionService.GetByID(context.Background(), record.SubscriptionID)
+			if err != nil || frozenSubscription == nil || frozenSubscription.UserID != record.UserID || frozenSubscription.GroupID != record.GroupID {
+				return errors.New("realtime frozen subscription unavailable")
+			}
+		}
+		if err := h.gatewayService.RecordUsage(context.Background(), &service.OpenAIRecordUsageInput{
+			Result:                result,
+			APIKey:                apiKey,
+			User:                  apiKey.User,
+			Account:               account,
+			Subscription:          frozenSubscription,
+			InboundEndpoint:       record.InboundEndpoint,
+			UpstreamEndpoint:      "/v1/realtime",
+			UserAgent:             record.UserAgent,
+			IPAddress:             record.IPAddress,
+			APIKeyService:         h.apiKeyService,
+			QuotaPlatform:         service.QuotaPlatform(context.Background(), apiKey),
+			PricingAt:             record.PricingAt,
+			EnterpriseAttribution: record.EnterpriseAttribution,
+		}); err != nil {
+			logger.L().Warn("official_realtime_sip_record_usage_failed", zap.String("request_id", turn.RequestID), zap.Error(err))
+			return err
+		}
+		return nil
 	})
 }
 
@@ -567,13 +602,17 @@ func validRealtimeSIPBinding(apiKey *service.APIKey, model string) bool {
 }
 
 func verifyOfficialRealtimeWebhook(secret, webhookID, timestamp string, signatures []string, body []byte, maxAge time.Duration, now time.Time) bool {
-	secret = strings.TrimPrefix(strings.TrimSpace(secret), "whsec_")
+	secret = strings.TrimSpace(secret)
 	if secret == "" || webhookID == "" || timestamp == "" || len(signatures) == 0 || maxAge <= 0 {
 		return false
 	}
-	key, err := base64.StdEncoding.DecodeString(secret)
-	if err != nil || len(key) == 0 {
-		return false
+	key := []byte(secret)
+	if strings.HasPrefix(secret, "whsec_") {
+		var err error
+		key, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+		if err != nil || len(key) == 0 {
+			return false
+		}
 	}
 	unix, err := strconv.ParseInt(timestamp, 10, 64)
 	when := time.Unix(unix, 0)
@@ -585,14 +624,16 @@ func verifyOfficialRealtimeWebhook(secret, webhookID, timestamp string, signatur
 	_, _ = mac.Write(body)
 	expected := mac.Sum(nil)
 	for _, header := range signatures {
-		parts := strings.Split(header, ",")
-		for i := 0; i+1 < len(parts); i += 2 {
-			if strings.TrimSpace(parts[i]) != "v1" {
-				continue
-			}
-			actual, err := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[i+1]))
-			if err == nil && hmac.Equal(expected, actual) {
-				return true
+		for _, value := range strings.Fields(header) {
+			parts := strings.Split(value, ",")
+			for i := 0; i+1 < len(parts); i += 2 {
+				if strings.TrimSpace(parts[i]) != "v1" {
+					continue
+				}
+				actual, err := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[i+1]))
+				if err == nil && hmac.Equal(expected, actual) {
+					return true
+				}
 			}
 		}
 	}
