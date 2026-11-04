@@ -194,6 +194,9 @@ type RealtimeCallStore interface {
 	// UpdateRealtimeEmployeeTurn mutates only the durable per-response ledger.
 	// It must not overwrite controller or cleanup state owned by finalization.
 	UpdateRealtimeEmployeeTurn(ctx context.Context, callHash string, descriptor RealtimeEmployeeTurnReservation, add bool) error
+	// BindRealtimeEmployeeTurn atomically replaces a pre-admitted provisional
+	// descriptor with the provider response ID before that response can consume.
+	BindRealtimeEmployeeTurn(ctx context.Context, callHash, provisionalID string, descriptor RealtimeEmployeeTurnReservation) error
 	ClaimRealtimeController(ctx context.Context, callHash, controller, owner string) (bool, error)
 	ReleaseRealtimeController(ctx context.Context, callHash, owner string) (bool, error)
 	GetRealtimeController(ctx context.Context, callHash string) (string, error)

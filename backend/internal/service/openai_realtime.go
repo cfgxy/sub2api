@@ -179,6 +179,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeWebSocket(
 	model string,
 	beforeClientFrame func(ctx context.Context, payload []byte) error,
 	onTurnComplete func(openaiwsv2.RelayTurnResult),
+	onUpstreamFrame func(payload []byte) error,
 	onResponseStarted func(responseID, model string) error,
 ) error {
 	if client == nil {
@@ -219,6 +220,11 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeWebSocket(
 		StartClientAfterFirstDownstream: true,
 		OnTurnComplete:                  onTurnComplete,
 		BeforeWriteClient: func(_ coderws.MessageType, payload []byte, _ bool) error {
+			if onUpstreamFrame != nil {
+				if err := onUpstreamFrame(payload); err != nil {
+					return err
+				}
+			}
 			if responseID, responseModel, started := realtimeResponseStarted(payload); started && onResponseStarted != nil {
 				return onResponseStarted(responseID, responseModel)
 			}

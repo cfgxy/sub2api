@@ -58,7 +58,10 @@ type realtimeEmployeeTurnReservations struct {
 	mu          sync.Mutex
 	handles     map[string]*InflightReservation
 	descriptors map[string]RealtimeEmployeeTurnReservation
+	prepared    []string
 }
+
+const realtimeEmployeeTurnProvisionalPrefix = "realtime-preflight:"
 
 func (s *OpenAIGatewayService) realtimeEmployeeTurns(callHash string) *realtimeEmployeeTurnReservations {
 	if s == nil || strings.TrimSpace(callHash) == "" {
@@ -83,27 +86,87 @@ func (s *OpenAIGatewayService) beginRealtimeEmployeeTurn(record *RealtimeCallRec
 		turns.mu.Unlock()
 		return nil
 	}
-	handle, err := start(responseID, model)
-	if err != nil || handle == nil {
+	if len(turns.prepared) == 0 {
 		turns.mu.Unlock()
+		return ErrRealtimeUnavailable
+	}
+	provisionalID := turns.prepared[0]
+	handle := turns.handles[provisionalID]
+	descriptor, exists := turns.descriptors[provisionalID]
+	turns.mu.Unlock()
+	if !exists || handle == nil {
+		return ErrRealtimeUnavailable
+	}
+	descriptor.ResponseID = responseID
+	store, err := s.realtimeStore()
+	if err != nil {
 		return err
 	}
-	descriptor := handle.enterpriseReservation().RealtimeSnapshot(responseID)
+	if err := store.BindRealtimeEmployeeTurn(context.Background(), record.CallHash, provisionalID, descriptor); err != nil {
+		return err
+	}
+	turns.mu.Lock()
+	defer turns.mu.Unlock()
+	if turns.handles[provisionalID] != handle {
+		return ErrRealtimeUnavailable
+	}
+	delete(turns.handles, provisionalID)
+	delete(turns.descriptors, provisionalID)
+	turns.handles[responseID] = handle
+	turns.descriptors[responseID] = descriptor
+	turns.prepared = turns.prepared[1:]
+	return nil
+}
+
+// PrepareOfficialRealtimeEmployeeTurn creates and persists one employee turn
+// hold before any provider response is allowed to start. The provisional ID is
+// atomically replaced with the provider response ID once it arrives.
+func (s *OpenAIGatewayService) PrepareOfficialRealtimeEmployeeTurn(record *RealtimeCallRecord, model string, start RealtimeTurnStartFunc) error {
+	if record == nil || start == nil {
+		return nil
+	}
+	turns := s.realtimeEmployeeTurns(record.CallHash)
+	if turns == nil {
+		return ErrRealtimeCallNotFound
+	}
+	provisionalID := realtimeEmployeeTurnProvisionalPrefix + uuid.NewString()
+	handle, err := start(provisionalID, model)
+	if err != nil || handle == nil {
+		return err
+	}
+	descriptor := handle.enterpriseReservation().RealtimeSnapshot(provisionalID)
 	if descriptor.RequestID == "" || descriptor.SourceAPIKeyID <= 0 || descriptor.ReservedUSD <= 0 || descriptor.RequestFingerprint == "" {
-		turns.mu.Unlock()
 		handle.HandlerDone()
 		return ErrRealtimeUnavailable
 	}
-	// A DB reservation already exists. Keep its deterministic identity until
-	// Redis accepts the descriptor, so a transient write failure cannot turn a
-	// started response into an untraceable cost.
-	turns.handles[responseID] = handle
-	turns.descriptors[responseID] = descriptor
+	turns.mu.Lock()
+	turns.handles[provisionalID] = handle
+	turns.descriptors[provisionalID] = descriptor
+	turns.prepared = append(turns.prepared, provisionalID)
 	turns.mu.Unlock()
 	if err := s.persistRealtimeEmployeeTurn(record, descriptor, true); err != nil {
 		return err
 	}
 	return nil
+}
+
+// EnsureOfficialRealtimeEmployeeTurn keeps one admission ready for provider-
+// initiated VAD responses without accumulating unused holds for the same turn.
+func (s *OpenAIGatewayService) EnsureOfficialRealtimeEmployeeTurn(record *RealtimeCallRecord, model string, start RealtimeTurnStartFunc) error {
+	if record == nil || start == nil {
+		return nil
+	}
+	turns := s.realtimeEmployeeTurns(record.CallHash)
+	if turns == nil {
+		return ErrRealtimeCallNotFound
+	}
+	turns.mu.Lock()
+	prepared := len(turns.prepared) > 0
+	turns.mu.Unlock()
+	if prepared {
+		return nil
+	}
+	return s.PrepareOfficialRealtimeEmployeeTurn(record, model, start)
 }
 
 func (s *OpenAIGatewayService) realtimeEmployeeTurn(record *RealtimeCallRecord, responseID string) *InflightReservation {
@@ -269,6 +332,9 @@ func (s *OpenAIGatewayService) restoreRealtimeEmployeeTurns(record *RealtimeCall
 		turns.mu.Lock()
 		turns.handles[descriptor.ResponseID] = AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result))
 		turns.descriptors[descriptor.ResponseID] = descriptor
+		if strings.HasPrefix(descriptor.ResponseID, realtimeEmployeeTurnProvisionalPrefix) {
+			turns.prepared = append(turns.prepared, descriptor.ResponseID)
+		}
 		turns.mu.Unlock()
 	}
 	return true
@@ -880,11 +946,24 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 	}
 	defer upstream.Close()
 	downstream.SetReadLimit(openAIWSMessageReadLimitBytes)
-	clientFrames := realtimeModelBoundFrameConn{upstream: realtimeFrameConn{conn: downstream}, model: record.Model}
+	clientFrames := realtimeModelBoundFrameConn{
+		upstream: realtimeFrameConn{conn: downstream}, model: record.Model,
+		beforeClientForward: func(_ context.Context, payload []byte) error {
+			if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
+				return nil
+			}
+			return s.PrepareOfficialRealtimeEmployeeTurn(record, strings.TrimSpace(gjson.GetBytes(payload, "response.model").String()), onTurnStart)
+		},
+	}
 	var providerSessionEnded atomic.Bool
 	_, exit := openaiwsv2.Relay(ctx, clientFrames, upstream, nil, openaiwsv2.RelayOptions{
 		StartClientAfterFirstDownstream: true,
 		BeforeWriteClient: func(messageType coderws.MessageType, payload []byte, _ bool) error {
+			if messageType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "input_audio_buffer.speech_started" {
+				if err := s.EnsureOfficialRealtimeEmployeeTurn(record, "", onTurnStart); err != nil {
+					return err
+				}
+			}
 			if messageType == coderws.MessageText && realtimeObserverSessionEnded(strings.TrimSpace(gjson.GetBytes(payload, "type").String())) {
 				providerSessionEnded.Store(true)
 			}
@@ -1011,6 +1090,11 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 			eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 			if realtimeObserverSessionEnded(eventType) {
 				return errRealtimeObserverSessionEnded
+			}
+			if eventType == "input_audio_buffer.speech_started" {
+				if err := s.EnsureOfficialRealtimeEmployeeTurn(record, "", onTurnStart); err != nil {
+					return err
+				}
 			}
 			if responseID, model, started := realtimeResponseStarted(payload); started {
 				if err := s.beginRealtimeEmployeeTurn(record, responseID, model, onTurnStart); err != nil {
@@ -1150,10 +1234,20 @@ func (s *OpenAIGatewayService) settleConservativeRealtimeEmployeeTurns(record *R
 		return latest, true
 	}
 	callbacks := s.realtimeCallbacksSnapshot()
-	if callbacks == nil || callbacks.settleTurn == nil {
-		return latest, false
-	}
 	for _, descriptor := range latest.EmployeeTurnReservations {
+		// A provisional descriptor was never bound to a provider response, so
+		// it only proves the admission check completed. Release its hold without
+		// recording usage; bound response IDs continue through conservative billing.
+		if strings.HasPrefix(descriptor.ResponseID, realtimeEmployeeTurnProvisionalPrefix) {
+			if err := s.completeRealtimeEmployeeTurn(latest, descriptor.ResponseID); err != nil {
+				s.retryCompleteRealtimeEmployeeTurn(latest, descriptor.ResponseID)
+				return latest, false
+			}
+			continue
+		}
+		if callbacks == nil || callbacks.settleTurn == nil {
+			return latest, false
+		}
 		claim, claimed, err := s.claimConservativeRealtimeUsage(store, latest.CallHash, descriptor.ResponseID, owner)
 		if err != nil || !claimed {
 			return latest, false

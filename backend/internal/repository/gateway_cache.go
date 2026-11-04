@@ -413,6 +413,10 @@ var markRealtimeCallClosedScript = redis.NewScript(`
 var updateRealtimeEmployeeTurnScript = redis.NewScript(`
 	local key = KEYS[1]
 	if redis.call('EXISTS', key) == 0 then return 0 end
+	if ARGV[2] == '1' then
+		local controller = redis.call('HGET', key, 'controller')
+		if controller ~= 'pending' and controller ~= 'observer' and controller ~= 'proxy' then return -1 end
+	end
 	local current = redis.call('HGET', key, 'employee_turn_reservations')
 	local turns = {}
 	if current and current ~= '' then turns = cjson.decode(current) end
@@ -429,6 +433,38 @@ var updateRealtimeEmployeeTurnScript = redis.NewScript(`
 		end
 	end
 	if add and not found then table.insert(updated, cjson.decode(ARGV[3])) end
+	redis.call('HSET', key, 'employee_turn_reservations', cjson.encode(updated))
+	return 1
+`)
+
+var bindRealtimeEmployeeTurnScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 then return 0 end
+	local controller = redis.call('HGET', key, 'controller')
+	if controller ~= 'pending' and controller ~= 'observer' and controller ~= 'proxy' then return -1 end
+	local current = redis.call('HGET', key, 'employee_turn_reservations')
+	local turns = {}
+	if current and current ~= '' then turns = cjson.decode(current) end
+	local provisional_id = ARGV[1]
+	local descriptor = cjson.decode(ARGV[2])
+	local updated = {}
+	local found_provisional = false
+	local found_response = false
+	for _, turn in ipairs(turns) do
+		if turn.ResponseID == provisional_id then
+			found_provisional = true
+		elseif turn.ResponseID == descriptor.ResponseID then
+			found_response = true
+			table.insert(updated, turn)
+		else
+			table.insert(updated, turn)
+		end
+	end
+	if found_provisional and not found_response then
+		table.insert(updated, descriptor)
+	elseif not found_provisional and not found_response then
+		return 0
+	end
 	redis.call('HSET', key, 'employee_turn_reservations', cjson.encode(updated))
 	return 1
 `)
@@ -455,6 +491,8 @@ var releaseRealtimeFinalizationScript = redis.NewScript(`
 
 var commitRealtimeFinalizationScript = redis.NewScript(`
 	if redis.call('HGET', KEYS[1], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[1], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	local turns = redis.call('HGET', KEYS[1], 'employee_turn_reservations')
+	if turns and turns ~= '' and #cjson.decode(turns) > 0 then return 0 end
 	local time = redis.call('TIME')
 	local now = time[1] * 1000 + math.floor(time[2] / 1000)
 	local owner_until = tonumber(redis.call('HGET', KEYS[1], 'finalizer_owner_until')) or 0
@@ -743,7 +781,34 @@ func (c *gatewayCache) UpdateRealtimeEmployeeTurn(ctx context.Context, callHash 
 	if err != nil {
 		return err
 	}
+	if updated == -1 {
+		return service.ErrRealtimeControllerChanged
+	}
 	if updated != 1 {
+		return service.ErrRealtimeCallNotFound
+	}
+	return nil
+}
+
+func (c *gatewayCache) BindRealtimeEmployeeTurn(ctx context.Context, callHash, provisionalID string, descriptor service.RealtimeEmployeeTurnReservation) error {
+	callHash = strings.TrimSpace(callHash)
+	provisionalID = strings.TrimSpace(provisionalID)
+	descriptor.ResponseID = strings.TrimSpace(descriptor.ResponseID)
+	if callHash == "" || provisionalID == "" || descriptor.ResponseID == "" {
+		return service.ErrRealtimeCallNotFound
+	}
+	raw, err := json.Marshal(descriptor)
+	if err != nil {
+		return err
+	}
+	bound, err := bindRealtimeEmployeeTurnScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, provisionalID, string(raw)).Int()
+	if err != nil {
+		return err
+	}
+	if bound == -1 {
+		return service.ErrRealtimeControllerChanged
+	}
+	if bound != 1 {
 		return service.ErrRealtimeCallNotFound
 	}
 	return nil

@@ -49,6 +49,7 @@ type officialRealtimeCallTerminator interface {
 type realtimeWSEmployeeTurnBindings struct {
 	mu         sync.Mutex
 	byResponse map[string]*service.InflightReservation
+	prepared   []*service.InflightReservation
 }
 
 // bindReservation attaches the hold to the provider-issued response ID. Unlike
@@ -70,6 +71,44 @@ func (b *realtimeWSEmployeeTurnBindings) bindReservation(responseID string, rese
 	return true
 }
 
+func (b *realtimeWSEmployeeTurnBindings) prepare(reservation *service.InflightReservation) bool {
+	if reservation == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.prepared = append(b.prepared, reservation)
+	return true
+}
+
+func (b *realtimeWSEmployeeTurnBindings) hasPrepared() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.prepared) > 0
+}
+
+func (b *realtimeWSEmployeeTurnBindings) bindPrepared(responseID string) (*service.InflightReservation, bool) {
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		return nil, false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if reservation := b.byResponse[responseID]; reservation != nil {
+		return reservation, true
+	}
+	if len(b.prepared) == 0 {
+		return nil, false
+	}
+	reservation := b.prepared[0]
+	b.prepared = b.prepared[1:]
+	if b.byResponse == nil {
+		b.byResponse = make(map[string]*service.InflightReservation)
+	}
+	b.byResponse[responseID] = reservation
+	return reservation, true
+}
+
 func (b *realtimeWSEmployeeTurnBindings) take(responseID string) *service.InflightReservation {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -79,15 +118,14 @@ func (b *realtimeWSEmployeeTurnBindings) take(responseID string) *service.Inflig
 	return reservation
 }
 
-func (b *realtimeWSEmployeeTurnBindings) drain() []*service.InflightReservation {
+func (b *realtimeWSEmployeeTurnBindings) drain() (map[string]*service.InflightReservation, []*service.InflightReservation) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	reservations := make([]*service.InflightReservation, 0, len(b.byResponse))
-	for _, reservation := range b.byResponse {
-		reservations = append(reservations, reservation)
-	}
+	responses := b.byResponse
+	prepared := b.prepared
 	b.byResponse = nil
-	return reservations
+	b.prepared = nil
+	return responses, prepared
 }
 
 func cleanupAcceptedRealtimeCallAfterWebhookCommitFailure(terminator officialRealtimeCallTerminator, account *service.Account, record *service.RealtimeCallRecord) {
@@ -163,6 +201,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 	var auditMu sync.Mutex
 	auditTurn := 0
 	requestPayloadHash := ""
+	var prepareEmployeeTurn func(string) error
 	auditClientFrame := func(frameCtx context.Context, payload []byte) error {
 		auditMu.Lock()
 		defer auditMu.Unlock()
@@ -179,6 +218,9 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 			writeSecurityAuditWSError(frameCtx, client, decision)
 			return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 		}
+		if realtimeResponseCreateFrame(payload) && prepareEmployeeTurn != nil {
+			return prepareEmployeeTurn(strings.TrimSpace(gjson.GetBytes(payload, "response.model").String()))
+		}
 		return nil
 	}
 	requestHash := func() string {
@@ -190,27 +232,58 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 	account := selection.Account
 	employeeTurns := &realtimeWSEmployeeTurnBindings{}
 	defer func() {
-		for _, reservation := range employeeTurns.drain() {
+		responses, prepared := employeeTurns.drain()
+		for responseID, reservation := range responses {
+			if reservation != nil {
+				billingCtx := service.WithInflightReservation(c.Request.Context(), reservation)
+				if err := h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
+					Result: &service.OpenAIForwardResult{
+						RequestID:        "realtime-conservative:" + responseID,
+						ResponseID:       responseID,
+						Model:            model,
+						Stream:           true,
+						OpenAIRealtime:   true,
+						UpstreamEndpoint: "/v1/realtime",
+					},
+					APIKey: apiKey, User: apiKey.User, Account: account, Subscription: subscription,
+					InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: "/v1/realtime",
+					UserAgent: c.GetHeader("User-Agent"), IPAddress: ip.GetClientIP(c), APIKeyService: h.apiKeyService,
+					QuotaPlatform: service.QuotaPlatform(c.Request.Context(), apiKey), PricingAt: pricingAt,
+					EnterpriseAttribution: attribution, ConservativeCostUSD: reservation.Amount(),
+				}); err != nil {
+					reqLog.Error("official_realtime_conservative_usage_failed", zap.Int64("account_id", account.ID), zap.String("response_id", responseID), zap.Error(err))
+				}
+				reservation.HandlerDone()
+			}
+		}
+		for _, reservation := range prepared {
 			if reservation != nil {
 				reservation.HandlerDone()
 			}
 		}
 	}()
-	reserveEmployeeTurn := func(responseID, responseModel string) error {
+	prepareEmployeeTurn = func(responseModel string) error {
 		if !apiKey.EnterpriseEmployeeWeeklyLimit {
 			return nil
 		}
 		req := tokenInflightEstimate(firstNonEmptyRealtime(responseModel, model), nil)
-		req.RequestID = "realtime-ws:" + responseID
+		req.RequestID = "realtime-ws:preflight:" + uuid.NewString()
 		employee, reserveErr := h.gatewayService.ReserveEnterpriseEmployeeUsage(c.Request.Context(), apiKey, req)
 		if reserveErr != nil {
 			return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", reserveErr)
 		}
 		handle := service.AttachEnterpriseEmployeeUsageReservation(nil, employee)
-		if !employeeTurns.bindReservation(responseID, handle) {
+		if !employeeTurns.prepare(handle) {
 			handle.HandlerDone()
 		}
 		return nil
+	}
+	if err := prepareEmployeeTurn(model); err != nil {
+		var closeErr *service.OpenAIWSClientCloseError
+		if errors.As(err, &closeErr) {
+			closeOpenAIClientWS(client, closeErr.StatusCode(), closeErr.Reason())
+		}
+		return
 	}
 	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model, func(frameCtx context.Context, payload []byte) error {
 		if err := auditClientFrame(frameCtx, payload); err != nil {
@@ -222,9 +295,6 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 			turnReservation := employeeTurns.take(turn.RequestID)
 			if turnReservation != nil {
 				defer turnReservation.HandlerDone()
-			}
-			if !realtimeUsageHasTokens(turn.Usage) {
-				return
 			}
 			result := &service.OpenAIForwardResult{
 				RequestID:             turn.RequestID,
@@ -243,6 +313,12 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 			if turnReservation != nil {
 				billingCtx = service.WithInflightReservation(billingCtx, turnReservation)
 			}
+			conservativeCost := float64(0)
+			if !realtimeUsageHasTokens(turn.Usage) {
+				if reservation := service.InflightReservationFromContext(billingCtx); reservation != nil {
+					conservativeCost = reservation.Amount()
+				}
+			}
 			if err := h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
 				Result:                result,
 				APIKey:                apiKey,
@@ -258,10 +334,21 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 				QuotaPlatform:         service.QuotaPlatform(c.Request.Context(), apiKey),
 				PricingAt:             firstNonZeroRealtimeTime(turn.StartedAt, pricingAt),
 				EnterpriseAttribution: attribution,
+				ConservativeCostUSD:   conservativeCost,
 			}); err != nil {
 				reqLog.Error("official_realtime_record_usage_failed", zap.Int64("account_id", account.ID), zap.String("request_id", turn.RequestID), zap.Error(err))
 			}
-		}, reserveEmployeeTurn)
+		}, func(payload []byte) error {
+			if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "input_audio_buffer.speech_started" && !employeeTurns.hasPrepared() {
+				return prepareEmployeeTurn("")
+			}
+			return nil
+		}, func(responseID, _ string) error {
+			if _, ok := employeeTurns.bindPrepared(responseID); !ok && apiKey.EnterpriseEmployeeWeeklyLimit {
+				return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", service.ErrRealtimeUnavailable)
+			}
+			return nil
+		})
 	if proxyErr == nil || openAIWSIngressEndedByClient(proxyErr) {
 		_ = client.Close(coderws.StatusNormalClosure, "")
 		return
@@ -344,7 +431,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeCall(c *gin.Context) {
 		identity.ReservationUSD = reservation.Amount()
 		identity.ReservationRequestID, identity.ReservationHasBalance, identity.ReservationScopes = reservation.Snapshot()
 	}
-	created, _, err := h.gatewayService.CreateOfficialRealtimeTrackedCall(
+	created, record, err := h.gatewayService.CreateOfficialRealtimeTrackedCall(
 		c.Request.Context(), selection.Account, request, identity, subject.Concurrency, sessionReservationRelease,
 	)
 	if err != nil {
@@ -352,6 +439,16 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeCall(c *gin.Context) {
 		return
 	}
 	sessionReservationOwnedByHandler = false
+	if err := h.gatewayService.PrepareOfficialRealtimeEmployeeTurn(record, model, h.realtimeTurnStart(record, apiKey)); err != nil {
+		_ = h.gatewayService.ControlOfficialRealtimeCall(context.Background(), selection.Account, record.CallID, "hangup", "")
+		h.gatewayService.FinalizeOfficialRealtimeCall(record)
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.errorResponse(c, status, code, message)
+		return
+	}
 	c.Header("Location", officialRealtimeSidebandLocation(created.CallID))
 	c.Header("X-Realtime-Call-ID", created.CallID)
 	c.Data(created.StatusCode, "application/sdp", created.SDP)
@@ -420,7 +517,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSideband(c *gin.Context) {
 		zap.Int64("user_id", record.UserID), zap.Int64("api_key_id", record.APIKeyID), zap.Int64("account_id", record.AccountID))
 	if err := h.gatewayService.ProxyOfficialRealtimeSideband(c.Request.Context(), record, downstream, h.realtimeTurnStart(record, billingAPIKey), func(turn openaiwsv2.RelayTurnResult) error {
 		if !realtimeUsageHasTokens(turn.Usage) {
-			return nil
+			return h.recordConservativeRealtimeTurnUsage(record, turn.RequestID)
 		}
 		result := &service.OpenAIForwardResult{
 			RequestID:             turn.RequestID,
@@ -630,6 +727,12 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSIPWebhook(c *gin.Context) {
 		return
 	}
 	sessionReservationOwned = false
+	if err := h.gatewayService.PrepareOfficialRealtimeEmployeeTurn(record, config.Model, h.realtimeTurnStart(record, apiKey)); err != nil {
+		h.gatewayService.FinalizeOfficialRealtimeCall(record)
+		reject()
+		c.Status(http.StatusPaymentRequired)
+		return
+	}
 	if err := h.gatewayService.ControlOfficialRealtimeCall(c.Request.Context(), account, record.CallID, "accept", record.Model); err != nil {
 		h.gatewayService.FinalizeOfficialRealtimeCall(record)
 		reject()
@@ -652,7 +755,7 @@ func (h *OpenAIGatewayHandler) observeOfficialRealtimeSIPCall(record *service.Re
 	}
 	h.gatewayService.ObserveOfficialRealtimeCall(record, h.realtimeTurnStart(record, apiKey), func(turn openaiwsv2.RelayTurnResult) error {
 		if !realtimeUsageHasTokens(turn.Usage) {
-			return nil
+			return h.recordConservativeRealtimeTurnUsage(record, turn.RequestID)
 		}
 		result := &service.OpenAIForwardResult{
 			RequestID:             turn.RequestID,

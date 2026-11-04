@@ -53,6 +53,19 @@ func TestRealtimeWSEmployeeTurnBindingsKeepVADAndExplicitResponsesIndependent(t 
 	require.Same(t, vadReservation, bindings.take("response-vad"))
 }
 
+func TestRealtimeWSEmployeeTurnBindingsBindPreflightBeforeResponseCreated(t *testing.T) {
+	bindings := &realtimeWSEmployeeTurnBindings{}
+	reservation := &service.InflightReservation{}
+	require.True(t, bindings.prepare(reservation))
+	require.True(t, bindings.hasPrepared())
+
+	bound, ok := bindings.bindPrepared("response-1")
+	require.True(t, ok)
+	require.Same(t, reservation, bound)
+	require.False(t, bindings.hasPrepared())
+	require.Same(t, reservation, bindings.take("response-1"))
+}
+
 func TestRealtimeCallIdentityFreezesAuthenticatedFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	request := httptest.NewRequest(http.MethodPost, "/v1/realtime/calls", nil)
