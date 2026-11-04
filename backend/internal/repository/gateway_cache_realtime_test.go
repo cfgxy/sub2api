@@ -72,3 +72,79 @@ func TestGatewayCacheRealtimeCallControllerAndIdempotency(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, closed)
 }
+
+func TestGatewayCacheRealtimeReplayClaimsExpireAndTransferSafely(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	cache, ok := NewGatewayCache(client).(service.RealtimeUsageClaimStore)
+	require.True(t, ok)
+	ctx := context.Background()
+
+	claimed, err := cache.ClaimRealtimeUsage(ctx, "call", "response", "owner-a", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	claimed, err = cache.ClaimRealtimeUsage(ctx, "call", "response", "owner-b", time.Second)
+	require.NoError(t, err)
+	require.False(t, claimed)
+
+	redisServer.FastForward(time.Second)
+	claimed, err = cache.ClaimRealtimeUsage(ctx, "call", "response", "owner-b", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed, "expired pending claim must be recoverable after a process exits")
+
+	committed, err := cache.CommitRealtimeUsageClaim(ctx, "call", "response", "owner-a", time.Hour)
+	require.NoError(t, err)
+	require.False(t, committed, "previous owner cannot commit a reclaimed claim")
+	released, err := cache.ReleaseRealtimeUsageClaim(ctx, "call", "response", "owner-a")
+	require.NoError(t, err)
+	require.False(t, released, "previous owner cannot release a reclaimed claim")
+	committed, err = cache.CommitRealtimeUsageClaim(ctx, "call", "response", "owner-b", time.Hour)
+	require.NoError(t, err)
+	require.True(t, committed)
+
+	used, err := cache.HasCommittedRealtimeUsage(ctx, "call")
+	require.NoError(t, err)
+	require.True(t, used)
+	claimed, err = cache.ClaimRealtimeUsage(ctx, "call", "response", "owner-c", time.Second)
+	require.NoError(t, err)
+	require.False(t, claimed, "committed usage must remain replay-safe")
+
+	claimed, err = cache.ClaimRealtimeWebhook(ctx, "event", "owner-a", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	redisServer.FastForward(time.Second)
+	claimed, err = cache.ClaimRealtimeWebhook(ctx, "event", "owner-b", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	committed, err = cache.CommitRealtimeWebhookClaim(ctx, "event", "owner-a", time.Hour)
+	require.NoError(t, err)
+	require.False(t, committed)
+	committed, err = cache.CommitRealtimeWebhookClaim(ctx, "event", "owner-b", time.Hour)
+	require.NoError(t, err)
+	require.True(t, committed)
+}
+
+func TestGatewayCacheListActiveRealtimeCallsSkipsClosedRecords(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	cache, ok := NewGatewayCache(client).(interface {
+		service.RealtimeCallStore
+		service.RealtimeCallRecoveryStore
+	})
+	require.True(t, ok)
+	ctx := context.Background()
+	for _, record := range []*service.RealtimeCallRecord{
+		{CallID: "active-call", CallHash: "active", AccountID: 1, APIKeyID: 2, UserID: 3, Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Controller: service.RealtimeControllerPending},
+		{CallID: "closed-call", CallHash: "closed", AccountID: 1, APIKeyID: 2, UserID: 3, Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Controller: service.RealtimeControllerPending},
+	} {
+		require.NoError(t, cache.SaveRealtimeCall(ctx, record, time.Hour))
+	}
+	closed, err := cache.MarkRealtimeCallClosed(ctx, "closed", time.Hour)
+	require.NoError(t, err)
+	require.True(t, closed)
+
+	records, err := cache.ListActiveRealtimeCalls(ctx)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, "active", records[0].CallHash)
+}

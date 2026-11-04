@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,6 +14,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type realtimeCallTerminatorStub struct {
+	events []string
+}
+
+func (s *realtimeCallTerminatorStub) ControlOfficialRealtimeCall(context.Context, *service.Account, string, string, string) error {
+	s.events = append(s.events, "hangup")
+	return nil
+}
+
+func (s *realtimeCallTerminatorStub) FinalizeOfficialRealtimeCall(*service.RealtimeCallRecord) {
+	s.events = append(s.events, "finalize")
+}
 
 func TestOfficialRealtimeSidebandLocation(t *testing.T) {
 	require.Equal(t, "/v1/realtime/calls/call_123", officialRealtimeSidebandLocation("call_123"))
@@ -66,4 +80,10 @@ func TestVerifyOfficialRealtimeWebhook(t *testing.T) {
 	require.False(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1," + signature}, append(body, 'x'), 5*time.Minute, now))
 	require.False(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1," + signature}, body, 5*time.Minute, now.Add(5*time.Minute+time.Second)))
 	require.False(t, verifyOfficialRealtimeWebhook(secret, webhookID, timestamp, []string{"v1," + signature}, body, 5*time.Minute, now.Add(-5*time.Minute-time.Second)))
+}
+
+func TestCleanupAcceptedRealtimeCallAfterWebhookCommitFailureHangsUpBeforeFinalizing(t *testing.T) {
+	stub := &realtimeCallTerminatorStub{}
+	cleanupAcceptedRealtimeCallAfterWebhookCommitFailure(stub, &service.Account{ID: 1}, &service.RealtimeCallRecord{CallID: "call"})
+	require.Equal(t, []string{"hangup", "finalize"}, stub.events)
 }

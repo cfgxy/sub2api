@@ -132,6 +132,7 @@ type RealtimeCallIdentity struct {
 	UserAgent             string
 	IPAddress             string
 	InboundEndpoint       string
+	ReservationUSD        float64
 }
 
 // RealtimeCallRecord is the Redis-backed ownership and lifecycle ledger for a
@@ -156,6 +157,7 @@ type RealtimeCallRecord struct {
 	IPAddress             string
 	InboundEndpoint       string
 	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot
+	ReservationUSD        float64
 }
 
 // RealtimeCallStore is intentionally a separate cache capability so a Live
@@ -173,6 +175,32 @@ type RealtimeCallStore interface {
 	BeginRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error)
 	CommitRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) error
 	ReleaseRealtimeWebhook(ctx context.Context, webhookID string) error
+}
+
+// RealtimeUsageClaimStore upgrades the legacy idempotency keys to owner-bound
+// short leases. A process that dies after a claim leaves work recoverable
+// instead of suppressing retries for the whole replay window.
+type RealtimeUsageClaimStore interface {
+	ClaimRealtimeUsage(ctx context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error)
+	CommitRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error)
+	ReleaseRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string) (bool, error)
+	HasCommittedRealtimeUsage(ctx context.Context, callHash string) (bool, error)
+	ClaimRealtimeWebhook(ctx context.Context, webhookID, owner string, lease time.Duration) (bool, error)
+	CommitRealtimeWebhookClaim(ctx context.Context, webhookID, owner string, ttl time.Duration) (bool, error)
+	ReleaseRealtimeWebhookClaim(ctx context.Context, webhookID, owner string) (bool, error)
+}
+
+// RealtimeCallRecoveryStore lists live records from the Redis-backed ledger at
+// process startup. It is intentionally optional so non-Redis test caches keep
+// the narrow RealtimeCallStore contract.
+type RealtimeCallRecoveryStore interface {
+	ListActiveRealtimeCalls(ctx context.Context) ([]*RealtimeCallRecord, error)
+}
+
+// RealtimeControllerRecoveryStore clears a stale in-process controller after a
+// process restart. The durable call ledger remains the source of ownership.
+type RealtimeControllerRecoveryStore interface {
+	ResetRealtimeControllerForRecovery(ctx context.Context, callHash string) (bool, error)
 }
 
 // RealtimeConcurrencyCache owns the long lease that replaces the short HTTP

@@ -77,7 +77,7 @@ type InflightReservation struct {
 	requestID string
 	amount    float64
 	ttl       time.Duration
-	// scopes 是同一金额在订阅 / API Key 维度登记的预留（与余额维度共用 requestID），不续期。
+	// scopes 是同一金额在订阅 / API Key 维度登记的预留（与余额维度共用 requestID）。
 	scopeCache InflightScopeReservationCache
 	scopes     []string
 
@@ -163,7 +163,13 @@ func (r *InflightReservation) stopRenewal() {
 	<-r.renewDone
 }
 
-func (r *InflightReservation) startRenewal(renewer InflightBalanceReservationRenewer) {
+func (r *InflightReservation) startRenewal(balanceRenewer InflightBalanceReservationRenewer, scopeRenewer InflightScopeReservationRenewer) {
+	if r != nil && r.cache == nil {
+		balanceRenewer = nil
+	}
+	if r == nil || (balanceRenewer == nil && (scopeRenewer == nil || len(r.scopes) == 0)) {
+		return
+	}
 	interval := r.ttl / 3
 	if interval < 10*time.Millisecond {
 		interval = 10 * time.Millisecond
@@ -179,21 +185,25 @@ func (r *InflightReservation) startRenewal(renewer InflightBalanceReservationRen
 			case <-r.stopRenew:
 				return
 			case <-ticker.C:
-				ctx, cancel := context.WithTimeout(context.Background(), inflightReservationRenewTimeout)
-				alive, err := renewer.RenewInflightBalance(ctx, r.userID, r.requestID, r.ttl)
-				cancel()
-				if err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation renew failed for user %d: %v", r.userID, err)
-					continue
+				if balanceRenewer != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), inflightReservationRenewTimeout)
+					alive, err := balanceRenewer.RenewInflightBalance(ctx, r.userID, r.requestID, r.ttl)
+					cancel()
+					if err != nil {
+						logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation renew failed for user %d: %v", r.userID, err)
+					} else if !alive {
+						logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation expired for user %d", r.userID)
+					}
 				}
-				if !alive {
-					return
-				}
-				if scopeRenewer, ok := r.scopeCache.(InflightScopeReservationRenewer); ok {
+				if scopeRenewer != nil {
 					for _, scope := range r.scopes {
+						ctx, cancel := context.WithTimeout(context.Background(), inflightReservationRenewTimeout)
 						alive, err := scopeRenewer.RenewInflightScope(ctx, scope, r.requestID, r.ttl)
-						if err != nil || !alive {
-							return
+						cancel()
+						if err != nil {
+							logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation renew failed for %s: %v", scope, err)
+						} else if !alive {
+							logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation expired for %s", scope)
 						}
 					}
 				}
@@ -267,7 +277,42 @@ func (s *BillingCacheService) ReserveInflightBalance(ctx context.Context, user *
 // 开关关闭 / 简易模式 / 订阅模式 / estimate <= 0 / 缓存不支持 / 余额读取失败 / Redis 执行失败。
 // 仅当 Redis 明确判定 缓存余额 - 在途合计 < estimate（且已有在途请求）时返回 ErrInsufficientBalance。
 func (s *BillingCacheService) ReserveInflight(ctx context.Context, user *User, group *Group, subscription *UserSubscription, estimate float64) (*InflightReservation, error) {
-	return s.reserveInflight(ctx, user, group, subscription, estimate, true, true)
+	r, err := s.reserveInflight(ctx, user, group, subscription, estimate, true, true)
+	if err != nil || r == nil {
+		return r, err
+	}
+	r.startRenewal(s.inflightBalanceRenewer(), nil)
+	return r, nil
+}
+
+// ReserveInflightForAPIKey 为长会话同时登记余额、订阅和 API Key 三个适用维度的预留。
+// scope 必须在启动续期前一次性挂入句柄，避免续期协程与 append 发生竞态。
+func (s *BillingCacheService) ReserveInflightForAPIKey(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, estimate float64) (*InflightReservation, error) {
+	r, err := s.reserveInflight(ctx, user, group, subscription, estimate, true, true)
+	if err != nil || user == nil || estimate <= 0 {
+		return r, err
+	}
+	subscriptionBill := group != nil && group.IsSubscriptionType() && subscription != nil
+	if subscriptionBill && (group.HasDailyLimit() || group.HasWeeklyLimit() || group.HasMonthlyLimit()) {
+		r, _ = s.reserveInflightScope(ctx, r, user.ID, inflightSubscriptionScope(subscription.ID), estimate)
+	}
+	if apiKey != nil && (apiKey.Quota > 0 || apiKey.HasRateLimits()) {
+		r, _ = s.reserveInflightScope(ctx, r, user.ID, inflightAPIKeyScope(apiKey.ID), estimate)
+	}
+	if r != nil {
+		r.startRenewal(s.inflightBalanceRenewer(), s.inflightScopeRenewer())
+	}
+	return r, nil
+}
+
+func (s *BillingCacheService) inflightBalanceRenewer() InflightBalanceReservationRenewer {
+	renewer, _ := s.cache.(InflightBalanceReservationRenewer)
+	return renewer
+}
+
+func (s *BillingCacheService) inflightScopeRenewer() InflightScopeReservationRenewer {
+	renewer, _ := s.cache.(InflightScopeReservationRenewer)
+	return renewer
 }
 
 // inflightSubscriptionScope / inflightAPIKeyScope 是订阅 / API Key 维度在途预留的 scope 名。
@@ -354,9 +399,7 @@ func (s *BillingCacheService) reserveInflight(ctx context.Context, user *User, g
 
 	r := &InflightReservation{cache: rc, userID: user.ID, requestID: requestID, amount: estimate, ttl: ttl}
 	r.refs.Store(1)
-	if renewer, ok := s.cache.(InflightBalanceReservationRenewer); renew && ok && renewer != nil {
-		r.startRenewal(renewer)
-	}
+	_ = renew // callers start renewal after all applicable scopes are attached.
 	return r, nil
 }
 

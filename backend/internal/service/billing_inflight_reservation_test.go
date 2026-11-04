@@ -168,17 +168,20 @@ func TestInflightEstimate_MediaKinds(t *testing.T) {
 
 type memInflightCache struct {
 	BillingCache
-	mu        sync.Mutex
-	balance   float64
-	res       map[string]float64
-	exp       map[string]time.Time
-	renews    atomic.Int32
-	deducts   atomic.Int32
-	releaseCt atomic.Int32
+	mu                   sync.Mutex
+	balance              float64
+	res                  map[string]float64
+	exp                  map[string]time.Time
+	renews               atomic.Int32
+	deducts              atomic.Int32
+	releaseCt            atomic.Int32
+	scopes               map[string]time.Time
+	scopeRenews          atomic.Int32
+	scopeContextCanceled atomic.Bool
 }
 
 func newMemInflightCache(balance float64) *memInflightCache {
-	return &memInflightCache{balance: balance, res: map[string]float64{}, exp: map[string]time.Time{}}
+	return &memInflightCache{balance: balance, res: map[string]float64{}, exp: map[string]time.Time{}, scopes: map[string]time.Time{}}
 }
 
 func (m *memInflightCache) GetUserBalance(context.Context, int64) (float64, error) {
@@ -248,6 +251,52 @@ func (m *memInflightCache) count() int {
 	return len(m.res)
 }
 
+func inflightScopeKey(scope, requestID string) string {
+	return scope + "\x00" + requestID
+}
+
+func (m *memInflightCache) ReserveInflightScope(_ context.Context, scope, requestID string, _ float64, ttl time.Duration) (float64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.scopes[inflightScopeKey(scope, requestID)] = time.Now().Add(ttl)
+	return 0, nil
+}
+
+func (m *memInflightCache) RenewInflightScope(ctx context.Context, scope, requestID string, ttl time.Duration) (bool, error) {
+	if ctx.Err() != nil {
+		m.scopeContextCanceled.Store(true)
+		return false, ctx.Err()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.scopeRenews.Add(1)
+	key := inflightScopeKey(scope, requestID)
+	if _, ok := m.scopes[key]; !ok {
+		return false, nil
+	}
+	m.scopes[key] = time.Now().Add(ttl)
+	return true, nil
+}
+
+func (m *memInflightCache) ReleaseInflightScope(_ context.Context, scope, requestID string) error {
+	m.mu.Lock()
+	delete(m.scopes, inflightScopeKey(scope, requestID))
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *memInflightCache) scopeCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for key, expiry := range m.scopes {
+		if !expiry.After(now) {
+			delete(m.scopes, key)
+		}
+	}
+	return len(m.scopes)
+}
+
 func newInflightSvc(t *testing.T, cache BillingCache, ttlSeconds int) *BillingCacheService {
 	t.Helper()
 	cfg := &config.Config{}
@@ -308,11 +357,34 @@ func TestInflightReservation_RenewedWhileHandlerActive(t *testing.T) {
 
 	done := res.Acquire()
 	res.HandlerDone()
-	renewsAtStop := cache.renews.Load()
+	renewsBeforeSessionRelease := cache.renews.Load()
 	time.Sleep(1200 * time.Millisecond)
-	require.Equal(t, renewsAtStop, cache.renews.Load(), "no renewal after handler end")
-	require.Equal(t, 0, cache.count(), "post-handler hold is bounded by TTL")
+	require.Greater(t, cache.renews.Load(), renewsBeforeSessionRelease, "a long-lived session reference must keep renewing after the handler returns")
+	require.Equal(t, 1, cache.count())
 	done()
+	require.Equal(t, 0, cache.count())
+}
+
+func TestInflightReservation_SubscriptionAndAPIKeyScopesRenewPastTTL(t *testing.T) {
+	cache := newMemInflightCache(1)
+	svc := newInflightSvc(t, cache, 1)
+	limit := 10.0
+	group := &Group{ID: 4, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: &limit}
+	apiKey := &APIKey{ID: 8, User: &User{ID: 3}, Quota: 10}
+	subscription := &UserSubscription{ID: 6}
+
+	res, err := svc.ReserveInflightForAPIKey(context.Background(), apiKey.User, apiKey, group, subscription, 0.9)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, 2, cache.scopeCount(), "subscription and API key scopes must be reserved independently")
+
+	time.Sleep(2500 * time.Millisecond)
+	require.Equal(t, 2, cache.scopeCount(), "long-lived scope reservations must survive their TTL")
+	require.Greater(t, cache.scopeRenews.Load(), int32(3))
+	require.False(t, cache.scopeContextCanceled.Load(), "scope renewal must receive a live timeout context")
+
+	res.HandlerDone()
+	require.Equal(t, 0, cache.scopeCount())
 }
 
 func TestSyncBalanceCacheAfterDeduction_SynchronousWhenInflightEnabled(t *testing.T) {

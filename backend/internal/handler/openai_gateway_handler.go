@@ -378,7 +378,7 @@ func NewOpenAIGatewayHandler(
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
 		}
 	}
-	return &OpenAIGatewayHandler{
+	handler := &OpenAIGatewayHandler{
 		gatewayService:           gatewayService,
 		billingCacheService:      billingCacheService,
 		apiKeyService:            apiKeyService,
@@ -391,6 +391,10 @@ func NewOpenAIGatewayHandler(
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
 	}
+	if gatewayService != nil {
+		gatewayService.SetOfficialRealtimeLifecycleCallbacks(handler.observeRecoveredOfficialRealtimeCall, handler.recordConservativeRealtimeUsage)
+	}
+	return handler
 }
 
 // Responses handles OpenAI Responses API endpoint

@@ -407,9 +407,37 @@ var markRealtimeCallClosedScript = redis.NewScript(`
 	return 1
 `)
 
+var claimRealtimeReplayScript = redis.NewScript(`
+	local current = redis.call('GET', KEYS[1])
+	if current == false then
+		redis.call('PSETEX', KEYS[1], ARGV[2], 'pending:' .. ARGV[1])
+		return 1
+	end
+	return 0
+`)
+
+var commitRealtimeReplayScript = redis.NewScript(`
+	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	redis.call('PSETEX', KEYS[1], ARGV[2], 'committed')
+	return 1
+`)
+
+var releaseRealtimeReplayScript = redis.NewScript(`
+	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	redis.call('DEL', KEYS[1])
+	return 1
+`)
+
 var releaseRealtimeControllerScript = redis.NewScript(`
 	local key = KEYS[1]
 	if redis.call('HGET', key, 'controller') ~= 'proxy' or redis.call('HGET', key, 'controller_owner') ~= ARGV[1] then return 0 end
+	redis.call('HSET', key, 'controller', 'pending', 'controller_owner', '')
+	return 1
+`)
+
+var resetRealtimeControllerForRecoveryScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
 	redis.call('HSET', key, 'controller', 'pending', 'controller_owner', '')
 	return 1
 `)
@@ -571,7 +599,7 @@ func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.Rea
 		"created_at": record.CreatedAt.UnixMilli(), "expires_at": record.ExpiresAt.UnixMilli(),
 		"controller": record.Controller, "controller_owner": record.ControllerOwner,
 		"user_agent": record.UserAgent, "ip_address": record.IPAddress, "inbound_endpoint": record.InboundEndpoint,
-		"enterprise_attribution": attribution,
+		"enterprise_attribution": attribution, "reservation_usd": strconv.FormatFloat(record.ReservationUSD, 'f', -1, 64),
 	}
 	pipe := c.rdb.TxPipeline()
 	pipe.HSet(ctx, realtimeCallKey(record.CallHash), values)
@@ -601,6 +629,9 @@ func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*s
 		Controller: values["controller"], ControllerOwner: values["controller_owner"], UserAgent: values["user_agent"],
 		IPAddress: values["ip_address"], InboundEndpoint: values["inbound_endpoint"],
 	}
+	if reservationUSD, err := strconv.ParseFloat(values["reservation_usd"], 64); err == nil {
+		record.ReservationUSD = reservationUSD
+	}
 	if raw := values["enterprise_attribution"]; raw != "" {
 		var snapshot service.EnterpriseUsageAttributionSnapshot
 		if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
@@ -609,6 +640,29 @@ func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*s
 		record.EnterpriseAttribution = &snapshot
 	}
 	return record, nil
+}
+
+func (c *gatewayCache) ListActiveRealtimeCalls(ctx context.Context) ([]*service.RealtimeCallRecord, error) {
+	var cursor uint64
+	var records []*service.RealtimeCallRecord
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeCallPrefix+"*", 100).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			callHash := strings.TrimPrefix(key, realtimeCallPrefix)
+			record, err := c.GetRealtimeCall(ctx, callHash)
+			if err != nil || record.Controller == service.RealtimeControllerClosed {
+				continue
+			}
+			records = append(records, record)
+		}
+		cursor = next
+		if cursor == 0 {
+			return records, nil
+		}
+	}
 }
 
 func (c *gatewayCache) ClaimRealtimeController(ctx context.Context, callHash, controller, owner string) (bool, error) {
@@ -626,6 +680,11 @@ func (c *gatewayCache) GetRealtimeController(ctx context.Context, callHash strin
 
 func (c *gatewayCache) ReleaseRealtimeController(ctx context.Context, callHash, owner string) (bool, error) {
 	result, err := releaseRealtimeControllerScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) ResetRealtimeControllerForRecovery(ctx context.Context, callHash string) (bool, error) {
+	result, err := resetRealtimeControllerForRecoveryScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}).Int()
 	return result == 1, err
 }
 
@@ -649,6 +708,49 @@ func (c *gatewayCache) ReleaseRealtimeUsage(ctx context.Context, callHash, respo
 	return c.rdb.Del(ctx, realtimeUsageKey(callHash, responseID)).Err()
 }
 
+func (c *gatewayCache) ClaimRealtimeUsage(ctx context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime usage claim")
+	}
+	claimed, err := claimRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, lease.Milliseconds()).Int()
+	return claimed == 1, err
+}
+
+func (c *gatewayCache) CommitRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error) {
+	committed, err := commitRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, ttl.Milliseconds()).Int()
+	return committed == 1, err
+}
+
+func (c *gatewayCache) ReleaseRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string) (bool, error) {
+	released, err := releaseRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner).Int()
+	return released == 1, err
+}
+
+func (c *gatewayCache) HasCommittedRealtimeUsage(ctx context.Context, callHash string) (bool, error) {
+	var cursor uint64
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeUsagePrefix+callHash+":*", 100).Result()
+		if err != nil {
+			return false, err
+		}
+		if len(keys) > 0 {
+			values, err := c.rdb.MGet(ctx, keys...).Result()
+			if err != nil {
+				return false, err
+			}
+			for _, value := range values {
+				if value == "committed" {
+					return true, nil
+				}
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return false, nil
+		}
+	}
+}
+
 func (c *gatewayCache) BeginRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error) {
 	if strings.TrimSpace(webhookID) == "" || ttl <= 0 {
 		return false, errors.New("invalid realtime webhook id")
@@ -662,4 +764,22 @@ func (c *gatewayCache) CommitRealtimeWebhook(ctx context.Context, webhookID stri
 
 func (c *gatewayCache) ReleaseRealtimeWebhook(ctx context.Context, webhookID string) error {
 	return c.rdb.Del(ctx, realtimeWebhookKey(webhookID)).Err()
+}
+
+func (c *gatewayCache) ClaimRealtimeWebhook(ctx context.Context, webhookID, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(webhookID) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime webhook claim")
+	}
+	claimed, err := claimRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeWebhookKey(webhookID)}, owner, lease.Milliseconds()).Int()
+	return claimed == 1, err
+}
+
+func (c *gatewayCache) CommitRealtimeWebhookClaim(ctx context.Context, webhookID, owner string, ttl time.Duration) (bool, error) {
+	committed, err := commitRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeWebhookKey(webhookID)}, owner, ttl.Milliseconds()).Int()
+	return committed == 1, err
+}
+
+func (c *gatewayCache) ReleaseRealtimeWebhookClaim(ctx context.Context, webhookID, owner string) (bool, error) {
+	released, err := releaseRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeWebhookKey(webhookID)}, owner).Int()
+	return released == 1, err
 }
