@@ -165,6 +165,9 @@ func (s *realtimeLifecycleStore) UpdateRealtimeEmployeeTurn(_ context.Context, c
 	if s.record == nil || s.record.CallHash != callHash {
 		return ErrRealtimeCallNotFound
 	}
+	if add && (s.record.Controller == RealtimeControllerFinalizing || s.record.Controller == RealtimeControllerClosed) {
+		return ErrRealtimeControllerChanged
+	}
 	updated := s.record.EmployeeTurnReservations[:0]
 	found := false
 	for _, existing := range s.record.EmployeeTurnReservations {
@@ -181,6 +184,24 @@ func (s *realtimeLifecycleStore) UpdateRealtimeEmployeeTurn(_ context.Context, c
 		updated = append(updated, descriptor)
 	}
 	s.record.EmployeeTurnReservations = updated
+	return nil
+}
+
+func (s *realtimeLifecycleStore) RestoreRealtimeEmployeeTurnForFinalization(_ context.Context, callHash, owner string, descriptor RealtimeEmployeeTurnReservation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record == nil || s.record.CallHash != callHash {
+		return ErrRealtimeCallNotFound
+	}
+	if s.record.Controller != RealtimeControllerFinalizing || s.finalizer != owner {
+		return ErrRealtimeControllerChanged
+	}
+	for _, existing := range s.record.EmployeeTurnReservations {
+		if existing.ResponseID == descriptor.ResponseID {
+			return nil
+		}
+	}
+	s.record.EmployeeTurnReservations = append(s.record.EmployeeTurnReservations, descriptor)
 	return nil
 }
 
@@ -433,6 +454,70 @@ func TestEnsureOfficialRealtimeEmployeeTurnRetriesSameDescriptorAfterPersistence
 		ResponseID: "response-after-retry", RequestID: pending.RequestID, RequestFingerprint: pending.RequestFingerprint,
 		SourceAPIKeyID: pending.SourceAPIKeyID, ReservedUSD: pending.ReservedUSD,
 	}}, persisted.EmployeeTurnReservations)
+}
+
+func TestFinalizeOfficialRealtimeCallWaitsForPreparingEmployeeTurn(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-finalize-during-preparation", CallHash: hashRealtimeCallID("call-finalize-during-preparation"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+
+	started := make(chan struct{})
+	releaseStart := make(chan struct{})
+	requestID := ""
+	start := func(responseID, _ string) (*InflightReservation, error) {
+		close(started)
+		<-releaseStart
+		requestID = "realtime-call:" + record.CallHash + ":" + responseID
+		result, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: requestID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result)), nil
+	}
+
+	prepared := make(chan error, 1)
+	go func() { prepared <- svc.EnsureOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start) }()
+	<-started
+	finalized := make(chan struct{})
+	go func() {
+		svc.FinalizeOfficialRealtimeCall(record)
+		close(finalized)
+	}()
+	turns := svc.realtimeEmployeeTurns(record.CallHash)
+	require.Eventually(t, func() bool {
+		turns.mu.Lock()
+		closing := turns.closing
+		turns.mu.Unlock()
+		return closing
+	}, time.Second, 10*time.Millisecond)
+	select {
+	case <-finalized:
+		require.FailNow(t, "finalization completed before preparation cleanup")
+	default:
+	}
+
+	close(releaseStart)
+	require.ErrorIs(t, <-prepared, ErrRealtimeControllerChanged)
+	select {
+	case <-finalized:
+	case <-time.After(time.Second):
+		require.FailNow(t, "finalization did not wait for preparation cleanup")
+	}
+
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, persisted.Controller)
+	require.Empty(t, persisted.EmployeeTurnReservations)
+	restarted := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+	require.True(t, restarted.restoreRealtimeEmployeeTurns(persisted))
+	require.Nil(t, restarted.RealtimeEmployeeTurnReservation(persisted, "response-after-close"))
+	repo.mu.Lock()
+	require.Equal(t, 1, repo.releases[requestID])
+	repo.mu.Unlock()
 }
 
 func TestRealtimeWebSocketLedgerRetriesConservativeSettlement(t *testing.T) {

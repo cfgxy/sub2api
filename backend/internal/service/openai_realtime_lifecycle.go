@@ -61,6 +61,7 @@ type realtimeEmployeeTurnReservations struct {
 	prepared    []string
 	pending     string
 	preparing   bool
+	closing     bool
 	prepareDone chan struct{}
 	prepareErr  error
 }
@@ -74,6 +75,29 @@ func (s *OpenAIGatewayService) realtimeEmployeeTurns(callHash string) *realtimeE
 	created := &realtimeEmployeeTurnReservations{handles: make(map[string]*InflightReservation), descriptors: make(map[string]RealtimeEmployeeTurnReservation)}
 	actual, _ := s.realtimeEmployeeTurnReservations.LoadOrStore(callHash, created)
 	return actual.(*realtimeEmployeeTurnReservations)
+}
+
+func (s *OpenAIGatewayService) ownsRealtimeEmployeeTurns(callHash string, turns *realtimeEmployeeTurnReservations) bool {
+	if s == nil || turns == nil {
+		return false
+	}
+	actual, ok := s.realtimeEmployeeTurnReservations.Load(callHash)
+	return ok && actual == turns
+}
+
+func (s *OpenAIGatewayService) realtimeEmployeeTurnPreparationAllowed(record *RealtimeCallRecord) error {
+	store, err := s.realtimeStore()
+	if err != nil {
+		return err
+	}
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	if err != nil {
+		return err
+	}
+	if controller == RealtimeControllerFinalizing || controller == RealtimeControllerClosed {
+		return ErrRealtimeControllerChanged
+	}
+	return nil
 }
 
 func (s *OpenAIGatewayService) beginRealtimeEmployeeTurn(record *RealtimeCallRecord, responseID, model string, start RealtimeTurnStartFunc) error {
@@ -139,12 +163,19 @@ func (s *OpenAIGatewayService) ensureOfficialRealtimeEmployeeTurn(record *Realti
 	if record == nil || start == nil {
 		return nil
 	}
+	if err := s.realtimeEmployeeTurnPreparationAllowed(record); err != nil {
+		return err
+	}
 	turns := s.realtimeEmployeeTurns(record.CallHash)
 	if turns == nil {
 		return ErrRealtimeCallNotFound
 	}
 
 	turns.mu.Lock()
+	if turns.closing {
+		turns.mu.Unlock()
+		return ErrRealtimeControllerChanged
+	}
 	if len(turns.prepared) > 0 {
 		turns.mu.Unlock()
 		return nil
@@ -154,9 +185,13 @@ func (s *OpenAIGatewayService) ensureOfficialRealtimeEmployeeTurn(record *Realti
 		turns.mu.Unlock()
 		<-done
 		turns.mu.Lock()
-		ready := len(turns.prepared) > 0
+		closing := turns.closing
+		ready := !closing && len(turns.prepared) > 0
 		err := turns.prepareErr
 		turns.mu.Unlock()
+		if closing {
+			return ErrRealtimeControllerChanged
+		}
 		if ready {
 			return nil
 		}
@@ -199,10 +234,18 @@ func (s *OpenAIGatewayService) ensureOfficialRealtimeEmployeeTurn(record *Realti
 			return finish(ErrRealtimeUnavailable)
 		}
 		turns.mu.Lock()
+		if turns.closing || !s.ownsRealtimeEmployeeTurns(record.CallHash, turns) {
+			turns.mu.Unlock()
+			handle.HandlerDone()
+			return finish(ErrRealtimeControllerChanged)
+		}
 		turns.handles[pendingID] = handle
 		turns.descriptors[pendingID] = descriptor
 		turns.pending = pendingID
 		turns.mu.Unlock()
+	}
+	if err := s.realtimeEmployeeTurnPreparationAllowed(record); err != nil {
+		return finish(err)
 	}
 	if err := s.persistRealtimeEmployeeTurn(record, descriptor, true); err != nil {
 		return finish(err)
@@ -256,13 +299,9 @@ func (s *OpenAIGatewayService) completeRealtimeEmployeeTurn(record *RealtimeCall
 	turns.mu.Lock()
 	delete(turns.handles, responseID)
 	delete(turns.descriptors, responseID)
-	empty := len(turns.handles) == 0
 	turns.mu.Unlock()
 	if handle != nil {
 		handle.HandlerDone()
-	}
-	if empty {
-		s.realtimeEmployeeTurnReservations.Delete(record.CallHash)
 	}
 	return nil
 }
@@ -328,16 +367,32 @@ func (s *OpenAIGatewayService) releaseRealtimeEmployeeTurns(record *RealtimeCall
 	if record == nil {
 		return
 	}
-	value, ok := s.realtimeEmployeeTurnReservations.LoadAndDelete(record.CallHash)
+	value, ok := s.realtimeEmployeeTurnReservations.Load(record.CallHash)
 	if !ok {
 		return
 	}
 	turns := value.(*realtimeEmployeeTurnReservations)
 	turns.mu.Lock()
+	if turns.closing {
+		turns.mu.Unlock()
+		return
+	}
+	turns.closing = true
+	done := turns.prepareDone
+	preparing := turns.preparing
+	turns.mu.Unlock()
+	if preparing {
+		<-done
+	}
+
+	turns.mu.Lock()
 	handles := turns.handles
 	turns.handles = make(map[string]*InflightReservation)
 	turns.descriptors = make(map[string]RealtimeEmployeeTurnReservation)
+	turns.prepared = nil
+	turns.pending = ""
 	turns.mu.Unlock()
+	s.realtimeEmployeeTurnReservations.Delete(record.CallHash)
 	for _, handle := range handles {
 		handle.HandlerDone()
 	}
