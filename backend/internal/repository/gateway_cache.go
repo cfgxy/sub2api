@@ -407,6 +407,32 @@ var markRealtimeCallClosedScript = redis.NewScript(`
 	return 1
 `)
 
+// updateRealtimeEmployeeTurnScript owns only employee_turn_reservations. It
+// deliberately never writes controller, finalizer, or cleanup fields because
+// finalization changes those fields under its own owner lease.
+var updateRealtimeEmployeeTurnScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 then return 0 end
+	local current = redis.call('HGET', key, 'employee_turn_reservations')
+	local turns = {}
+	if current and current ~= '' then turns = cjson.decode(current) end
+	local response_id = ARGV[1]
+	local add = ARGV[2] == '1'
+	local updated = {}
+	local found = false
+	for _, turn in ipairs(turns) do
+		if turn.ResponseID == response_id then
+			found = true
+			if add then table.insert(updated, turn) end
+		else
+			table.insert(updated, turn)
+		end
+	end
+	if add and not found then table.insert(updated, cjson.decode(ARGV[3])) end
+	redis.call('HSET', key, 'employee_turn_reservations', cjson.encode(updated))
+	return 1
+`)
+
 var claimRealtimeFinalizationScript = redis.NewScript(`
 	local key = KEYS[1]
 	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
@@ -697,6 +723,30 @@ func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.Rea
 	pipe.Expire(ctx, realtimeCallKey(record.CallHash), ttl)
 	_, err := pipe.Exec(ctx)
 	return err
+}
+
+func (c *gatewayCache) UpdateRealtimeEmployeeTurn(ctx context.Context, callHash string, descriptor service.RealtimeEmployeeTurnReservation, add bool) error {
+	callHash = strings.TrimSpace(callHash)
+	descriptor.ResponseID = strings.TrimSpace(descriptor.ResponseID)
+	if callHash == "" || descriptor.ResponseID == "" {
+		return service.ErrRealtimeCallNotFound
+	}
+	raw, err := json.Marshal(descriptor)
+	if err != nil {
+		return err
+	}
+	addValue := "0"
+	if add {
+		addValue = "1"
+	}
+	updated, err := updateRealtimeEmployeeTurnScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, descriptor.ResponseID, addValue, string(raw)).Int()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return service.ErrRealtimeCallNotFound
+	}
+	return nil
 }
 
 func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*service.RealtimeCallRecord, error) {

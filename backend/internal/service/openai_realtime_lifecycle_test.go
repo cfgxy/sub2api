@@ -156,6 +156,34 @@ func (s *realtimeLifecycleStore) SaveRealtimeCall(_ context.Context, record *Rea
 	return nil
 }
 
+func (s *realtimeLifecycleStore) UpdateRealtimeEmployeeTurn(_ context.Context, callHash string, descriptor RealtimeEmployeeTurnReservation, add bool) error {
+	if s.saveFailures.Add(-1) >= 0 {
+		return errors.New("temporary realtime ledger save failure")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record == nil || s.record.CallHash != callHash {
+		return ErrRealtimeCallNotFound
+	}
+	updated := s.record.EmployeeTurnReservations[:0]
+	found := false
+	for _, existing := range s.record.EmployeeTurnReservations {
+		if existing.ResponseID == descriptor.ResponseID {
+			found = true
+			if add {
+				updated = append(updated, existing)
+			}
+			continue
+		}
+		updated = append(updated, existing)
+	}
+	if add && !found {
+		updated = append(updated, descriptor)
+	}
+	s.record.EmployeeTurnReservations = updated
+	return nil
+}
+
 func TestRestoreRealtimeEmployeeTurnsCleansTerminalLedgerStates(t *testing.T) {
 	for _, status := range []string{"committed", "settled", "released"} {
 		t.Run(status, func(t *testing.T) {
@@ -253,6 +281,47 @@ func TestCancelRejectedRealtimeTurnStopsResponseAndFinalizesCall(t *testing.T) {
 	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
 	require.NoError(t, err)
 	require.Equal(t, RealtimeControllerClosed, persisted.Controller)
+}
+
+func TestRejectedRealtimeTurnKeepsReservationUntilLedgerPersists(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-ledger-retry", CallHash: hashRealtimeCallID("call-ledger-retry"), AccountID: 11, APIKeyID: 42, UserID: 33, LeaseID: "lease-ledger-retry", Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo, concurrencyService: NewConcurrencyService(&realtimeLifecycleConcurrencyCache{})}
+	store.saveFailures.Store(1)
+	err := svc.beginRealtimeEmployeeTurn(record, "response-rejected", "gpt-realtime", func(responseID, _ string) (*InflightReservation, error) {
+		result, reserveErr := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: "realtime-call:" + record.CallHash + ":" + responseID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1.25,
+		})
+		if reserveErr != nil {
+			return nil, reserveErr
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result)), nil
+	})
+	require.Error(t, err, "Redis descriptor first write is deliberately unavailable")
+	require.NotNil(t, svc.RealtimeEmployeeTurnReservation(record, "response-rejected"), "DB reservation must remain owned until its ledger identity persists")
+
+	var settlements atomic.Int32
+	svc.SetOfficialRealtimeConservativeTurnCallback(func(got *RealtimeCallRecord, responseID string) error {
+		require.Equal(t, record.CallHash, got.CallHash)
+		require.Equal(t, "response-rejected", responseID)
+		settlements.Add(1)
+		repo.mu.Lock()
+		result := repo.reserved["realtime-call:"+record.CallHash+":"+responseID]
+		result.Status = "settled"
+		repo.reserved[result.RequestID] = result
+		repo.mu.Unlock()
+		return nil
+	})
+
+	svc.finalizeOfficialRealtimeCall(record)
+	persisted, getErr := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, getErr)
+	require.Equal(t, RealtimeControllerClosed, persisted.Controller)
+	require.Empty(t, persisted.EmployeeTurnReservations)
+	require.Equal(t, int32(1), settlements.Load(), "rejected turn must receive one recoverable conservative outcome")
 }
 
 func TestRealtimeEmployeeTurnReservationSurvivesRecoveryAndReleasesOnce(t *testing.T) {

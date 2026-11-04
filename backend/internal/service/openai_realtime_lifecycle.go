@@ -55,15 +55,16 @@ type realtimeUsageClaim struct {
 type RealtimeTurnStartFunc func(responseID, model string) (*InflightReservation, error)
 
 type realtimeEmployeeTurnReservations struct {
-	mu      sync.Mutex
-	handles map[string]*InflightReservation
+	mu          sync.Mutex
+	handles     map[string]*InflightReservation
+	descriptors map[string]RealtimeEmployeeTurnReservation
 }
 
 func (s *OpenAIGatewayService) realtimeEmployeeTurns(callHash string) *realtimeEmployeeTurnReservations {
 	if s == nil || strings.TrimSpace(callHash) == "" {
 		return nil
 	}
-	created := &realtimeEmployeeTurnReservations{handles: make(map[string]*InflightReservation)}
+	created := &realtimeEmployeeTurnReservations{handles: make(map[string]*InflightReservation), descriptors: make(map[string]RealtimeEmployeeTurnReservation)}
 	actual, _ := s.realtimeEmployeeTurnReservations.LoadOrStore(callHash, created)
 	return actual.(*realtimeEmployeeTurnReservations)
 }
@@ -78,24 +79,30 @@ func (s *OpenAIGatewayService) beginRealtimeEmployeeTurn(record *RealtimeCallRec
 		return ErrRealtimeCallNotFound
 	}
 	turns.mu.Lock()
-	defer turns.mu.Unlock()
 	if _, exists := turns.handles[responseID]; exists {
+		turns.mu.Unlock()
 		return nil
 	}
 	handle, err := start(responseID, model)
 	if err != nil || handle == nil {
+		turns.mu.Unlock()
 		return err
 	}
 	descriptor := handle.enterpriseReservation().RealtimeSnapshot(responseID)
 	if descriptor.RequestID == "" || descriptor.SourceAPIKeyID <= 0 || descriptor.ReservedUSD <= 0 || descriptor.RequestFingerprint == "" {
+		turns.mu.Unlock()
 		handle.HandlerDone()
 		return ErrRealtimeUnavailable
 	}
+	// A DB reservation already exists. Keep its deterministic identity until
+	// Redis accepts the descriptor, so a transient write failure cannot turn a
+	// started response into an untraceable cost.
+	turns.handles[responseID] = handle
+	turns.descriptors[responseID] = descriptor
+	turns.mu.Unlock()
 	if err := s.persistRealtimeEmployeeTurn(record, descriptor, true); err != nil {
-		handle.HandlerDone()
 		return err
 	}
-	turns.handles[responseID] = handle
 	return nil
 }
 
@@ -123,16 +130,22 @@ func (s *OpenAIGatewayService) completeRealtimeEmployeeTurn(record *RealtimeCall
 	if record == nil || strings.TrimSpace(responseID) == "" {
 		return nil
 	}
-	if err := s.persistRealtimeEmployeeTurn(record, RealtimeEmployeeTurnReservation{ResponseID: responseID}, false); err != nil {
-		return err
-	}
 	turns := s.realtimeEmployeeTurns(record.CallHash)
 	if turns == nil {
 		return nil
 	}
+	responseID = strings.TrimSpace(responseID)
 	turns.mu.Lock()
-	handle := turns.handles[strings.TrimSpace(responseID)]
-	delete(turns.handles, strings.TrimSpace(responseID))
+	handle := turns.handles[responseID]
+	descriptor := turns.descriptors[responseID]
+	turns.mu.Unlock()
+	descriptor.ResponseID = responseID
+	if err := s.persistRealtimeEmployeeTurn(record, descriptor, false); err != nil {
+		return err
+	}
+	turns.mu.Lock()
+	delete(turns.handles, responseID)
+	delete(turns.descriptors, responseID)
 	empty := len(turns.handles) == 0
 	turns.mu.Unlock()
 	if handle != nil {
@@ -176,6 +189,7 @@ func (s *OpenAIGatewayService) releaseRealtimeEmployeeTurns(record *RealtimeCall
 	turns.mu.Lock()
 	handles := turns.handles
 	turns.handles = make(map[string]*InflightReservation)
+	turns.descriptors = make(map[string]RealtimeEmployeeTurnReservation)
 	turns.mu.Unlock()
 	for _, handle := range handles {
 		handle.HandlerDone()
@@ -187,36 +201,33 @@ func (s *OpenAIGatewayService) persistRealtimeEmployeeTurn(record *RealtimeCallR
 	if err != nil {
 		return err
 	}
-	latest, err := store.GetRealtimeCall(context.Background(), record.CallHash)
-	if err != nil {
-		return err
-	}
 	responseID := strings.TrimSpace(descriptor.ResponseID)
 	if responseID == "" {
 		return ErrRealtimeCallNotFound
 	}
-	updated := append([]RealtimeEmployeeTurnReservation(nil), latest.EmployeeTurnReservations...)
-	if add {
-		for _, existing := range updated {
-			if existing.ResponseID == responseID {
-				return nil
-			}
-		}
-		updated = append(updated, descriptor)
-	} else {
-		updated = updated[:0]
-		for _, existing := range latest.EmployeeTurnReservations {
-			if existing.ResponseID != responseID {
-				updated = append(updated, existing)
-			}
+	return store.UpdateRealtimeEmployeeTurn(context.Background(), record.CallHash, descriptor, add)
+}
+
+func (s *OpenAIGatewayService) persistPendingRealtimeEmployeeTurns(record *RealtimeCallRecord) bool {
+	if record == nil {
+		return false
+	}
+	turns := s.realtimeEmployeeTurns(record.CallHash)
+	if turns == nil {
+		return true
+	}
+	turns.mu.Lock()
+	descriptors := make([]RealtimeEmployeeTurnReservation, 0, len(turns.descriptors))
+	for _, descriptor := range turns.descriptors {
+		descriptors = append(descriptors, descriptor)
+	}
+	turns.mu.Unlock()
+	for _, descriptor := range descriptors {
+		if err := s.persistRealtimeEmployeeTurn(record, descriptor, true); err != nil {
+			return false
 		}
 	}
-	latest.EmployeeTurnReservations = updated
-	ttl := time.Until(latest.ExpiresAt) + 5*time.Minute
-	if ttl <= 0 {
-		return ErrRealtimeCallNotFound
-	}
-	return store.SaveRealtimeCall(context.Background(), latest, ttl)
+	return true
 }
 
 func (s *OpenAIGatewayService) restoreRealtimeEmployeeTurns(record *RealtimeCallRecord) bool {
@@ -257,6 +268,7 @@ func (s *OpenAIGatewayService) restoreRealtimeEmployeeTurns(record *RealtimeCall
 		result.RequestFingerprint = descriptor.RequestFingerprint
 		turns.mu.Lock()
 		turns.handles[descriptor.ResponseID] = AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result))
+		turns.descriptors[descriptor.ResponseID] = descriptor
 		turns.mu.Unlock()
 	}
 	return true
@@ -1213,6 +1225,11 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 			s.scheduleRealtimeFinalizationRetry(record)
 			return
 		}
+	}
+	if !s.persistPendingRealtimeEmployeeTurns(record) {
+		_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+		s.scheduleRealtimeFinalizationRetry(record)
+		return
 	}
 	var turnsSettled bool
 	record, turnsSettled = s.settleConservativeRealtimeEmployeeTurns(record, store, owner)

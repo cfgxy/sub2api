@@ -39,17 +39,18 @@ func TestRealtimeResponseCreateFrame(t *testing.T) {
 	require.False(t, realtimeResponseCreateFrame([]byte(`not-json`)))
 }
 
-func TestRealtimeWSEmployeeTurnBindingsUseResponseIDInsteadOfTerminalOrder(t *testing.T) {
+func TestRealtimeWSEmployeeTurnBindingsKeepVADAndExplicitResponsesIndependent(t *testing.T) {
 	bindings := &realtimeWSEmployeeTurnBindings{}
-	reservationA := &service.InflightReservation{}
-	reservationB := &service.InflightReservation{}
-	bindings.add(reservationA)
-	bindings.add(reservationB)
+	explicitReservation := &service.InflightReservation{}
+	vadReservation := &service.InflightReservation{}
 
-	bindings.bind("response-a")
-	bindings.bind("response-b")
-	require.Same(t, reservationB, bindings.take("response-b"), "B may terminate before A")
-	require.Same(t, reservationA, bindings.take("response-a"), "A must retain its own reservation")
+	// server_vad.create_response may emit its response.created before an earlier
+	// client response.create finishes. Provider IDs, never a pending FIFO, own
+	// the reservation mapping.
+	require.True(t, bindings.bindReservation("response-vad", vadReservation))
+	require.True(t, bindings.bindReservation("response-explicit", explicitReservation))
+	require.Same(t, explicitReservation, bindings.take("response-explicit"))
+	require.Same(t, vadReservation, bindings.take("response-vad"))
 }
 
 func TestRealtimeCallIdentityFreezesAuthenticatedFields(t *testing.T) {

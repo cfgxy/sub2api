@@ -48,32 +48,26 @@ type officialRealtimeCallTerminator interface {
 
 type realtimeWSEmployeeTurnBindings struct {
 	mu         sync.Mutex
-	pending    []*service.InflightReservation
 	byResponse map[string]*service.InflightReservation
 }
 
-func (b *realtimeWSEmployeeTurnBindings) add(reservation *service.InflightReservation) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.pending = append(b.pending, reservation)
-}
-
-func (b *realtimeWSEmployeeTurnBindings) bind(responseID string) {
+// bindReservation attaches the hold to the provider-issued response ID. Unlike
+// the legacy pending FIFO, this is correct for VAD-created and interleaved turns.
+func (b *realtimeWSEmployeeTurnBindings) bindReservation(responseID string, reservation *service.InflightReservation) bool {
 	responseID = strings.TrimSpace(responseID)
-	if responseID == "" {
-		return
+	if responseID == "" || reservation == nil {
+		return false
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.byResponse == nil {
 		b.byResponse = make(map[string]*service.InflightReservation)
 	}
-	if _, exists := b.byResponse[responseID]; exists || len(b.pending) == 0 {
-		return
+	if _, exists := b.byResponse[responseID]; exists {
+		return false
 	}
-	reservation := b.pending[0]
-	b.pending = b.pending[1:]
 	b.byResponse[responseID] = reservation
+	return true
 }
 
 func (b *realtimeWSEmployeeTurnBindings) take(responseID string) *service.InflightReservation {
@@ -88,11 +82,10 @@ func (b *realtimeWSEmployeeTurnBindings) take(responseID string) *service.Inflig
 func (b *realtimeWSEmployeeTurnBindings) drain() []*service.InflightReservation {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	reservations := append([]*service.InflightReservation(nil), b.pending...)
+	reservations := make([]*service.InflightReservation, 0, len(b.byResponse))
 	for _, reservation := range b.byResponse {
 		reservations = append(reservations, reservation)
 	}
-	b.pending = nil
 	b.byResponse = nil
 	return reservations
 }
@@ -203,25 +196,27 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 			}
 		}
 	}()
-	reserveEmployeeTurn := func(frameCtx context.Context, payload []byte) error {
-		if !apiKey.EnterpriseEmployeeWeeklyLimit || !realtimeResponseCreateFrame(payload) {
+	reserveEmployeeTurn := func(responseID, responseModel string) error {
+		if !apiKey.EnterpriseEmployeeWeeklyLimit {
 			return nil
 		}
-		req := tokenInflightEstimate(model, payload)
-		req.RequestID = "realtime-ws:" + uuid.NewString()
-		employee, reserveErr := h.gatewayService.ReserveEnterpriseEmployeeUsage(frameCtx, apiKey, req)
+		req := tokenInflightEstimate(firstNonEmptyRealtime(responseModel, model), nil)
+		req.RequestID = "realtime-ws:" + responseID
+		employee, reserveErr := h.gatewayService.ReserveEnterpriseEmployeeUsage(c.Request.Context(), apiKey, req)
 		if reserveErr != nil {
 			return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", reserveErr)
 		}
 		handle := service.AttachEnterpriseEmployeeUsageReservation(nil, employee)
-		employeeTurns.add(handle)
+		if !employeeTurns.bindReservation(responseID, handle) {
+			handle.HandlerDone()
+		}
 		return nil
 	}
 	proxyErr := h.gatewayService.ProxyOfficialRealtimeWebSocket(c.Request.Context(), client, account, model, func(frameCtx context.Context, payload []byte) error {
 		if err := auditClientFrame(frameCtx, payload); err != nil {
 			return err
 		}
-		return reserveEmployeeTurn(frameCtx, payload)
+		return nil
 	},
 		func(turn openaiwsv2.RelayTurnResult) {
 			turnReservation := employeeTurns.take(turn.RequestID)
@@ -266,7 +261,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 			}); err != nil {
 				reqLog.Error("official_realtime_record_usage_failed", zap.Int64("account_id", account.ID), zap.String("request_id", turn.RequestID), zap.Error(err))
 			}
-		}, employeeTurns.bind)
+		}, reserveEmployeeTurn)
 	if proxyErr == nil || openAIWSIngressEndedByClient(proxyErr) {
 		_ = client.Close(coderws.StatusNormalClosure, "")
 		return

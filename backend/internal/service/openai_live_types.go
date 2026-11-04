@@ -191,6 +191,9 @@ type RealtimeEmployeeTurnReservation struct {
 type RealtimeCallStore interface {
 	SaveRealtimeCall(ctx context.Context, record *RealtimeCallRecord, ttl time.Duration) error
 	GetRealtimeCall(ctx context.Context, callHash string) (*RealtimeCallRecord, error)
+	// UpdateRealtimeEmployeeTurn mutates only the durable per-response ledger.
+	// It must not overwrite controller or cleanup state owned by finalization.
+	UpdateRealtimeEmployeeTurn(ctx context.Context, callHash string, descriptor RealtimeEmployeeTurnReservation, add bool) error
 	ClaimRealtimeController(ctx context.Context, callHash, controller, owner string) (bool, error)
 	ReleaseRealtimeController(ctx context.Context, callHash, owner string) (bool, error)
 	GetRealtimeController(ctx context.Context, callHash string) (string, error)

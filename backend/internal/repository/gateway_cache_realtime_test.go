@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +11,57 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGatewayCacheRealtimeDescriptorUpdatesPreserveFinalizationState(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	cache, ok := NewGatewayCache(client).(interface {
+		service.RealtimeCallStore
+		service.RealtimeFinalizationStore
+	})
+	require.True(t, ok)
+	ctx := context.Background()
+	record := &service.RealtimeCallRecord{CallID: "call-atomic", CallHash: "call-atomic-hash", AccountID: 1, APIKeyID: 2, UserID: 3, Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Controller: service.RealtimeControllerPending}
+	require.NoError(t, cache.SaveRealtimeCall(ctx, record, time.Hour))
+	claimed, err := cache.ClaimRealtimeFinalization(ctx, record.CallHash, "finalizer", time.Minute, time.Hour)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	first := service.RealtimeEmployeeTurnReservation{ResponseID: "response-a", RequestID: "request-a", RequestFingerprint: "fingerprint-a", SourceAPIKeyID: 2, ReservedUSD: 1}
+	second := service.RealtimeEmployeeTurnReservation{ResponseID: "response-b", RequestID: "request-b", RequestFingerprint: "fingerprint-b", SourceAPIKeyID: 2, ReservedUSD: 1}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, descriptor := range []service.RealtimeEmployeeTurnReservation{first, second} {
+		wg.Add(1)
+		go func(descriptor service.RealtimeEmployeeTurnReservation) {
+			defer wg.Done()
+			<-start
+			require.NoError(t, cache.UpdateRealtimeEmployeeTurn(ctx, record.CallHash, descriptor, true))
+		}(descriptor)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		closed, commitErr := cache.CommitRealtimeFinalization(ctx, record.CallHash, "finalizer", time.Hour)
+		require.NoError(t, commitErr)
+		require.True(t, closed)
+	}()
+	close(start)
+	wg.Wait()
+
+	loaded, err := cache.GetRealtimeCall(ctx, record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, service.RealtimeControllerClosed, loaded.Controller)
+	require.True(t, loaded.CleanupPending)
+	require.ElementsMatch(t, []service.RealtimeEmployeeTurnReservation{first, second}, loaded.EmployeeTurnReservations)
+	require.NoError(t, cache.UpdateRealtimeEmployeeTurn(ctx, record.CallHash, first, false))
+	loaded, err = cache.GetRealtimeCall(ctx, record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, service.RealtimeControllerClosed, loaded.Controller)
+	require.True(t, loaded.CleanupPending)
+	require.Equal(t, []service.RealtimeEmployeeTurnReservation{second}, loaded.EmployeeTurnReservations)
+}
 
 func TestGatewayCacheRealtimeCallControllerAndIdempotency(t *testing.T) {
 	redisServer := miniredis.RunT(t)
