@@ -142,7 +142,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 				return
 			}
 			if !skipBilling && apiKey.EnterpriseEmployeeWeeklyLimit && (apiKey.RateLimit7d <= 0 || apiKey.Usage7d >= apiKey.RateLimit7d) {
-				abortWithGoogleError(c, http.StatusTooManyRequests, service.ErrAPIKeyRateLimit7dExceeded.Error())
+				abortWithGoogleErrorWithReason(c, http.StatusTooManyRequests, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded.Error(), "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED")
 				return
 			}
 			c.Set(string(ContextKeyAPIKey), apiKey)
@@ -300,12 +300,23 @@ func allowGoogleQueryKey(path string) bool {
 }
 
 func abortWithGoogleError(c *gin.Context, status int, message string) {
+	abortWithGoogleErrorWithReason(c, status, message, "")
+}
+
+func abortWithGoogleErrorWithReason(c *gin.Context, status int, message, reason string) {
+	errorBody := gin.H{
+		"code":    status,
+		"message": message,
+		"status":  googleapi.HTTPStatusToGoogleStatus(status),
+	}
+	if reason != "" {
+		errorBody["details"] = []gin.H{{
+			"@type":  "type.googleapis.com/google.rpc.ErrorInfo",
+			"reason": reason,
+		}}
+	}
 	c.JSON(status, gin.H{
-		"error": gin.H{
-			"code":    status,
-			"message": message,
-			"status":  googleapi.HTTPStatusToGoogleStatus(status),
-		},
+		"error": errorBody,
 	})
 	c.Abort()
 }

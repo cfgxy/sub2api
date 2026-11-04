@@ -3,6 +3,7 @@ package enterpriseidentity
 import (
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
@@ -34,12 +35,14 @@ func TestWorkbenchUsageIgnoresForgedEnterpriseIdentifierInQuery(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
 	router := mountWorkbenchWithClaims(handler, &Claims{EnterpriseID: 7, Role: "enterprise_admin"})
+	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	expectCurrentEnterpriseWeek(mock, 7, 55, anchor)
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_usage_attributions`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
 	mock.ExpectQuery(`(?s)SELECT attribution\.id.*ORDER BY attribution\.request_at DESC`).
-		WithArgs(int64(7), 20, 0).
+		WithArgs(int64(7), int64(55), anchor, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"attribution_id", "usage_log_id", "employee_id", "employee_email", "department_id",
 			"api_key_id", "api_key_masked", "model", "window_type", "window_anchor", "request_at",

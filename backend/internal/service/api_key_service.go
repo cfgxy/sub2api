@@ -45,6 +45,9 @@ var (
 	ErrAPIKeyRateLimit5hExceeded = infraerrors.TooManyRequests("API_KEY_RATE_5H_EXCEEDED", "api key 5小时限额已用完")
 	ErrAPIKeyRateLimit1dExceeded = infraerrors.TooManyRequests("API_KEY_RATE_1D_EXCEEDED", "api key 日限额已用完")
 	ErrAPIKeyRateLimit7dExceeded = infraerrors.TooManyRequests("API_KEY_RATE_7D_EXCEEDED", "api key 7天限额已用完")
+	// ErrEnterpriseEmployeeWeeklyAllocationExceeded 表示员工被分配的企业周额度已用完。
+	// 它不得与普通 API Key 的滚动 7 天限额混用，以便协议层稳定区分拒绝来源。
+	ErrEnterpriseEmployeeWeeklyAllocationExceeded = infraerrors.TooManyRequests("ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED", "enterprise employee weekly allocation exhausted")
 )
 
 const (

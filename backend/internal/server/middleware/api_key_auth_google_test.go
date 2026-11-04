@@ -192,6 +192,9 @@ func TestEnterpriseCandidateSimpleModeSelfResolvesAndRejectsMissingOrZeroAllocat
 				r.ServeHTTP(rec, req)
 
 				require.Equal(t, allocationCase.expectedCode, rec.Code)
+				if allocationCase.expectedCode == http.StatusTooManyRequests {
+					require.Contains(t, rec.Body.String(), "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED")
+				}
 				require.Equal(t, int32(1), repo.resolveCalls.Load())
 				require.Equal(t, allocationCase.expectedSync, repo.syncCalls.Load())
 			})

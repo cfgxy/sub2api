@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseallocation"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -263,7 +264,7 @@ type workbenchSQLScope struct {
 	args  []any
 }
 
-func buildWorkbenchUsageScope(enterpriseID int64, q workbenchQuery) workbenchSQLScope {
+func buildWorkbenchUsageScope(enterpriseID int64, q workbenchQuery, currentWeek *currentEnterpriseWeek) workbenchSQLScope {
 	conditions := []string{"attribution.enterprise_id = $1"}
 	args := []any{enterpriseID}
 	add := func(condition string, value any) {
@@ -297,11 +298,14 @@ func buildWorkbenchUsageScope(enterpriseID int64, q workbenchQuery) workbenchSQL
 	if q.EndAt != nil {
 		add("attribution.request_at < $%d", *q.EndAt)
 	}
+	if q.WindowAnchor == nil && q.StartAt == nil && q.EndAt == nil && currentWeek != nil {
+		add("attribution.subscription_id = $%d", currentWeek.SubscriptionID)
+		add("attribution.window_anchor = $%d", currentWeek.Anchor)
+	}
 	return workbenchSQLScope{where: strings.Join(conditions, " AND "), args: args}
 }
 
 func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q workbenchQuery) (*WorkbenchSummary, error) {
-	scope := buildWorkbenchUsageScope(enterpriseID, q)
 	result := &WorkbenchSummary{
 		TotalUsageCredit:        "0",
 		EnterprisePoolLimit:     "0",
@@ -313,6 +317,18 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		EmployeeSummaries:       make([]WorkbenchEmployeeSummary, 0),
 		UsageTrend:              make([]WorkbenchUsageTrendPoint, 0),
 	}
+	var currentWeek *currentEnterpriseWeek
+	if q.WindowAnchor == nil && q.StartAt == nil && q.EndAt == nil {
+		var err error
+		currentWeek, err = h.owner.service.resolveCurrentEnterpriseWeek(ctx, enterpriseID)
+		if err != nil {
+			return nil, err
+		}
+		if currentWeek == nil {
+			return result, nil
+		}
+	}
+	scope := buildWorkbenchUsageScope(enterpriseID, q, currentWeek)
 	if err := h.owner.service.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0)::text, COUNT(*)
 		FROM enterprise_usage_attributions AS attribution
@@ -513,19 +529,27 @@ func buildEmployeeSummaryQuery(scope workbenchSQLScope) string {
 		       GREATEST(COALESCE(SUM(allocation.amount), 0) - COALESCE(SUM(usage.usage_credit), 0), 0)::text,
 		       GREATEST(COALESCE(SUM(usage.usage_credit), 0) - COALESCE(SUM(allocation.amount), 0), 0)::text
 		FROM employee_window_usage AS usage
-		LEFT JOIN enterprise_weekly_allocations AS allocation
-		  ON allocation.enterprise_id = usage.enterprise_id
-		 AND allocation.subscription_id = usage.subscription_id
-		 AND allocation.employee_id = usage.employee_id
-		 AND allocation.window_type = usage.window_type
-		 AND allocation.window_anchor = usage.window_anchor
+		LEFT JOIN LATERAL (` + enterpriseallocation.EffectiveWeeklyAllocationQuery(
+		"usage.enterprise_id", "usage.subscription_id", "usage.employee_id", "usage.window_anchor",
+	) + `) AS allocation ON TRUE
 		GROUP BY usage.employee_id, usage.email, usage.department_id
 		ORDER BY SUM(usage.usage_credit) DESC, usage.employee_id
 		LIMIT 100`
 }
 
 func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q workbenchQuery) ([]WorkbenchUsageRow, int64, error) {
-	scope := buildWorkbenchUsageScope(enterpriseID, q)
+	var currentWeek *currentEnterpriseWeek
+	if q.WindowAnchor == nil && q.StartAt == nil && q.EndAt == nil {
+		var err error
+		currentWeek, err = h.owner.service.resolveCurrentEnterpriseWeek(ctx, enterpriseID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if currentWeek == nil {
+			return []WorkbenchUsageRow{}, 0, nil
+		}
+	}
+	scope := buildWorkbenchUsageScope(enterpriseID, q, currentWeek)
 	var total int64
 	countQuery := `SELECT COUNT(*) FROM enterprise_usage_attributions AS attribution
 		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
@@ -548,13 +572,9 @@ func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q 
 		       attribution.window_type, attribution.window_anchor, attribution.request_at,
 		       attribution.classification, attribution.assignment_generation,
 		       COALESCE(usage_log.actual_cost, 0)::text,
-		       COALESCE((SELECT allocation.amount::text
-		                 FROM enterprise_weekly_allocations AS allocation
-		                 WHERE allocation.enterprise_id = attribution.enterprise_id
-		                   AND allocation.subscription_id = attribution.subscription_id
-		                   AND allocation.employee_id = attribution.employee_id
-		                   AND allocation.window_type = attribution.window_type
-		                   AND allocation.window_anchor = attribution.window_anchor), '0')
+		       COALESCE((`+enterpriseallocation.EffectiveWeeklyAllocationQuery(
+		"attribution.enterprise_id", "attribution.subscription_id", "attribution.employee_id", "attribution.window_anchor",
+	)+`), '0')
 		FROM enterprise_usage_attributions AS attribution
 		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
 		LEFT JOIN enterprise_employees AS employee

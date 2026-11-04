@@ -179,7 +179,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 			if !skipBilling && apiKey.EnterpriseEmployeeWeeklyLimit && (apiKey.RateLimit7d <= 0 || apiKey.Usage7d >= apiKey.RateLimit7d) {
-				AbortWithError(c, http.StatusTooManyRequests, "API_KEY_RATE_LIMIT_EXCEEDED", service.ErrAPIKeyRateLimit7dExceeded.Error())
+				AbortWithError(c, http.StatusTooManyRequests, "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED", service.ErrEnterpriseEmployeeWeeklyAllocationExceeded.Error())
 				return
 			}
 			c.Set(string(ContextKeyAPIKey), apiKey)

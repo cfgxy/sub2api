@@ -150,7 +150,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.responsesErrorResponse(c, status, code, message)
+		h.responsesErrorResponse(c, status, responseErrorCode(code, billingErrorMachineCode(err)), message)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.responsesErrorResponse(c, status, code, message)
+		h.responsesErrorResponse(c, status, responseErrorCode(code, billingErrorMachineCode(err)), message)
 		return
 	}
 	defer inflightRelease()
@@ -381,6 +381,13 @@ func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code
 	})
 }
 
+func responseErrorCode(defaultCode, machineCode string) string {
+	if machineCode != "" {
+		return machineCode
+	}
+	return defaultCode
+}
+
 // handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.
 func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
 	if lastErr != nil {
@@ -405,6 +412,7 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 	} else if lastErr != nil && statusCode == http.StatusTooManyRequests {
 		status, code, message = http.StatusTooManyRequests, "rate_limit_error", "All available accounts are currently rate-limited. Please retry later."
 	}
+	machineCode := upstreamRateLimitCode(statusCode)
 	if streamStarted {
 		// A slot-wait heartbeat commits HTTP 200 before any upstream response.
 		// In that case a terminal frame is still required; once any semantic or
@@ -412,9 +420,9 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		// generic response.failed.
 		service.MarkOpsStreamError(c, code, message, status)
 		if c != nil && c.Writer != nil && (c.Writer.Size() <= 0 || gatewayStreamHasOnlyHeartbeats(c)) {
-			writeResponsesFailedSSE(c, code, "", message)
+			writeResponsesFailedSSE(c, code, machineCode, message)
 		}
 		return
 	}
-	h.responsesErrorResponse(c, status, code, message)
+	h.responsesErrorResponse(c, status, responseErrorCode(code, machineCode), message)
 }

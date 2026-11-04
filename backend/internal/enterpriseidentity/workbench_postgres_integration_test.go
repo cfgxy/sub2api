@@ -63,7 +63,8 @@ func TestBuildEmployeeSummaryQueryPostgreSQLAggregatesSubscriptionWindows(t *tes
 			window_type VARCHAR(10) NOT NULL,
 			window_anchor TIMESTAMPTZ NOT NULL,
 			employee_id BIGINT NOT NULL,
-			amount NUMERIC(20, 10) NOT NULL
+			amount NUMERIC(20, 10) NOT NULL,
+			version BIGINT NOT NULL DEFAULT 1
 		)`,
 	} {
 		_, err = db.ExecContext(ctx, statement)
@@ -101,7 +102,7 @@ func TestBuildEmployeeSummaryQueryPostgreSQLAggregatesSubscriptionWindows(t *tes
 	`, anchor)
 	require.NoError(t, err)
 
-	scope := buildWorkbenchUsageScope(7, workbenchQuery{WindowType: "week"})
+	scope := buildWorkbenchUsageScope(7, workbenchQuery{WindowType: "week"}, nil)
 	rows, err := db.QueryContext(ctx, buildEmployeeSummaryQuery(scope), scope.args...)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -120,6 +121,42 @@ func TestBuildEmployeeSummaryQueryPostgreSQLAggregatesSubscriptionWindows(t *tes
 	require.Equal(t, "7.0000000000", usageCredit)
 	require.Equal(t, "23.7500000000", remainingCredit)
 	// GREATEST(负差值, 0) 取整数字面量分支，text 输出为 "0"（dscale=0）。
+	require.Equal(t, "0", overageCredit)
+	require.False(t, rows.Next())
+	require.NoError(t, rows.Err())
+
+	// 默认当前周必须按「订阅 + 锚点」双键读取；同锚点的旧订阅用量不得混入。
+	// 新周未配置精确 allocation 时，应继承最近锚点，且同锚点取最高版本。
+	nextAnchor := anchor.AddDate(0, 0, 7)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO enterprise_usage_attributions
+			(enterprise_id, employee_id, subscription_id, window_type, window_anchor, usage_log_id, request_at)
+		VALUES
+			(7, 22, 101, 'week', $1, 4, $1),
+			(7, 22, 202, 'week', $1, 3, $1)
+	`, nextAnchor)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO enterprise_weekly_allocations
+			(enterprise_id, subscription_id, window_type, window_anchor, employee_id, amount, version)
+		VALUES
+			(7, 101, 'week', $1, 22, 12.50, 2),
+			(7, 202, 'week', $2, 22, 99.00, 1)
+	`, anchor, nextAnchor)
+	require.NoError(t, err)
+
+	currentWeek := &currentEnterpriseWeek{SubscriptionID: 101, Anchor: nextAnchor}
+	currentScope := buildWorkbenchUsageScope(7, workbenchQuery{WindowType: "week"}, currentWeek)
+	rows, err = db.QueryContext(ctx, buildEmployeeSummaryQuery(currentScope), currentScope.args...)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&employeeID, &email, &departmentID, &requests, &configuredCredit, &usageCredit, &remainingCredit, &overageCredit))
+	require.Equal(t, int64(1), requests)
+	require.Equal(t, "12.5000000000", configuredCredit)
+	require.Equal(t, "9.0000000000", usageCredit)
+	require.Equal(t, "3.5000000000", remainingCredit)
 	require.Equal(t, "0", overageCredit)
 	require.False(t, rows.Next())
 	require.NoError(t, rows.Err())

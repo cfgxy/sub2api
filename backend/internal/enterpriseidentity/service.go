@@ -26,6 +26,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/enterprise"
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseallocation"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	platformservice "github.com/Wei-Shaw/sub2api/internal/service"
@@ -1522,6 +1523,37 @@ type EnterprisePoolStatus struct {
 	WindowAnchor  *time.Time `json:"window_anchor,omitempty"`
 }
 
+type currentEnterpriseWeek struct {
+	SubscriptionID int64
+	Anchor         time.Time
+}
+
+// resolveCurrentEnterpriseWeek identifies the authoritative current week.
+// Callers must not infer it from historical attribution rows: a new active
+// subscription may have the same anchor as an old one.
+func (s *Service) resolveCurrentEnterpriseWeek(ctx context.Context, enterpriseID int64) (*currentEnterpriseWeek, error) {
+	var week currentEnterpriseWeek
+	err := s.db.QueryRowContext(ctx, `
+		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start
+		FROM enterprises AS enterprise
+		JOIN enterprise_subscriptions AS enterprise_subscription
+		  ON enterprise_subscription.enterprise_id = enterprise.id
+		 AND enterprise_subscription.status = 'active'
+		JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID).Scan(&week.SubscriptionID, &week.Anchor)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	week.Anchor = week.Anchor.UTC()
+	return &week, nil
+}
+
 func (s *Service) GetEnterprisePoolStatus(ctx context.Context, enterpriseID int64) (*EnterprisePoolStatus, error) {
 	result := &EnterprisePoolStatus{SourceStatus: "unavailable", PoolLimit: "0", PoolUsed: "0", PoolRemaining: "0"}
 	var poolStatus sql.NullString
@@ -1586,39 +1618,20 @@ func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID
 	if !employeeExists {
 		return nil, errNotFound
 	}
-	var subscriptionID sql.NullInt64
-	var anchor sql.NullTime
-	var limit sql.NullString
-	err := s.db.QueryRowContext(ctx, `
-		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start,
-		       subscription_group.weekly_limit_usd::text
-		FROM enterprises AS enterprise
-		JOIN enterprise_employees AS employee ON employee.enterprise_id = enterprise.id AND employee.id = $2
-		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
-		  ON enterprise_subscription.enterprise_id = enterprise.id AND enterprise_subscription.status = 'active'
-		LEFT JOIN user_subscriptions AS upstream_subscription
-		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
-		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
-		 AND upstream_subscription.deleted_at IS NULL
-		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
-		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID, employeeID).
-		Scan(&subscriptionID, &anchor, &limit)
+	week, err := s.resolveCurrentEnterpriseWeek(ctx, enterpriseID)
 	if err != nil {
 		return nil, err
 	}
-	if !subscriptionID.Valid || !anchor.Valid {
+	if week == nil {
 		return result, nil
 	}
-	result.SubscriptionID = &subscriptionID.Int64
-	windowAnchor := anchor.Time.UTC()
+	result.SubscriptionID = &week.SubscriptionID
+	windowAnchor := week.Anchor
 	result.WindowAnchor = &windowAnchor
 	result.SourceStatus = "available"
 	var configured, actual string
 	err = s.db.QueryRowContext(ctx, `
-		SELECT COALESCE((SELECT amount FROM enterprise_weekly_allocations
-		                WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
-		                  AND window_type = 'week' AND window_anchor = $4
-		                ORDER BY version DESC LIMIT 1), 0)::NUMERIC(20,8)::text,
+		SELECT COALESCE((`+enterpriseallocation.EffectiveWeeklyAllocationQuery("$1", "$2", "$3", "$4")+`), 0)::NUMERIC(20,8)::text,
 		       COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0)::NUMERIC(20,8)::text,
 		       COUNT(attribution.id)
 		FROM enterprise_usage_attributions AS attribution
@@ -1626,7 +1639,7 @@ func (s *Service) GetEmployeeUsage(ctx context.Context, enterpriseID, employeeID
 		WHERE attribution.enterprise_id = $1 AND attribution.subscription_id = $2
 		  AND attribution.employee_id = $3 AND attribution.window_type = 'week'
 		  AND attribution.window_anchor = $4 AND attribution.classification = 'employee'`,
-		enterpriseID, subscriptionID.Int64, employeeID, windowAnchor).Scan(&configured, &actual, &result.Requests)
+		enterpriseID, week.SubscriptionID, employeeID, windowAnchor).Scan(&configured, &actual, &result.Requests)
 	if err != nil {
 		return nil, err
 	}
@@ -1652,6 +1665,17 @@ func (s *Service) ListEmployeeUsage(ctx context.Context, enterpriseID, employeeI
 	}
 	if q.EndAt != nil {
 		add("attribution.request_at < $%d", *q.EndAt)
+	}
+	if q.StartAt == nil && q.EndAt == nil {
+		week, err := s.resolveCurrentEnterpriseWeek(ctx, enterpriseID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if week == nil {
+			return []EmployeeUsageRecord{}, 0, nil
+		}
+		add("attribution.subscription_id = $%d", week.SubscriptionID)
+		add("attribution.window_anchor = $%d", week.Anchor)
 	}
 	where := strings.Join(conditions, " AND ")
 
@@ -1721,6 +1745,17 @@ func (s *Service) ListEmployeeUsageTrend(ctx context.Context, enterpriseID, empl
 	}
 	if q.EndAt != nil {
 		add("attribution.request_at < $%d", *q.EndAt)
+	}
+	if q.StartAt == nil && q.EndAt == nil {
+		week, err := s.resolveCurrentEnterpriseWeek(ctx, enterpriseID)
+		if err != nil {
+			return nil, err
+		}
+		if week == nil {
+			return []EmployeeUsageTrendPoint{}, nil
+		}
+		add("attribution.subscription_id = $%d", week.SubscriptionID)
+		add("attribution.window_anchor = $%d", week.Anchor)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DATE_TRUNC('day', attribution.request_at),

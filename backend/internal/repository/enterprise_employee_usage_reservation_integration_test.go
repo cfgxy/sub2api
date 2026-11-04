@@ -68,7 +68,7 @@ func TestEnterpriseEmployeeUsageReservationConcurrentBoundaryAdmitsOnlyOne(t *te
 		switch {
 		case err == nil:
 			admitted++
-		case errors.Is(err, service.ErrAPIKeyRateLimit7dExceeded):
+		case errors.Is(err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded):
 			rejected++
 		default:
 			require.NoError(t, err)
@@ -82,6 +82,42 @@ func TestEnterpriseEmployeeUsageReservationConcurrentBoundaryAdmitsOnlyOne(t *te
 		SELECT COUNT(*) FROM enterprise_employee_usage_reservations
 		WHERE enterprise_id = $1 AND status = 'reserved'`, fixture.enterpriseID).Scan(&count))
 	require.Equal(t, 1, count)
+}
+
+func TestEnterpriseEmployeeNewWeekInheritsAllocationForKeySyncAndReservation(t *testing.T) {
+	ctx := context.Background()
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 0)
+	newAnchor := fixture.anchor.AddDate(0, 0, 7)
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		UPDATE user_subscriptions
+		SET weekly_window_start = $2
+		WHERE id = $1
+		RETURNING id`, fixture.upstreamSubscriptionID, newAnchor).Scan(new(int64)))
+
+	apiKeyRepo := NewAPIKeyRepository(integrationEntClient, integrationDB)
+	synchronizer, ok := apiKeyRepo.(interface {
+		SyncEnterpriseEmployeeWeeklyLimit(context.Context, int64, *service.EnterpriseUsageAttributionIdentity) (*service.EnterpriseEmployeeWeeklyLimitState, error)
+	})
+	require.True(t, ok)
+	employeeID := fixture.employeeID
+	state, err := synchronizer.SyncEnterpriseEmployeeWeeklyLimit(ctx, fixture.apiKeyID, &service.EnterpriseUsageAttributionIdentity{
+		EnterpriseID: fixture.enterpriseID, EnterpriseSubscriptionID: fixture.subscriptionID,
+		UpstreamSubscriptionID: fixture.upstreamSubscriptionID, EmployeeID: &employeeID,
+		WeeklyWindowAnchor: &newAnchor,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 10, state.RateLimit7d, 0.000000001)
+	require.Zero(t, state.Usage7d)
+	require.Equal(t, newAnchor, state.WeeklyWindowAnchor)
+
+	repo := NewUsageBillingRepository(nil, integrationDB).(*usageBillingRepository)
+	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
+		fixture,
+		fmt.Sprintf("reservation-inherited-window-%d", time.Now().UnixNano()),
+		strings.Repeat("a", 64),
+		4,
+	))
+	require.NoError(t, err)
 }
 
 func TestEnterpriseEmployeeUnknownCostReservationSerializesAndSettlesActualCost(t *testing.T) {
@@ -116,7 +152,7 @@ func TestEnterpriseEmployeeUnknownCostReservationSerializesAndSettlesActualCost(
 			admitted = got
 			continue
 		}
-		require.ErrorIs(t, got.err, service.ErrAPIKeyRateLimit7dExceeded)
+		require.ErrorIs(t, got.err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded)
 		rejected++
 	}
 	require.NotNil(t, admitted.result)
@@ -154,7 +190,7 @@ func TestEnterpriseEmployeeUnknownCostReservationBlocksKnownCostUntilSettled(t *
 	)
 	known.MaximumCostKnown = true
 	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, known)
-	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
+	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded)
 
 	_, err = repo.Apply(ctx, &service.UsageBillingCommand{
 		RequestID:                     unknownRequestID,
@@ -166,7 +202,7 @@ func TestEnterpriseEmployeeUnknownCostReservationBlocksKnownCostUntilSettled(t *
 	require.NoError(t, err)
 
 	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, known)
-	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
+	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded)
 
 	require.NoError(t, repo.RecoverEnterpriseEmployeeUsage(ctx, fixture.apiKeyID))
 	var usage float64
@@ -406,7 +442,7 @@ func TestEnterpriseEmployeeDelayedSettlementPreservesActualCostAndBlocksSubseque
 	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
 		fixture, requestID+"-pending", strings.Repeat("c", 64), 1,
 	))
-	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
+	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded)
 
 	require.NoError(t, repo.RecoverEnterpriseEmployeeUsage(ctx, fixture.apiKeyID))
 
@@ -417,7 +453,7 @@ func TestEnterpriseEmployeeDelayedSettlementPreservesActualCostAndBlocksSubseque
 	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
 		fixture, requestID+"-after-settlement", strings.Repeat("d", 64), 1,
 	))
-	require.ErrorIs(t, err, service.ErrAPIKeyRateLimit7dExceeded)
+	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded)
 
 	var status string
 	var actual *float64

@@ -105,7 +105,7 @@ func TestCheckBillingEligibilitySimpleModeEmployeeZeroAllocationFailsClosed(t *t
 		EnterpriseWeeklyWindowAnchor:  &anchor,
 	}
 	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 7}, key, nil, nil, "")
-	require.ErrorIs(t, err, ErrAPIKeyRateLimit7dExceeded)
+	require.ErrorIs(t, err, ErrEnterpriseEmployeeWeeklyAllocationExceeded)
 }
 
 func TestSimpleModeEmployeeWeeklyLimitBillingIsAlwaysEnabled(t *testing.T) {

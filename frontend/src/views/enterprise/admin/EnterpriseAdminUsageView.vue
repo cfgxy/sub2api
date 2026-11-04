@@ -52,7 +52,7 @@
               <div v-if="topEmployees.length" class="space-y-3">
                 <div v-for="item in topEmployees" :key="item.employee_id" class="min-w-0 border-b border-gray-200 pb-2 text-sm dark:border-dark-700">
                   <div class="flex flex-wrap justify-between gap-2"><span class="break-all font-medium text-gray-900 dark:text-white">{{ item.email }}</span><span class="text-gray-500 dark:text-dark-400">{{ item.usage_credit }} / {{ item.configured_credit }}</span></div>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ terms.remaining }} {{ item.remaining_credit }}<span v-if="item.overage_credit !== '0'" class="ml-2 text-red-600 dark:text-red-400">{{ terms.overage }} {{ item.overage_credit }}</span></p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ terms.remaining }} {{ item.remaining_credit }}<span v-if="Number(item.overage_credit) > 0" class="ml-2 text-red-600 dark:text-red-400">{{ terms.overage }} {{ item.overage_credit }}</span></p>
                 </div>
               </div>
               <EmptyState v-else title="当前筛选条件暂无员工用量" />

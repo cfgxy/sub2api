@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,6 +125,48 @@ func TestOpenAIAdmissionError_StreamingNonResponsesIncludesGatewayCode(t *testin
 	payload := body[strings.Index(body, "{"):]
 	assert.Equal(t, "rate_limit_error", gjson.Get(payload, "error.type").String())
 	assert.Equal(t, gatewayQueueFullCode, gjson.Get(payload, "error.code").String())
+}
+
+func TestEnterpriseEmployeeAllocationErrorKeepsLegacyTypesAcrossProtocols(t *testing.T) {
+	const machineCode = "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED"
+
+	t.Run("OpenAI", func(t *testing.T) {
+		c, w := newGinContextForEndpoint(t, EndpointChatCompletions)
+		(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error", machineCode, "enterprise employee weekly allocation exhausted", false, false)
+		assert.Equal(t, "rate_limit_error", gjson.GetBytes(w.Body.Bytes(), "error.type").String())
+		assert.Equal(t, machineCode, gjson.GetBytes(w.Body.Bytes(), "error.code").String())
+	})
+
+	t.Run("Responses_SSE", func(t *testing.T) {
+		c, w := newGinContextForEndpoint(t, EndpointResponses)
+		(&OpenAIGatewayHandler{}).handleStreamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error", machineCode, "enterprise employee weekly allocation exhausted", true, false)
+		_, errObj := parseResponsesFailedSSE(t, w.Body.String())
+		assert.Equal(t, machineCode, errObj["code"])
+	})
+
+	t.Run("Anthropic_SSE", func(t *testing.T) {
+		c, w := newGinContextForEndpoint(t, EndpointMessages)
+		(&GatewayHandler{}).handleStreamingAwareErrorWithCode(c, http.StatusTooManyRequests, "rate_limit_error", machineCode, "enterprise employee weekly allocation exhausted", true)
+		payload := w.Body.String()[strings.Index(w.Body.String(), "{"):]
+		assert.Equal(t, "rate_limit_error", gjson.Get(payload, "error.type").String())
+		assert.Equal(t, machineCode, gjson.Get(payload, "error.code").String())
+	})
+
+	t.Run("Google", func(t *testing.T) {
+		c, w := newGinContextForEndpoint(t, "/v1beta/models/gemini:generateContent")
+		googleErrorWithType(c, http.StatusTooManyRequests, "rate_limit_exceeded", machineCode, "enterprise employee weekly allocation exhausted")
+		assert.Equal(t, int64(http.StatusTooManyRequests), gjson.GetBytes(w.Body.Bytes(), "error.code").Int())
+		assert.Equal(t, machineCode, gjson.GetBytes(w.Body.Bytes(), "error.details.0.reason").String())
+	})
+}
+
+func TestGeminiUpstreamRateLimitUsesDistinctMachineCode(t *testing.T) {
+	c, w := newGinContextForEndpoint(t, "/v1beta/models/gemini:generateContent")
+	(&GatewayHandler{}).handleGeminiFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusTooManyRequests})
+
+	assert.Equal(t, int64(http.StatusTooManyRequests), gjson.GetBytes(w.Body.Bytes(), "error.code").Int())
+	assert.Equal(t, "UPSTREAM_RATE_LIMITED", gjson.GetBytes(w.Body.Bytes(), "error.details.0.reason").String())
+	assert.Contains(t, gjson.GetBytes(w.Body.Bytes(), "error.message").String(), "Upstream rate limit")
 }
 
 func TestOpenAIUpstreamRateLimitWithoutLocalCodeRemainsUnchanged(t *testing.T) {

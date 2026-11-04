@@ -12,6 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func expectCurrentEnterpriseWeek(mock sqlmock.Sqlmock, enterpriseID, subscriptionID int64, anchor time.Time) {
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).
+		WithArgs(enterpriseID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(subscriptionID, anchor))
+}
+
 func TestParseWorkbenchQueryValidatesScopeAndPagination(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -70,9 +76,6 @@ func TestSanitizeAuditPayloadRemovesSensitiveFields(t *testing.T) {
 	require.NotContains(t, payload, "session_id")
 }
 
-// TestGetSummaryMarksOverageRecommendationByNumericSemantics 锁定员工 Recommendation 的数值语义判定：
-// overage 字符串形态来自数据库 NUMERIC 定长输出（QA 实测同源列为 "0.00000000"），
-// 禁止按字符串字面量与 "0" 比较——定长形态的零值会被误标「核对个人超用」。
 // TestSanitizeAuditPayloadIsFailClosedWhitelist locks the detail-drawer payload
 // rendering to an explicit field whitelist rather than a denylist: any field
 // that is not on the known-safe list is dropped by default, even if it isn't
@@ -88,21 +91,26 @@ func TestSanitizeAuditPayloadIsFailClosedWhitelist(t *testing.T) {
 	require.NotContains(t, payload, "internal_debug_dump")
 }
 
+// TestGetSummaryMarksOverageRecommendationByNumericSemantics 锁定员工 Recommendation 的数值语义判定：
+// overage 字符串形态来自数据库 NUMERIC 定长输出（QA 实测同源列为 "0.00000000"），
+// 禁止按字符串字面量与 "0" 比较——定长形态的零值会被误标「核对个人超用」。
 func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	expectCurrentEnterpriseWeek(mock, 7, 55, anchor)
 
 	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"total_usage_credit", "total_requests"}).AddRow("2.75", int64(3)))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
 	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
 			AddRow(int64(22), "employee-zero@example.com", int64(3), int64(3), "200.00000000", "50.00000000", "150.00000000", "0.00000000").
 			AddRow(int64(23), "employee-over@example.com", int64(3), int64(2), "100.00000000", "150.00000000", "0", "50.0000000000"))
@@ -117,7 +125,7 @@ func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"plan", "created_at"}))
 	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "usage_credit"}))
 
 	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
@@ -132,18 +140,20 @@ func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
 func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	expectCurrentEnterpriseWeek(mock, 7, 55, anchor)
 
 	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"total_usage_credit", "total_requests"}).AddRow("2.75", int64(3)))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
-	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*attribution\.window_type = 'week'.*allocation\.subscription_id = usage\.subscription_id.*allocation\.window_type = usage\.window_type.*allocation\.window_anchor = usage\.window_anchor`).
-		WithArgs(int64(7)).
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*attribution\.window_type = 'week'.*attribution\.subscription_id = \$2.*attribution\.window_anchor = \$3.*window_anchor <= usage\.window_anchor`).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
 			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75", "9.75", "0"))
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL`).
@@ -157,7 +167,7 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"plan", "created_at"}))
 	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
-		WithArgs(int64(7)).
+		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "usage_credit"}).AddRow(time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), int64(3), "2.75"))
 
 	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
@@ -185,37 +195,17 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 func TestGetSummarySurfacesScheduledSubscription(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
-
-	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"total_usage_credit", "total_requests"}).AddRow("0", int64(0)))
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
-		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
-	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
-		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
-	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*attribution\.window_type = 'week'.*allocation\.subscription_id = usage\.subscription_id.*allocation\.window_type = usage\.window_type.*allocation\.window_anchor = usage\.window_anchor`).
-		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}))
-	mock.ExpectQuery(`SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL`).
-		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"subscription_id", "source_status", "plan", "subscription_status", "pool_limit", "pool_used", "pool_remaining", "pool_exhausted", "pool_anchor"}).
-			AddRow(nil, "unavailable", "", "", "0", "0", "0", false, nil))
-	mock.ExpectQuery(`(?s)FROM enterprise_subscriptions AS enterprise_subscription.*status = 'scheduled'`).
-		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"plan", "created_at"}).AddRow("Business", time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)))
-	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
-		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "usage_credit"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}))
 
 	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
 	require.NoError(t, err)
 	require.Nil(t, result.SubscriptionID)
 	require.Nil(t, result.PoolObservedAt)
-	require.Equal(t, "Business", result.ScheduledSubscriptionPlan)
-	require.NotNil(t, result.ScheduledSubscriptionSince)
-	require.Equal(t, time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), *result.ScheduledSubscriptionSince)
+	require.Equal(t, "unavailable", result.PoolSourceStatus)
+	require.Empty(t, result.ScheduledSubscriptionPlan)
+	require.Nil(t, result.ScheduledSubscriptionSince)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -272,12 +262,14 @@ func TestListUsageFiltersByModel(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
 	query := workbenchQuery{Page: 1, PageSize: 20, Model: "gpt-4o"}
+	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	expectCurrentEnterpriseWeek(mock, 7, 55, anchor)
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_usage_attributions AS attribution.*usage_log\.model = \$2`).
-		WithArgs(int64(7), "gpt-4o").
+		WithArgs(int64(7), "gpt-4o", int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
 	mock.ExpectQuery(`(?s)SELECT attribution\.id.*usage_log\.model = \$2.*ORDER BY attribution\.request_at DESC`).
-		WithArgs(int64(7), "gpt-4o", 20, 0).
+		WithArgs(int64(7), "gpt-4o", int64(55), anchor, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"attribution_id", "usage_log_id", "employee_id", "employee_email", "department_id",
 			"api_key_id", "api_key_masked", "model", "window_type", "window_anchor", "request_at",

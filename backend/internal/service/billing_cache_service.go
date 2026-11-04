@@ -584,14 +584,14 @@ func (s *BillingCacheService) checkAPIKeyRateLimitsWithPending(ctx context.Conte
 	// the ordinary Redis snapshot and its fail-open compatibility behavior.
 	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
 		if s.apiKeyRateLimitLoader == nil || apiKey.EnterpriseWeeklyWindowAnchor == nil {
-			return ErrAPIKeyRateLimit7dExceeded
+			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
 		}
 		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
 		if err != nil || data.Window7dStart == nil || !data.Window7dStart.UTC().Equal(apiKey.EnterpriseWeeklyWindowAnchor.UTC()) {
-			return ErrAPIKeyRateLimit7dExceeded
+			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
 		}
 		if apiKey.RateLimit7d <= 0 || data.Usage7d >= apiKey.RateLimit7d || data.Usage7d+pending > apiKey.RateLimit7d {
-			return ErrAPIKeyRateLimit7dExceeded
+			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
 		}
 		// Employee keys normally do not carry 5h/1d limits. Preserve those
 		// fields if an existing key has them, without applying rolling-window
