@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +20,55 @@ type realtimeLifecycleStore struct {
 	committed               map[string]struct{}
 	finalizer               string
 	finalizerCommitFailures atomic.Int32
+	finalizerCommitAfterSet atomic.Bool
 	usageCommitFailures     atomic.Int32
+}
+
+type realtimeUsageLeaseTestStore struct {
+	*realtimeLifecycleStore
+	claimOwner   string
+	claimExpires time.Time
+	renewals     atomic.Int32
+}
+
+func (s *realtimeUsageLeaseTestStore) ClaimRealtimeUsage(_ context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if time.Now().Before(s.claimExpires) {
+		return false, nil
+	}
+	if s.usage == nil {
+		s.usage = make(map[string]struct{})
+	}
+	s.usage[callHash+":"+responseID] = struct{}{}
+	s.claimOwner = owner
+	s.claimExpires = time.Now().Add(lease)
+	return true, nil
+}
+
+func (s *realtimeUsageLeaseTestStore) RenewRealtimeUsageClaim(_ context.Context, _, _, owner string, lease time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if owner != s.claimOwner || !time.Now().Before(s.claimExpires) {
+		return false, nil
+	}
+	s.claimExpires = time.Now().Add(lease)
+	s.renewals.Add(1)
+	return true, nil
+}
+
+func (s *realtimeUsageLeaseTestStore) MarkRealtimeUsageSucceeded(_ context.Context, _, _, owner string, ttl time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if owner != s.claimOwner || !time.Now().Before(s.claimExpires) {
+		return false, nil
+	}
+	s.claimExpires = time.Now().Add(ttl)
+	return true, nil
+}
+
+func (s *realtimeUsageLeaseTestStore) CommitSucceededRealtimeUsages(_ context.Context, _ string, _ time.Duration) (int, error) {
+	return 0, nil
 }
 
 func (s *realtimeLifecycleStore) SaveRealtimeCall(_ context.Context, record *RealtimeCallRecord, _ time.Duration) error {
@@ -120,6 +169,9 @@ func (s *realtimeLifecycleStore) CommitRealtimeFinalization(_ context.Context, c
 	}
 	s.record.Controller = RealtimeControllerClosed
 	s.finalizer = ""
+	if s.finalizerCommitAfterSet.Swap(false) {
+		return false, errors.New("transport lost after finalization commit")
+	}
 	return true, nil
 }
 
@@ -435,6 +487,26 @@ func TestFinalizeOfficialRealtimeCallRetriesFinalizationCommit(t *testing.T) {
 	require.Equal(t, 1, concurrency.releases, "终态提交成功前不得释放会话租约")
 }
 
+func TestFinalizeOfficialRealtimeCallCleansResourcesAfterUncertainCommit(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call-finalization-transport", CallHash: hashRealtimeCallID("call-finalization-transport"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-finalization-transport", Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	store.finalizerCommitAfterSet.Store(true)
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	concurrency := &realtimeLifecycleConcurrencyCache{}
+	svc := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(concurrency)}
+	var reservationReleases atomic.Int32
+	svc.realtimeFinalizers.Store(record.CallHash, func() { reservationReleases.Add(1) })
+
+	svc.finalizeOfficialRealtimeCall(record)
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, controller)
+	concurrency.mu.Lock()
+	require.Equal(t, 1, concurrency.releases)
+	concurrency.mu.Unlock()
+	require.Equal(t, int32(1), reservationReleases.Load())
+}
+
 func TestRealtimeUsageBusinessSuccessRetriesIdempotencyCommit(t *testing.T) {
 	record := &RealtimeCallRecord{CallID: "call-usage-commit", CallHash: hashRealtimeCallID("call-usage-commit"), Controller: RealtimeControllerPending}
 	store := &realtimeLifecycleStore{}
@@ -453,6 +525,34 @@ func TestRealtimeUsageBusinessSuccessRetriesIdempotencyCommit(t *testing.T) {
 		return err == nil && used
 	}, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, int32(1), businessCalls.Load(), "重试不得再次执行业务扣费")
+}
+
+func TestRecordRealtimeUsageRenewsClaimDuringLongBusinessCall(t *testing.T) {
+	oldRefreshInterval := realtimeLeaseRefreshInterval
+	oldClaimLease := realtimeReplayClaimLease
+	realtimeLeaseRefreshInterval = 5 * time.Millisecond
+	realtimeReplayClaimLease = 12 * time.Millisecond
+	t.Cleanup(func() {
+		realtimeLeaseRefreshInterval = oldRefreshInterval
+		realtimeReplayClaimLease = oldClaimLease
+	})
+
+	record := &RealtimeCallRecord{CallID: "call-long-billing", CallHash: hashRealtimeCallID("call-long-billing"), Controller: RealtimeControllerPending}
+	store := &realtimeUsageLeaseTestStore{realtimeLifecycleStore: &realtimeLifecycleStore{}}
+	svc := &OpenAIGatewayService{cache: store}
+	var businessCalls atomic.Int32
+
+	err := svc.recordRealtimeUsage(record, store, openaiwsv2.RelayTurnResult{RequestID: "response-long-billing"}, func(openaiwsv2.RelayTurnResult) error {
+		businessCalls.Add(1)
+		time.Sleep(35 * time.Millisecond)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Greater(t, store.renewals.Load(), int32(0))
+	used, err := store.HasCommittedRealtimeUsage(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.True(t, used, "业务调用超过 claim TTL 后仍应由原 owner 完成幂等提交")
+	require.Equal(t, int32(1), businessCalls.Load())
 }
 
 func TestFinalizeOfficialRealtimeCallWaitsForPendingUsageAlongsideCommittedUsage(t *testing.T) {

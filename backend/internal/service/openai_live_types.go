@@ -198,6 +198,16 @@ type RealtimeUsageClaimStore interface {
 	ReleaseRealtimeWebhookClaim(ctx context.Context, webhookID, owner string) (bool, error)
 }
 
+// RealtimeUsageCompletionStore keeps the outcome of a completed business
+// charge durable while Redis idempotency confirmation is retried.  The
+// completion marker prevents another process from rerunning RecordUsage after
+// the original owner has exited.
+type RealtimeUsageCompletionStore interface {
+	MarkRealtimeUsageSucceeded(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error)
+	RenewRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error)
+	CommitSucceededRealtimeUsages(ctx context.Context, callHash string, ttl time.Duration) (int, error)
+}
+
 // RealtimeConservativeUsageClaimStore 仅允许 finalizer owner 在 call finalizing
 // 时申请合成的保守结算；该状态会拒绝普通终态 usage claim。
 type RealtimeConservativeUsageClaimStore interface {

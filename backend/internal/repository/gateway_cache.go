@@ -458,6 +458,18 @@ var claimRealtimeUsageScript = redis.NewScript(`
 	return 0
 `)
 
+var renewRealtimeUsageClaimScript = redis.NewScript(`
+	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	redis.call('PEXPIRE', KEYS[1], ARGV[2])
+	return 1
+`)
+
+var markRealtimeUsageSucceededScript = redis.NewScript(`
+	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	redis.call('PSETEX', KEYS[1], ARGV[2], 'succeeded:' .. ARGV[1])
+	return 1
+`)
+
 var claimRealtimeConservativeUsageScript = redis.NewScript(`
 	if redis.call('HGET', KEYS[2], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[2], 'finalizer_owner') ~= ARGV[1] then return 0 end
 	local time = redis.call('TIME')
@@ -473,8 +485,16 @@ var claimRealtimeConservativeUsageScript = redis.NewScript(`
 `)
 
 var commitRealtimeReplayScript = redis.NewScript(`
-	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	local current = redis.call('GET', KEYS[1])
+	if current ~= 'pending:' .. ARGV[1] and current ~= 'succeeded:' .. ARGV[1] then return 0 end
 	redis.call('PSETEX', KEYS[1], ARGV[2], 'committed')
+	return 1
+`)
+
+var commitSucceededRealtimeReplayScript = redis.NewScript(`
+	local current = redis.call('GET', KEYS[1])
+	if string.sub(current or '', 1, 10) ~= 'succeeded:' then return 0 end
+	redis.call('PSETEX', KEYS[1], ARGV[1], 'committed')
 	return 1
 `)
 
@@ -792,6 +812,22 @@ func (c *gatewayCache) ClaimRealtimeUsage(ctx context.Context, callHash, respons
 	return claimed == 1, err
 }
 
+func (c *gatewayCache) RenewRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime usage claim renewal")
+	}
+	renewed, err := renewRealtimeUsageClaimScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, lease.Milliseconds()).Int()
+	return renewed == 1, err
+}
+
+func (c *gatewayCache) MarkRealtimeUsageSucceeded(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(owner) == "" || ttl <= 0 {
+		return false, errors.New("invalid realtime usage completion")
+	}
+	marked, err := markRealtimeUsageSucceededScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, ttl.Milliseconds()).Int()
+	return marked == 1, err
+}
+
 func (c *gatewayCache) ClaimRealtimeConservativeUsage(ctx context.Context, callHash, responseID, finalizerOwner, owner string, lease time.Duration) (bool, error) {
 	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(finalizerOwner) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
 		return false, errors.New("invalid realtime conservative usage claim")
@@ -803,6 +839,28 @@ func (c *gatewayCache) ClaimRealtimeConservativeUsage(ctx context.Context, callH
 func (c *gatewayCache) CommitRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error) {
 	committed, err := commitRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, ttl.Milliseconds()).Int()
 	return committed == 1, err
+}
+
+func (c *gatewayCache) CommitSucceededRealtimeUsages(ctx context.Context, callHash string, ttl time.Duration) (int, error) {
+	var committed int
+	var cursor uint64
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeUsagePrefix+callHash+":*", 100).Result()
+		if err != nil {
+			return committed, err
+		}
+		for _, key := range keys {
+			result, err := commitSucceededRealtimeReplayScript.Run(ctx, c.rdb, []string{key}, ttl.Milliseconds()).Int()
+			if err != nil {
+				return committed, err
+			}
+			committed += int(result)
+		}
+		cursor = next
+		if cursor == 0 {
+			return committed, nil
+		}
+	}
 }
 
 func (c *gatewayCache) ReleaseRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string) (bool, error) {

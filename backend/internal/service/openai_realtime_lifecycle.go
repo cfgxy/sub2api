@@ -23,15 +23,17 @@ import (
 
 const (
 	defaultRealtimeMaxSessionDuration = time.Hour
-	realtimeLeaseRefreshInterval      = 20 * time.Second
 	realtimeClosedRecordTTL           = 24 * time.Hour
 	realtimeOperationTimeout          = 3 * time.Second
 	realtimeObserverPollInterval      = 10 * time.Second
 	realtimeObserverRetryInterval     = time.Second
-	realtimeReplayClaimLease          = 30 * time.Second
 )
 
-var errRealtimeObserverSessionEnded = errors.New("official realtime session ended")
+var (
+	realtimeLeaseRefreshInterval    = 20 * time.Second
+	realtimeReplayClaimLease        = 30 * time.Second
+	errRealtimeObserverSessionEnded = errors.New("official realtime session ended")
+)
 
 type realtimeLifecycleCallbacks struct {
 	observe            func(*RealtimeCallRecord)
@@ -39,8 +41,10 @@ type realtimeLifecycleCallbacks struct {
 }
 
 type realtimeUsageClaim struct {
-	commit  func(context.Context) error
-	release func(context.Context)
+	commit        func(context.Context) error
+	release       func(context.Context)
+	markSucceeded func(context.Context) error
+	startRenewal  func() func()
 }
 
 func hashRealtimeCallID(callID string) string {
@@ -196,6 +200,38 @@ func (s *OpenAIGatewayService) claimRealtimeUsage(store RealtimeCallStore, callH
 				return nil
 			},
 			release: func(ctx context.Context) { _, _ = advanced.ReleaseRealtimeUsageClaim(ctx, callHash, responseID, owner) },
+			markSucceeded: func(ctx context.Context) error {
+				if completion, ok := store.(RealtimeUsageCompletionStore); ok {
+					marked, err := completion.MarkRealtimeUsageSucceeded(ctx, callHash, responseID, owner, realtimeClosedRecordTTL)
+					if err != nil {
+						return err
+					}
+					if !marked {
+						return errors.New("realtime usage claim is no longer owned")
+					}
+				}
+				return nil
+			},
+			startRenewal: func() func() {
+				completion, ok := store.(RealtimeUsageCompletionStore)
+				if !ok {
+					return func() {}
+				}
+				stop := make(chan struct{})
+				go func() {
+					ticker := time.NewTicker(realtimeLeaseRefreshInterval)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ticker.C:
+							_, _ = completion.RenewRealtimeUsageClaim(context.Background(), callHash, responseID, owner, realtimeReplayClaimLease)
+						case <-stop:
+							return
+						}
+					}
+				}()
+				return func() { close(stop) }
+			},
 		}, true, nil
 	}
 	claimed, err := store.BeginRealtimeUsage(context.Background(), callHash, responseID, realtimeClosedRecordTTL)
@@ -206,7 +242,9 @@ func (s *OpenAIGatewayService) claimRealtimeUsage(store RealtimeCallStore, callH
 		commit: func(ctx context.Context) error {
 			return store.CommitRealtimeUsage(ctx, callHash, responseID, realtimeClosedRecordTTL)
 		},
-		release: func(ctx context.Context) { _ = store.ReleaseRealtimeUsage(ctx, callHash, responseID) },
+		release:       func(ctx context.Context) { _ = store.ReleaseRealtimeUsage(ctx, callHash, responseID) },
+		markSucceeded: func(context.Context) error { return nil },
+		startRenewal:  func() func() { return func() {} },
 	}, true, nil
 }
 
@@ -216,7 +254,13 @@ func (s *OpenAIGatewayService) commitRealtimeUsageClaim(record *RealtimeCallReco
 	if record == nil || claim == nil {
 		return
 	}
-	if err := claim.commit(context.Background()); err == nil {
+	commit := func() bool {
+		if err := claim.markSucceeded(context.Background()); err != nil {
+			return false
+		}
+		return claim.commit(context.Background()) == nil
+	}
+	if commit() {
 		s.retryFinalizingOfficialRealtimeCall(record)
 		return
 	}
@@ -226,16 +270,35 @@ func (s *OpenAIGatewayService) commitRealtimeUsageClaim(record *RealtimeCallReco
 	}
 	go func() {
 		defer s.realtimeUsageCommitRetries.Delete(key)
+		stopRenewal := claim.startRenewal()
+		defer stopRenewal()
 		ticker := time.NewTicker(realtimeObserverRetryInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			if err := claim.commit(context.Background()); err != nil {
+			if !commit() {
 				continue
 			}
 			s.retryFinalizingOfficialRealtimeCall(record)
 			return
 		}
 	}()
+}
+
+func (s *OpenAIGatewayService) recordRealtimeUsage(record *RealtimeCallRecord, store RealtimeCallStore, turn openaiwsv2.RelayTurnResult, onTurn func(openaiwsv2.RelayTurnResult) error) error {
+	claim, claimed, err := s.claimRealtimeUsage(store, record.CallHash, turn.RequestID)
+	if err != nil || !claimed {
+		return err
+	}
+	stopRenewal := claim.startRenewal()
+	defer stopRenewal()
+	if onTurn != nil {
+		if err := onTurn(turn); err != nil {
+			claim.release(context.Background())
+			return err
+		}
+	}
+	s.commitRealtimeUsageClaim(record, turn.RequestID, claim)
+	return nil
 }
 
 func (s *OpenAIGatewayService) realtimeConcurrencyCache() (RealtimeConcurrencyCache, error) {
@@ -572,15 +635,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 			if strings.TrimSpace(turn.RequestID) == "" {
 				return
 			}
-			claim, claimed, claimErr := s.claimRealtimeUsage(store, record.CallHash, turn.RequestID)
-			if claimErr != nil || !claimed {
-				return
-			}
-			if onTurn == nil || onTurn(turn) == nil {
-				s.commitRealtimeUsageClaim(record, turn.RequestID, claim)
-				return
-			}
-			claim.release(context.Background())
+			_ = s.recordRealtimeUsage(record, store, turn, onTurn)
 		},
 	})
 	releaseController()
@@ -693,16 +748,8 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 			if !terminal || strings.TrimSpace(turn.RequestID) == "" {
 				continue
 			}
-			claim, claimed, claimErr := s.claimRealtimeUsage(store, record.CallHash, turn.RequestID)
-			if claimErr != nil {
-				return claimErr
-			}
-			if claimed {
-				if onTurn == nil || onTurn(turn) == nil {
-					s.commitRealtimeUsageClaim(record, turn.RequestID, claim)
-				} else {
-					claim.release(context.Background())
-				}
+			if err := s.recordRealtimeUsage(record, store, turn, onTurn); err != nil {
+				return err
 			}
 		case err := <-errCh:
 			return err
@@ -814,6 +861,15 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 		closed, err := finalization.CommitRealtimeFinalization(ctx, record.CallHash, owner, realtimeClosedRecordTTL)
 		cancel()
 		if err != nil || !closed {
+			controller, lookupErr := store.GetRealtimeController(context.Background(), record.CallHash)
+			if lookupErr == nil && controller == RealtimeControllerClosed {
+				s.realtimeFinalizationRetries.Delete(record.CallHash)
+				s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
+				if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
+					finalizer.(func())()
+				}
+				return
+			}
 			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
 			s.scheduleRealtimeFinalizationRetry(record)
 			return
@@ -822,6 +878,13 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 		s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
 		if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
 			finalizer.(func())()
+		}
+	}
+	if completion, ok := store.(RealtimeUsageCompletionStore); ok {
+		if _, err := completion.CommitSucceededRealtimeUsages(context.Background(), record.CallHash, realtimeClosedRecordTTL); err != nil {
+			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+			s.scheduleRealtimeFinalizationRetry(record)
+			return
 		}
 	}
 	pending, err := claims.HasPendingRealtimeUsage(context.Background(), record.CallHash)

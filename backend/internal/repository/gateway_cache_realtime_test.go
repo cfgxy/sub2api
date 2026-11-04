@@ -124,6 +124,37 @@ func TestGatewayCacheRealtimeReplayClaimsExpireAndTransferSafely(t *testing.T) {
 	require.True(t, committed)
 }
 
+func TestGatewayCacheRealtimeUsageSuccessSurvivesOwnerExitUntilCommitted(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	cache, ok := NewGatewayCache(client).(interface {
+		service.RealtimeUsageClaimStore
+		service.RealtimeUsageCompletionStore
+	})
+	require.True(t, ok)
+	ctx := context.Background()
+
+	claimed, err := cache.ClaimRealtimeUsage(ctx, "call", "response", "owner-a", 20*time.Millisecond)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	marked, err := cache.MarkRealtimeUsageSucceeded(ctx, "call", "response", "owner-a", time.Hour)
+	require.NoError(t, err)
+	require.True(t, marked)
+
+	// The original process has exited. Its short owner lease cannot turn a
+	// completed charge back into work another process may bill again.
+	time.Sleep(30 * time.Millisecond)
+	claimed, err = cache.ClaimRealtimeUsage(ctx, "call", "response", "owner-b", time.Second)
+	require.NoError(t, err)
+	require.False(t, claimed)
+	committed, err := cache.CommitSucceededRealtimeUsages(ctx, "call", time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, 1, committed)
+	used, err := cache.HasCommittedRealtimeUsage(ctx, "call")
+	require.NoError(t, err)
+	require.True(t, used)
+}
+
 func TestGatewayCacheRealtimeFinalizationSeparatesActualAndConservativeUsage(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
