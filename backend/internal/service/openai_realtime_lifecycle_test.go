@@ -319,6 +319,59 @@ func TestRealtimeEmployeeTurnRequiresPreflightBeforeProviderResponse(t *testing.
 	require.Equal(t, int32(1), admissions.Load())
 }
 
+func TestRealtimeEmployeeTurnReusesInitialPreflightAndReplenishesAfterTerminalResponse(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-explicit-turns", CallHash: hashRealtimeCallID("call-explicit-turns"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+	var admissions atomic.Int32
+	start := func(responseID, _ string) (*InflightReservation, error) {
+		admissions.Add(1)
+		result, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: "realtime-call:" + record.CallHash + ":" + responseID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result)), nil
+	}
+
+	require.NoError(t, svc.PrepareOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start))
+	require.NoError(t, svc.EnsureOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start), "首个 explicit response 必须复用初始 preflight")
+	require.Equal(t, int32(1), admissions.Load())
+	require.NoError(t, svc.BeginOfficialRealtimeEmployeeTurn(record, "response-1", "gpt-realtime", start))
+	require.NoError(t, svc.SettleOfficialRealtimeTurn(record, openaiwsv2.RelayTurnResult{RequestID: "response-1", RequestModel: "gpt-realtime"}, start, func(openaiwsv2.RelayTurnResult) error { return nil }))
+	require.Equal(t, int32(2), admissions.Load(), "终态后必须为 data-channel 的下一次 explicit response 预留")
+	require.NoError(t, svc.BeginOfficialRealtimeEmployeeTurn(record, "response-2", "gpt-realtime", start))
+}
+
+func TestRealtimeWebSocketLedgerRetriesConservativeSettlement(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	svc := &OpenAIGatewayService{cache: store}
+	var released atomic.Int32
+	identity := RealtimeCallIdentity{APIKeyID: 2, UserID: 3, Model: "gpt-realtime", PricingAt: time.Now(), InboundEndpoint: "/v1/realtime", ReservationUSD: 1}
+	record, err := svc.RegisterOfficialRealtimeWebSocketCall(context.Background(), &Account{ID: 1}, identity, func() { released.Add(1) })
+	require.NoError(t, err)
+	var attempts atomic.Int32
+	svc.SetOfficialRealtimeLifecycleCallbacks(nil, func(*RealtimeCallRecord) error {
+		if attempts.Add(1) == 1 {
+			return errors.New("temporary usage failure")
+		}
+		return nil
+	})
+
+	svc.FinalizeOfficialRealtimeCall(record)
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerFinalizing, controller)
+	svc.FinalizeOfficialRealtimeCall(record)
+	controller, err = store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, controller)
+	require.Equal(t, int32(1), released.Load())
+}
+
 func TestCancelRejectedRealtimeTurnStopsResponseAndFinalizesCall(t *testing.T) {
 	store := &realtimeLifecycleStore{}
 	record := &RealtimeCallRecord{CallID: "call-rejected-turn", CallHash: hashRealtimeCallID("call-rejected-turn"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}

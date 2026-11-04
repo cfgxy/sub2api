@@ -250,6 +250,13 @@ type RealtimeFinalizationStore interface {
 	CommitRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error)
 }
 
+// RealtimeFinalizationTurnRestoreStore permits the current finalizer to restore
+// an in-memory descriptor whose initial Redis write failed. Regular turn writes
+// remain forbidden once a call has entered finalizing.
+type RealtimeFinalizationTurnRestoreStore interface {
+	RestoreRealtimeEmployeeTurnForFinalization(ctx context.Context, callHash, finalizerOwner string, descriptor RealtimeEmployeeTurnReservation) error
+}
+
 // RealtimeCleanupStore 在 closed 账本的资源释放完成后持久化确认。这样即使
 // CommitRealtimeFinalization 的响应和首次 controller 回读都丢失，重启恢复也能
 // 识别并收束未完成的 cleanup。

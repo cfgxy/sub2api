@@ -63,6 +63,37 @@ func TestGatewayCacheRealtimeBindsPreparedDescriptorBeforeResponseStarts(t *test
 	require.Equal(t, []service.RealtimeEmployeeTurnReservation{bound}, loaded.EmployeeTurnReservations)
 }
 
+func TestGatewayCacheRealtimeFinalizerRestoresFailedDescriptorOnlyForOwner(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	cache, ok := NewGatewayCache(client).(interface {
+		service.RealtimeCallStore
+		service.RealtimeFinalizationStore
+		service.RealtimeFinalizationTurnRestoreStore
+	})
+	require.True(t, ok)
+	ctx := context.Background()
+	record := &service.RealtimeCallRecord{CallID: "call-restore", CallHash: "call-restore-hash", AccountID: 1, APIKeyID: 2, UserID: 3, Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Controller: service.RealtimeControllerPending}
+	descriptor := service.RealtimeEmployeeTurnReservation{ResponseID: "realtime-preflight:restore", RequestID: "request-restore", RequestFingerprint: "fingerprint-restore", SourceAPIKeyID: 2, ReservedUSD: 1}
+	require.NoError(t, cache.SaveRealtimeCall(ctx, record, time.Hour))
+
+	claimed, err := cache.ClaimRealtimeFinalization(ctx, record.CallHash, "finalizer-owner", time.Minute, time.Hour)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.ErrorIs(t, cache.UpdateRealtimeEmployeeTurn(ctx, record.CallHash, descriptor, true), service.ErrRealtimeControllerChanged)
+	require.ErrorIs(t, cache.RestoreRealtimeEmployeeTurnForFinalization(ctx, record.CallHash, "other-owner", descriptor), service.ErrRealtimeControllerChanged)
+	require.NoError(t, cache.RestoreRealtimeEmployeeTurnForFinalization(ctx, record.CallHash, "finalizer-owner", descriptor))
+	require.NoError(t, cache.RestoreRealtimeEmployeeTurnForFinalization(ctx, record.CallHash, "finalizer-owner", descriptor), "同一 finalizer 重试必须幂等")
+
+	loaded, err := cache.GetRealtimeCall(ctx, record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, []service.RealtimeEmployeeTurnReservation{descriptor}, loaded.EmployeeTurnReservations)
+	require.NoError(t, cache.UpdateRealtimeEmployeeTurn(ctx, record.CallHash, descriptor, false))
+	closed, err := cache.CommitRealtimeFinalization(ctx, record.CallHash, "finalizer-owner", time.Hour)
+	require.NoError(t, err)
+	require.True(t, closed)
+}
+
 func TestGatewayCacheRealtimeCallControllerAndIdempotency(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})

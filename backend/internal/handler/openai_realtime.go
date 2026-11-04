@@ -159,7 +159,12 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 		h.errorResponse(c, status, code, message)
 		return
 	}
-	defer reservationDone()
+	sessionReservationOwned := true
+	defer func() {
+		if sessionReservationOwned {
+			reservationDone()
+		}
+	}()
 	reqLog := requestLogger(c, "handler.openai_gateway.official_realtime_ws",
 		zap.Int64("user_id", subject.UserID), zap.Int64("api_key_id", apiKey.ID), zap.Any("group_id", apiKey.GroupID))
 
@@ -230,51 +235,21 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 	}
 	attribution := realtimeEnterpriseAttribution(apiKey, subscription)
 	account := selection.Account
-	employeeTurns := &realtimeWSEmployeeTurnBindings{}
-	defer func() {
-		responses, prepared := employeeTurns.drain()
-		for responseID, reservation := range responses {
-			if reservation != nil {
-				billingCtx := service.WithInflightReservation(c.Request.Context(), reservation)
-				if err := h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
-					Result: &service.OpenAIForwardResult{
-						RequestID:        "realtime-conservative:" + responseID,
-						ResponseID:       responseID,
-						Model:            model,
-						Stream:           true,
-						OpenAIRealtime:   true,
-						UpstreamEndpoint: "/v1/realtime",
-					},
-					APIKey: apiKey, User: apiKey.User, Account: account, Subscription: subscription,
-					InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: "/v1/realtime",
-					UserAgent: c.GetHeader("User-Agent"), IPAddress: ip.GetClientIP(c), APIKeyService: h.apiKeyService,
-					QuotaPlatform: service.QuotaPlatform(c.Request.Context(), apiKey), PricingAt: pricingAt,
-					EnterpriseAttribution: attribution, ConservativeCostUSD: reservation.Amount(),
-				}); err != nil {
-					reqLog.Error("official_realtime_conservative_usage_failed", zap.Int64("account_id", account.ID), zap.String("response_id", responseID), zap.Error(err))
-				}
-				reservation.HandlerDone()
-			}
-		}
-		for _, reservation := range prepared {
-			if reservation != nil {
-				reservation.HandlerDone()
-			}
-		}
-	}()
+	identity := realtimeCallIdentity(c, apiKey, subject.UserID, subscription, model, pricingAt)
+	if reservation := service.InflightReservationFromContext(c.Request.Context()); reservation != nil {
+		identity.ReservationUSD = reservation.Amount()
+		identity.ReservationRequestID, identity.ReservationHasBalance, identity.ReservationScopes = reservation.Snapshot()
+	}
+	record, err := h.gatewayService.RegisterOfficialRealtimeWebSocketCall(c.Request.Context(), account, identity, reservationDone)
+	if err != nil {
+		reqLog.Error("official_realtime_websocket_ledger_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		return
+	}
+	sessionReservationOwned = false
+	defer h.gatewayService.FinalizeOfficialRealtimeCall(record)
 	prepareEmployeeTurn = func(responseModel string) error {
-		if !apiKey.EnterpriseEmployeeWeeklyLimit {
-			return nil
-		}
-		req := tokenInflightEstimate(firstNonEmptyRealtime(responseModel, model), nil)
-		req.RequestID = "realtime-ws:preflight:" + uuid.NewString()
-		employee, reserveErr := h.gatewayService.ReserveEnterpriseEmployeeUsage(c.Request.Context(), apiKey, req)
-		if reserveErr != nil {
-			return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", reserveErr)
-		}
-		handle := service.AttachEnterpriseEmployeeUsageReservation(nil, employee)
-		if !employeeTurns.prepare(handle) {
-			handle.HandlerDone()
+		if err := h.gatewayService.EnsureOfficialRealtimeEmployeeTurn(record, firstNonEmptyRealtime(responseModel, model), h.realtimeTurnStart(record, apiKey)); err != nil {
+			return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
 		}
 		return nil
 	}
@@ -292,60 +267,61 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeWebSocket(c *gin.Context) {
 		return nil
 	},
 		func(turn openaiwsv2.RelayTurnResult) {
-			turnReservation := employeeTurns.take(turn.RequestID)
-			if turnReservation != nil {
-				defer turnReservation.HandlerDone()
-			}
-			result := &service.OpenAIForwardResult{
-				RequestID:             turn.RequestID,
-				ResponseID:            turn.RequestID,
-				Usage:                 realtimeUsage(turn.Usage),
-				Model:                 firstNonEmptyRealtime(turn.RequestModel, model),
-				UpstreamResponseModel: turn.ResponseModel,
-				Stream:                true,
-				OpenAIRealtime:        true,
-				UpstreamEndpoint:      "/v1/realtime",
-				UpstreamTerminalEvent: turn.TerminalEventType,
-				Duration:              turn.Duration,
-				FirstTokenMs:          turn.FirstTokenMs,
-			}
-			billingCtx := c.Request.Context()
-			if turnReservation != nil {
-				billingCtx = service.WithInflightReservation(billingCtx, turnReservation)
-			}
-			conservativeCost := float64(0)
-			if !realtimeUsageHasTokens(turn.Usage) {
-				if reservation := service.InflightReservationFromContext(billingCtx); reservation != nil {
-					conservativeCost = reservation.Amount()
+			err := h.gatewayService.SettleOfficialRealtimeTurn(record, turn, h.realtimeTurnStart(record, apiKey), func(turn openaiwsv2.RelayTurnResult) error {
+				result := &service.OpenAIForwardResult{
+					RequestID:             turn.RequestID,
+					ResponseID:            turn.RequestID,
+					Usage:                 realtimeUsage(turn.Usage),
+					Model:                 firstNonEmptyRealtime(turn.RequestModel, model),
+					UpstreamResponseModel: turn.ResponseModel,
+					Stream:                true,
+					OpenAIRealtime:        true,
+					UpstreamEndpoint:      "/v1/realtime",
+					UpstreamTerminalEvent: turn.TerminalEventType,
+					Duration:              turn.Duration,
+					FirstTokenMs:          turn.FirstTokenMs,
 				}
-			}
-			if err := h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
-				Result:                result,
-				APIKey:                apiKey,
-				User:                  apiKey.User,
-				Account:               account,
-				Subscription:          subscription,
-				InboundEndpoint:       GetInboundEndpoint(c),
-				UpstreamEndpoint:      "/v1/realtime",
-				UserAgent:             c.GetHeader("User-Agent"),
-				IPAddress:             ip.GetClientIP(c),
-				RequestPayloadHash:    requestHash(),
-				APIKeyService:         h.apiKeyService,
-				QuotaPlatform:         service.QuotaPlatform(c.Request.Context(), apiKey),
-				PricingAt:             firstNonZeroRealtimeTime(turn.StartedAt, pricingAt),
-				EnterpriseAttribution: attribution,
-				ConservativeCostUSD:   conservativeCost,
-			}); err != nil {
+				billingCtx, billingDone, billingErr := h.realtimeTurnBillingContext(c.Request.Context(), record, apiKey, turn)
+				if billingErr != nil {
+					return billingErr
+				}
+				defer billingDone()
+				conservativeCost := float64(0)
+				if !realtimeUsageHasTokens(turn.Usage) {
+					if reservation := service.InflightReservationFromContext(billingCtx); reservation != nil {
+						conservativeCost = reservation.Amount()
+					}
+				}
+				return h.gatewayService.RecordUsage(billingCtx, &service.OpenAIRecordUsageInput{
+					Result:                result,
+					APIKey:                apiKey,
+					User:                  apiKey.User,
+					Account:               account,
+					Subscription:          subscription,
+					InboundEndpoint:       GetInboundEndpoint(c),
+					UpstreamEndpoint:      "/v1/realtime",
+					UserAgent:             c.GetHeader("User-Agent"),
+					IPAddress:             ip.GetClientIP(c),
+					RequestPayloadHash:    requestHash(),
+					APIKeyService:         h.apiKeyService,
+					QuotaPlatform:         service.QuotaPlatform(c.Request.Context(), apiKey),
+					PricingAt:             firstNonZeroRealtimeTime(turn.StartedAt, pricingAt),
+					EnterpriseAttribution: attribution,
+					ConservativeCostUSD:   conservativeCost,
+					RealtimeCallHash:      record.CallHash,
+				})
+			})
+			if err != nil {
 				reqLog.Error("official_realtime_record_usage_failed", zap.Int64("account_id", account.ID), zap.String("request_id", turn.RequestID), zap.Error(err))
 			}
 		}, func(payload []byte) error {
-			if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "input_audio_buffer.speech_started" && !employeeTurns.hasPrepared() {
+			if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "input_audio_buffer.speech_started" {
 				return prepareEmployeeTurn("")
 			}
 			return nil
 		}, func(responseID, _ string) error {
-			if _, ok := employeeTurns.bindPrepared(responseID); !ok && apiKey.EnterpriseEmployeeWeeklyLimit {
-				return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", service.ErrRealtimeUnavailable)
+			if err := h.gatewayService.BeginOfficialRealtimeEmployeeTurn(record, responseID, model, h.realtimeTurnStart(record, apiKey)); err != nil {
+				return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
 			}
 			return nil
 		})

@@ -437,6 +437,24 @@ var updateRealtimeEmployeeTurnScript = redis.NewScript(`
 	return 1
 `)
 
+// restoreRealtimeEmployeeTurnForFinalizationScript is intentionally separate
+// from normal turn writes: only the owner holding the finalization lease can
+// recover a descriptor after its original Redis write failed.
+var restoreRealtimeEmployeeTurnForFinalizationScript = redis.NewScript(`
+local key = KEYS[1]
+if redis.call('EXISTS', key) == 0 then return 0 end
+if redis.call('HGET', key, 'controller') ~= 'finalizing' or redis.call('HGET', key, 'finalizer_owner') ~= ARGV[1] then return -1 end
+local turns = redis.call('HGET', key, 'employee_turn_reservations')
+local updated = {}
+if turns and turns ~= '' then updated = cjson.decode(turns) end
+for _, existing in ipairs(updated) do
+  if existing.ResponseID == ARGV[2] then return 1 end
+end
+table.insert(updated, cjson.decode(ARGV[3]))
+redis.call('HSET', key, 'employee_turn_reservations', cjson.encode(updated))
+return 1
+`)
+
 var bindRealtimeEmployeeTurnScript = redis.NewScript(`
 	local key = KEYS[1]
 	if redis.call('EXISTS', key) == 0 then return 0 end
@@ -785,6 +803,30 @@ func (c *gatewayCache) UpdateRealtimeEmployeeTurn(ctx context.Context, callHash 
 		return service.ErrRealtimeControllerChanged
 	}
 	if updated != 1 {
+		return service.ErrRealtimeCallNotFound
+	}
+	return nil
+}
+
+func (c *gatewayCache) RestoreRealtimeEmployeeTurnForFinalization(ctx context.Context, callHash, finalizerOwner string, descriptor service.RealtimeEmployeeTurnReservation) error {
+	callHash = strings.TrimSpace(callHash)
+	finalizerOwner = strings.TrimSpace(finalizerOwner)
+	descriptor.ResponseID = strings.TrimSpace(descriptor.ResponseID)
+	if callHash == "" || finalizerOwner == "" || descriptor.ResponseID == "" {
+		return service.ErrRealtimeCallNotFound
+	}
+	raw, err := json.Marshal(descriptor)
+	if err != nil {
+		return err
+	}
+	restored, err := restoreRealtimeEmployeeTurnForFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, finalizerOwner, descriptor.ResponseID, string(raw)).Int()
+	if err != nil {
+		return err
+	}
+	if restored == -1 {
+		return service.ErrRealtimeControllerChanged
+	}
+	if restored == 0 {
 		return service.ErrRealtimeCallNotFound
 	}
 	return nil

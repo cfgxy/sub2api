@@ -118,6 +118,12 @@ func (s *OpenAIGatewayService) beginRealtimeEmployeeTurn(record *RealtimeCallRec
 	return nil
 }
 
+// BeginOfficialRealtimeEmployeeTurn binds a provider-issued response to a
+// previously persisted preflight. It never creates a new admission.
+func (s *OpenAIGatewayService) BeginOfficialRealtimeEmployeeTurn(record *RealtimeCallRecord, responseID, model string, start RealtimeTurnStartFunc) error {
+	return s.beginRealtimeEmployeeTurn(record, responseID, model, start)
+}
+
 // PrepareOfficialRealtimeEmployeeTurn creates and persists one employee turn
 // hold before any provider response is allowed to start. The provisional ID is
 // atomically replaced with the provider response ID once it arrives.
@@ -240,6 +246,43 @@ func (s *OpenAIGatewayService) retryCompleteRealtimeEmployeeTurn(record *Realtim
 	}()
 }
 
+func (s *OpenAIGatewayService) scheduleRealtimePreparationRetry(record *RealtimeCallRecord, model string, start RealtimeTurnStartFunc) {
+	if record == nil || start == nil {
+		return
+	}
+	key := record.CallHash + ":turn-prepare"
+	if _, loaded := s.realtimeUsageCommitRetries.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer s.realtimeUsageCommitRetries.Delete(key)
+		ticker := time.NewTicker(realtimeObserverRetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			store, err := s.realtimeStore()
+			if err != nil {
+				return
+			}
+			controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+			if err != nil || controller == RealtimeControllerClosed || controller == RealtimeControllerFinalizing {
+				return
+			}
+			if s.EnsureOfficialRealtimeEmployeeTurn(record, model, start) == nil {
+				return
+			}
+		}
+	}()
+}
+
+func realtimeTurnModel(turn openaiwsv2.RelayTurnResult, fallback string) string {
+	for _, model := range []string{turn.RequestModel, turn.ResponseModel, fallback} {
+		if model = strings.TrimSpace(model); model != "" {
+			return model
+		}
+	}
+	return ""
+}
+
 func (s *OpenAIGatewayService) releaseRealtimeEmployeeTurns(record *RealtimeCallRecord) {
 	if record == nil {
 		return
@@ -271,7 +314,7 @@ func (s *OpenAIGatewayService) persistRealtimeEmployeeTurn(record *RealtimeCallR
 	return store.UpdateRealtimeEmployeeTurn(context.Background(), record.CallHash, descriptor, add)
 }
 
-func (s *OpenAIGatewayService) persistPendingRealtimeEmployeeTurns(record *RealtimeCallRecord) bool {
+func (s *OpenAIGatewayService) persistPendingRealtimeEmployeeTurns(record *RealtimeCallRecord, finalizerOwner string) bool {
 	if record == nil {
 		return false
 	}
@@ -285,8 +328,18 @@ func (s *OpenAIGatewayService) persistPendingRealtimeEmployeeTurns(record *Realt
 		descriptors = append(descriptors, descriptor)
 	}
 	turns.mu.Unlock()
+	store, err := s.realtimeStore()
+	if err != nil {
+		return false
+	}
 	for _, descriptor := range descriptors {
-		if err := s.persistRealtimeEmployeeTurn(record, descriptor, true); err != nil {
+		if restorer, ok := store.(RealtimeFinalizationTurnRestoreStore); ok && finalizerOwner != "" {
+			if err := restorer.RestoreRealtimeEmployeeTurnForFinalization(context.Background(), record.CallHash, finalizerOwner, descriptor); err != nil {
+				return false
+			}
+			continue
+		}
+		if err := store.UpdateRealtimeEmployeeTurn(context.Background(), record.CallHash, descriptor, true); err != nil {
 			return false
 		}
 	}
@@ -431,6 +484,12 @@ func (s *OpenAIGatewayService) RecoverOfficialRealtimeCalls() {
 			continue
 		}
 		if record.Controller == RealtimeControllerFinalizing {
+			go s.finalizeOfficialRealtimeCall(record)
+			continue
+		}
+		if record.InboundEndpoint == "/v1/realtime" {
+			// A process exit closes the proxied WebSocket, so only durable
+			// finalization remains; this transport has no Calls sideband to recover.
 			go s.finalizeOfficialRealtimeCall(record)
 			continue
 		}
@@ -626,6 +685,32 @@ func (s *OpenAIGatewayService) recordRealtimeUsage(record *RealtimeCallRecord, s
 	return nil
 }
 
+func (s *OpenAIGatewayService) settleOfficialRealtimeTurn(record *RealtimeCallRecord, store RealtimeCallStore, turn openaiwsv2.RelayTurnResult, onTurnStart RealtimeTurnStartFunc, onTurn func(openaiwsv2.RelayTurnResult) error) error {
+	if err := s.recordRealtimeUsage(record, store, turn, onTurn); err != nil {
+		return err
+	}
+	if err := s.completeRealtimeEmployeeTurn(record, turn.RequestID); err != nil {
+		s.retryCompleteRealtimeEmployeeTurn(record, turn.RequestID)
+		return nil
+	}
+	model := realtimeTurnModel(turn, record.Model)
+	if err := s.EnsureOfficialRealtimeEmployeeTurn(record, model, onTurnStart); err != nil {
+		s.scheduleRealtimePreparationRetry(record, model, onTurnStart)
+	}
+	return nil
+}
+
+// SettleOfficialRealtimeTurn records a terminal turn through the durable
+// claim path used by WebRTC and SIP. WebSocket calls use it so an interrupted
+// billing attempt remains recoverable by finalization after the handler exits.
+func (s *OpenAIGatewayService) SettleOfficialRealtimeTurn(record *RealtimeCallRecord, turn openaiwsv2.RelayTurnResult, onTurnStart RealtimeTurnStartFunc, onTurn func(openaiwsv2.RelayTurnResult) error) error {
+	store, err := s.realtimeStore()
+	if err != nil {
+		return err
+	}
+	return s.settleOfficialRealtimeTurn(record, store, turn, onTurnStart, onTurn)
+}
+
 func (s *OpenAIGatewayService) realtimeConcurrencyCache() (RealtimeConcurrencyCache, error) {
 	if s == nil || s.concurrencyService == nil || s.concurrencyService.cache == nil {
 		return nil, ErrRealtimeUnavailable
@@ -712,6 +797,39 @@ func (s *OpenAIGatewayService) CreateOfficialRealtimeTrackedCall(
 	}
 	go s.maintainRealtimeCall(record)
 	return created, record, nil
+}
+
+// RegisterOfficialRealtimeWebSocketCall persists the billing lifecycle for a
+// proxied WebSocket session. Its synthetic ID is local-only; unlike Calls API
+// records it has no server-side control endpoint or dedicated concurrency lease.
+func (s *OpenAIGatewayService) RegisterOfficialRealtimeWebSocketCall(ctx context.Context, account *Account, identity RealtimeCallIdentity, onFinalize func()) (*RealtimeCallRecord, error) {
+	identity.Model = strings.TrimSpace(identity.Model)
+	if account == nil || identity.APIKeyID <= 0 || identity.UserID <= 0 || identity.Model == "" || identity.PricingAt.IsZero() {
+		return nil, ErrRealtimeUnavailable
+	}
+	store, err := s.realtimeStore()
+	if err != nil {
+		return nil, err
+	}
+	callID := "ws_" + uuid.NewString()
+	now := time.Now()
+	record := &RealtimeCallRecord{
+		CallID: callID, CallHash: hashRealtimeCallID(callID), AccountID: account.ID,
+		APIKeyID: identity.APIKeyID, UserID: identity.UserID, GroupID: realtimeGroupID(identity.GroupID),
+		SubscriptionID: realtimeGroupID(identity.SubscriptionID), Model: identity.Model,
+		PricingAt: identity.PricingAt, CreatedAt: now, ExpiresAt: now.Add(s.realtimeMaxSessionDuration()),
+		Controller: RealtimeControllerPending, UserAgent: identity.UserAgent, IPAddress: identity.IPAddress,
+		InboundEndpoint: identity.InboundEndpoint, EnterpriseAttribution: CloneEnterpriseUsageAttributionSnapshot(identity.EnterpriseAttribution),
+		ReservationUSD: identity.ReservationUSD, ReservationRequestID: identity.ReservationRequestID,
+		ReservationHasBalance: identity.ReservationHasBalance, ReservationScopes: append([]string(nil), identity.ReservationScopes...),
+	}
+	if err := store.SaveRealtimeCall(ctx, record, s.realtimeMaxSessionDuration()+5*time.Minute); err != nil {
+		return nil, fmt.Errorf("save realtime websocket mapping: %w", err)
+	}
+	if onFinalize != nil {
+		s.realtimeFinalizers.Store(record.CallHash, onFinalize)
+	}
+	return record, nil
 }
 
 // RegisterOfficialRealtimeIncomingCall creates the lifecycle ledger for an
@@ -952,7 +1070,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 			if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
 				return nil
 			}
-			return s.PrepareOfficialRealtimeEmployeeTurn(record, strings.TrimSpace(gjson.GetBytes(payload, "response.model").String()), onTurnStart)
+			return s.EnsureOfficialRealtimeEmployeeTurn(record, strings.TrimSpace(gjson.GetBytes(payload, "response.model").String()), onTurnStart)
 		},
 	}
 	var providerSessionEnded atomic.Bool
@@ -978,11 +1096,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 			if strings.TrimSpace(turn.RequestID) == "" {
 				return
 			}
-			if err := s.recordRealtimeUsage(record, store, turn, onTurn); err == nil {
-				if err := s.completeRealtimeEmployeeTurn(record, turn.RequestID); err != nil {
-					s.retryCompleteRealtimeEmployeeTurn(record, turn.RequestID)
-				}
-			}
+			_ = s.settleOfficialRealtimeTurn(record, store, turn, onTurnStart, onTurn)
 		},
 	})
 	releaseController()
@@ -1105,12 +1219,9 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 			if !terminal || strings.TrimSpace(turn.RequestID) == "" {
 				continue
 			}
-			err := s.recordRealtimeUsage(record, store, turn, onTurn)
+			err := s.settleOfficialRealtimeTurn(record, store, turn, onTurnStart, onTurn)
 			if err != nil {
 				return err
-			}
-			if err := s.completeRealtimeEmployeeTurn(record, turn.RequestID); err != nil {
-				s.retryCompleteRealtimeEmployeeTurn(record, turn.RequestID)
 			}
 		case err := <-errCh:
 			return err
@@ -1320,7 +1431,7 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 			return
 		}
 	}
-	if !s.persistPendingRealtimeEmployeeTurns(record) {
+	if !s.persistPendingRealtimeEmployeeTurns(record, owner) {
 		_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
 		s.scheduleRealtimeFinalizationRetry(record)
 		return
@@ -1413,7 +1524,7 @@ func (s *OpenAIGatewayService) completeOfficialRealtimeCleanup(record *RealtimeC
 }
 
 func (s *OpenAIGatewayService) finishOfficialRealtimeCleanup(record *RealtimeCallRecord, cleanup RealtimeCleanupStore) bool {
-	if !s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID) {
+	if record.LeaseID != "" && !s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID) {
 		return false
 	}
 	if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
