@@ -117,7 +117,7 @@ internal/handler/admin/idempotency_helper.go:99:6: unreachable func: executeAdmi
 internal/handler/auth_dingtalk_oauth.go:604:6: unreachable func: decideDingTalkStep34Strategy
 internal/handler/dto/mappers.go:550:6: unreachable func: ProxyWithAccountCountFromService
 internal/handler/dto/mappers.go:863:6: unreachable func: SettingFromService
-internal/handler/openai_gateway_handler.go:4592:6: unreachable func: clearCyberPolicyTurnState
+internal/handler/openai_gateway_handler.go:4603:6: unreachable func: clearCyberPolicyTurnState
 internal/handler/ops_error_logger.go:272:6: unreachable func: StopOpsErrorLogWorkers
 internal/handler/ops_error_logger.go:282:6: unreachable func: stopOpsErrorLogWorkers
 internal/handler/ops_error_logger.go:314:6: unreachable func: OpsErrorLogQueueLength
