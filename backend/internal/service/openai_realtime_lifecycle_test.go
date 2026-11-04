@@ -646,6 +646,34 @@ func TestFinalizeOfficialRealtimeCallUsesPersistentBillingOutcomeAfterRedisMarke
 	require.Equal(t, int32(0), settlements.Load(), "持久化实际账务结果必须阻止保守结算")
 }
 
+func TestFinalizeOfficialRealtimeCallWaitsForPendingUsageAlongsidePersistentBillingOutcome(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call-outcome-pending", CallHash: hashRealtimeCallID("call-outcome-pending"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-outcome-pending", ReservationUSD: 0.9, Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	concurrency := &realtimeLifecycleConcurrencyCache{}
+	var reservationReleases atomic.Int32
+	svc := &OpenAIGatewayService{
+		cache:              store,
+		concurrencyService: NewConcurrencyService(concurrency),
+		usageBillingRepo:   &realtimeBillingOutcomeRepository{hasOutcome: true},
+	}
+	svc.realtimeFinalizers.Store(record.CallHash, func() { reservationReleases.Add(1) })
+
+	claimed, err := store.ClaimRealtimeUsage(context.Background(), record.CallHash, "pending", "owner-pending", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	svc.finalizeOfficialRealtimeCall(record)
+
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerFinalizing, controller, "持久化 outcome 不得越过同一 call 的 pending usage")
+	concurrency.mu.Lock()
+	require.Equal(t, 0, concurrency.releases)
+	concurrency.mu.Unlock()
+	require.Equal(t, int32(0), reservationReleases.Load())
+}
+
 func TestRecordRealtimeUsageRenewsClaimDuringLongBusinessCall(t *testing.T) {
 	oldRefreshInterval := realtimeLeaseRefreshInterval
 	oldClaimLease := realtimeReplayClaimLease

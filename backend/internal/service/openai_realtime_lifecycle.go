@@ -898,18 +898,6 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 			return
 		}
 	}
-	if outcomes, ok := s.usageBillingRepo.(RealtimeBillingOutcomeStore); ok && outcomes != nil {
-		used, outcomeErr := outcomes.HasRealtimeBillingOutcome(context.Background(), record.CallHash)
-		if outcomeErr != nil {
-			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
-			s.scheduleRealtimeFinalizationRetry(record)
-			return
-		}
-		if used {
-			complete()
-			return
-		}
-	}
 	pending, err := claims.HasPendingRealtimeUsage(context.Background(), record.CallHash)
 	if err != nil {
 		_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
@@ -930,6 +918,18 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 	if used || record.ReservationUSD <= 0 {
 		complete()
 		return
+	}
+	if outcomes, ok := s.usageBillingRepo.(RealtimeBillingOutcomeStore); ok && outcomes != nil {
+		used, outcomeErr := outcomes.HasRealtimeBillingOutcome(context.Background(), record.CallHash)
+		if outcomeErr != nil {
+			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+			s.scheduleRealtimeFinalizationRetry(record)
+			return
+		}
+		if used {
+			complete()
+			return
+		}
 	}
 	responseID := "realtime-conservative:" + record.CallHash
 	usageClaim, claimed, err := s.claimConservativeRealtimeUsage(store, record.CallHash, responseID, owner)
