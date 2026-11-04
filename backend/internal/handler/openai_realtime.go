@@ -378,6 +378,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSideband(c *gin.Context) {
 			QuotaPlatform:         service.QuotaPlatform(c.Request.Context(), billingAPIKey),
 			PricingAt:             record.PricingAt,
 			EnterpriseAttribution: record.EnterpriseAttribution,
+			RealtimeCallHash:      record.CallHash,
 		}); err != nil {
 			reqLog.Error("official_realtime_sideband_record_usage_failed", zap.String("request_id", turn.RequestID), zap.Error(err))
 			return err
@@ -604,6 +605,7 @@ func (h *OpenAIGatewayHandler) observeOfficialRealtimeSIPCall(record *service.Re
 			QuotaPlatform:         service.QuotaPlatform(context.Background(), apiKey),
 			PricingAt:             record.PricingAt,
 			EnterpriseAttribution: record.EnterpriseAttribution,
+			RealtimeCallHash:      record.CallHash,
 		}); err != nil {
 			logger.L().Warn("official_realtime_sip_record_usage_failed", zap.String("request_id", turn.RequestID), zap.Error(err))
 			return err

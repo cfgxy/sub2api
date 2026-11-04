@@ -528,6 +528,8 @@ type OpenAIGatewayService struct {
 	realtimeReservationRestoreRetries sync.Map // key: string(call hash), value: struct{}
 	// realtimeUsageCommitRetries 保留已完成业务计费但尚未提交 Redis 幂等标记的 claim。
 	realtimeUsageCommitRetries sync.Map // key: string(call hash + response id), value: struct{}
+	// realtimeCleanupMarkRetries 仅重试已释放资源后的 cleanup 完成标记。
+	realtimeCleanupMarkRetries sync.Map // key: string(call hash), value: struct{}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

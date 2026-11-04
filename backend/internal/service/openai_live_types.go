@@ -165,6 +165,8 @@ type RealtimeCallRecord struct {
 	ReservationRequestID  string
 	ReservationHasBalance bool
 	ReservationScopes     []string
+	// CleanupPending 表示终态已持久化，但并发 lease 与预留尚未完成释放。
+	CleanupPending bool
 }
 
 // RealtimeCallStore is intentionally a separate cache capability so a Live
@@ -223,6 +225,13 @@ type RealtimeFinalizationStore interface {
 	ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, lease, recordTTL time.Duration) (bool, error)
 	ReleaseRealtimeFinalization(ctx context.Context, callHash, owner string) (bool, error)
 	CommitRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error)
+}
+
+// RealtimeCleanupStore 在 closed 账本的资源释放完成后持久化确认。这样即使
+// CommitRealtimeFinalization 的响应和首次 controller 回读都丢失，重启恢复也能
+// 识别并收束未完成的 cleanup。
+type RealtimeCleanupStore interface {
+	MarkRealtimeCleanupCompleted(ctx context.Context, callHash string) (bool, error)
 }
 
 // RealtimeCallRecoveryStore lists live records from the Redis-backed ledger at

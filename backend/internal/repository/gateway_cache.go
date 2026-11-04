@@ -433,8 +433,14 @@ var commitRealtimeFinalizationScript = redis.NewScript(`
 	local now = time[1] * 1000 + math.floor(time[2] / 1000)
 	local owner_until = tonumber(redis.call('HGET', KEYS[1], 'finalizer_owner_until')) or 0
 	if owner_until <= now then return 0 end
-	redis.call('HSET', KEYS[1], 'controller', 'closed', 'controller_owner', '', 'finalizer_owner', '', 'finalizer_owner_until', '0')
+	redis.call('HSET', KEYS[1], 'controller', 'closed', 'controller_owner', '', 'finalizer_owner', '', 'finalizer_owner_until', '0', 'cleanup_pending', '1')
 	redis.call('EXPIRE', KEYS[1], ARGV[2])
+	return 1
+`)
+
+var markRealtimeCleanupCompletedScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[1], 'controller') ~= 'closed' or redis.call('HGET', KEYS[1], 'cleanup_pending') ~= '1' then return 0 end
+	redis.call('HSET', KEYS[1], 'cleanup_pending', '0')
 	return 1
 `)
 
@@ -465,7 +471,9 @@ var renewRealtimeUsageClaimScript = redis.NewScript(`
 `)
 
 var markRealtimeUsageSucceededScript = redis.NewScript(`
-	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	local current = redis.call('GET', KEYS[1])
+	if current == 'succeeded:' .. ARGV[1] then return 1 end
+	if current ~= 'pending:' .. ARGV[1] then return 0 end
 	redis.call('PSETEX', KEYS[1], ARGV[2], 'succeeded:' .. ARGV[1])
 	return 1
 `)
@@ -673,6 +681,7 @@ func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.Rea
 		"enterprise_attribution": attribution, "reservation_usd": strconv.FormatFloat(record.ReservationUSD, 'f', -1, 64),
 		"reservation_request_id": record.ReservationRequestID, "reservation_has_balance": strconv.FormatBool(record.ReservationHasBalance),
 		"reservation_scopes": strings.Join(record.ReservationScopes, ","),
+		"cleanup_pending":    strconv.FormatBool(record.CleanupPending),
 	}
 	pipe := c.rdb.TxPipeline()
 	pipe.HSet(ctx, realtimeCallKey(record.CallHash), values)
@@ -707,6 +716,7 @@ func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*s
 	}
 	record.ReservationRequestID = values["reservation_request_id"]
 	record.ReservationHasBalance, _ = strconv.ParseBool(values["reservation_has_balance"])
+	record.CleanupPending, _ = strconv.ParseBool(values["cleanup_pending"])
 	if scopes := strings.TrimSpace(values["reservation_scopes"]); scopes != "" {
 		record.ReservationScopes = strings.Split(scopes, ",")
 	}
@@ -731,7 +741,7 @@ func (c *gatewayCache) ListActiveRealtimeCalls(ctx context.Context) ([]*service.
 		for _, key := range keys {
 			callHash := strings.TrimPrefix(key, realtimeCallPrefix)
 			record, err := c.GetRealtimeCall(ctx, callHash)
-			if err != nil || record.Controller == service.RealtimeControllerClosed {
+			if err != nil || (record.Controller == service.RealtimeControllerClosed && !record.CleanupPending) {
 				continue
 			}
 			records = append(records, record)
@@ -787,6 +797,11 @@ func (c *gatewayCache) ReleaseRealtimeFinalization(ctx context.Context, callHash
 func (c *gatewayCache) CommitRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error) {
 	result, err := commitRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner, int64(ttl.Seconds())).Int()
 	return result == 1, err
+}
+
+func (c *gatewayCache) MarkRealtimeCleanupCompleted(ctx context.Context, callHash string) (bool, error) {
+	completed, err := markRealtimeCleanupCompletedScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}).Int()
+	return completed == 1, err
 }
 
 func (c *gatewayCache) BeginRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error) {
@@ -906,7 +921,7 @@ func (c *gatewayCache) HasPendingRealtimeUsage(ctx context.Context, callHash str
 				return false, err
 			}
 			for _, value := range values {
-				if text, ok := value.(string); ok && strings.HasPrefix(text, "pending:") {
+				if text, ok := value.(string); ok && (strings.HasPrefix(text, "pending:") || strings.HasPrefix(text, "succeeded:")) {
 					return true, nil
 				}
 			}

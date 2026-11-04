@@ -538,6 +538,51 @@ func TestRecoverOfficialRealtimeFinalizingCallRenewsAndReleasesReservation(t *te
 	require.Equal(t, 0, cache.scopeCount())
 }
 
+func TestRecoverOfficialRealtimeClosedCallCompletesPendingCleanup(t *testing.T) {
+	cache := newMemInflightCache(10)
+	billing := newInflightSvc(t, cache, 60)
+	store := &realtimeLifecycleStore{}
+	record := &RealtimeCallRecord{
+		CallID: "call-recover-closed-cleanup", CallHash: hashRealtimeCallID("call-recover-closed-cleanup"), AccountID: 1, APIKeyID: 8, UserID: 3,
+		LeaseID: "lease-recover-closed-cleanup", Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+		Controller: RealtimeControllerPending, ReservationUSD: 0.9, ReservationRequestID: "recover-closed-cleanup",
+		ReservationHasBalance: true, ReservationScopes: []string{inflightSubscriptionScope(6), inflightAPIKeyScope(8)},
+	}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	oldRelease, err := billing.RestoreInflightReservation(record.UserID, record.ReservationRequestID, record.ReservationUSD, record.ReservationHasBalance, record.ReservationScopes)
+	require.NoError(t, err)
+	defer oldRelease()
+
+	concurrency := &realtimeLifecycleConcurrencyCache{}
+	oldService := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(concurrency)}
+	store.finalizerCommitAfterSet.Store(true)
+	store.controllerLookupErrors.Store(1)
+	oldService.FinalizeOfficialRealtimeCall(record)
+
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, persisted.Controller)
+	require.True(t, persisted.CleanupPending, "终态已写入而响应与首次回读丢失时必须保留 cleanup 标记")
+	require.Equal(t, 1, cache.count())
+	require.Equal(t, 2, cache.scopeCount())
+
+	restartedService := &OpenAIGatewayService{
+		cache:               store,
+		concurrencyService:  NewConcurrencyService(concurrency),
+		billingCacheService: billing,
+	}
+	restartedService.RecoverOfficialRealtimeCalls()
+
+	persisted, err = store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.False(t, persisted.CleanupPending)
+	require.Equal(t, 0, cache.count())
+	require.Equal(t, 0, cache.scopeCount())
+	concurrency.mu.Lock()
+	require.Equal(t, 1, concurrency.releases)
+	concurrency.mu.Unlock()
+}
+
 func TestSyncBalanceCacheAfterDeduction_SynchronousWhenInflightEnabled(t *testing.T) {
 	cache := newMemInflightCache(1)
 	svc := newInflightSvc(t, cache, 60)

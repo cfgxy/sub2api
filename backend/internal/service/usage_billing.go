@@ -21,6 +21,9 @@ type UsageBillingCommand struct {
 	APIKeyID           int64
 	RequestFingerprint string
 	RequestPayloadHash string
+	// RealtimeCallHash 在官方 Realtime 实际用量扣费时关联会话账本。
+	// 它仅用于同一数据库事务中的终态核验，不能由客户端传入。
+	RealtimeCallHash string
 
 	UserID              int64
 	AccountID           int64
@@ -49,6 +52,7 @@ func (c *UsageBillingCommand) Normalize() {
 		return
 	}
 	c.RequestID = strings.TrimSpace(c.RequestID)
+	c.RealtimeCallHash = strings.TrimSpace(c.RealtimeCallHash)
 	if strings.TrimSpace(c.RequestFingerprint) == "" {
 		c.RequestFingerprint = buildUsageBillingFingerprint(c)
 	}
@@ -224,4 +228,10 @@ type UsageBillingRepository interface {
 	ReserveBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	CaptureBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	ReleaseBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
+}
+
+// RealtimeBillingOutcomeStore 查询同一数据库事务写入的 Realtime 实际计费结果。
+// finalizer 只在实现该可选能力的生产仓储上用它阻止保守结算，避免扩大测试替身接口。
+type RealtimeBillingOutcomeStore interface {
+	HasRealtimeBillingOutcome(ctx context.Context, callHash string) (bool, error)
 }

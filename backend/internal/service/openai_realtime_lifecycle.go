@@ -116,6 +116,12 @@ func (s *OpenAIGatewayService) RecoverOfficialRealtimeCalls() {
 			s.scheduleRealtimeReservationRestoreRetry(record)
 			continue
 		}
+		if record.Controller == RealtimeControllerClosed {
+			if cleanup, ok := s.cache.(RealtimeCleanupStore); ok && record.CleanupPending {
+				s.completeOfficialRealtimeCleanup(record, cleanup)
+			}
+			continue
+		}
 		if record.Controller == RealtimeControllerFinalizing {
 			go s.finalizeOfficialRealtimeCall(record)
 			continue
@@ -163,6 +169,12 @@ func (s *OpenAIGatewayService) scheduleRealtimeReservationRestoreRetry(record *R
 		for range ticker.C {
 			if !s.restoreRealtimeReservation(record) {
 				continue
+			}
+			if record.Controller == RealtimeControllerClosed {
+				if cleanup, ok := s.cache.(RealtimeCleanupStore); ok && record.CleanupPending {
+					s.completeOfficialRealtimeCleanup(record, cleanup)
+				}
+				return
 			}
 			if record.Controller == RealtimeControllerFinalizing {
 				s.finalizeOfficialRealtimeCall(record)
@@ -254,9 +266,13 @@ func (s *OpenAIGatewayService) commitRealtimeUsageClaim(record *RealtimeCallReco
 	if record == nil || claim == nil {
 		return
 	}
+	succeeded := false
 	commit := func() bool {
-		if err := claim.markSucceeded(context.Background()); err != nil {
-			return false
+		if !succeeded {
+			if err := claim.markSucceeded(context.Background()); err != nil {
+				return false
+			}
+			succeeded = true
 		}
 		return claim.commit(context.Background()) == nil
 	}
@@ -856,6 +872,7 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 		s.scheduleRealtimeFinalizationRetry(record)
 		return
 	}
+	cleanup, _ := store.(RealtimeCleanupStore)
 	complete := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), realtimeOperationTimeout)
 		closed, err := finalization.CommitRealtimeFinalization(ctx, record.CallHash, owner, realtimeClosedRecordTTL)
@@ -864,10 +881,7 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 			controller, lookupErr := store.GetRealtimeController(context.Background(), record.CallHash)
 			if lookupErr == nil && controller == RealtimeControllerClosed {
 				s.realtimeFinalizationRetries.Delete(record.CallHash)
-				s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
-				if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
-					finalizer.(func())()
-				}
+				s.completeOfficialRealtimeCleanup(record, cleanup)
 				return
 			}
 			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
@@ -875,15 +889,24 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 			return
 		}
 		s.realtimeFinalizationRetries.Delete(record.CallHash)
-		s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
-		if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
-			finalizer.(func())()
-		}
+		s.completeOfficialRealtimeCleanup(record, cleanup)
 	}
 	if completion, ok := store.(RealtimeUsageCompletionStore); ok {
 		if _, err := completion.CommitSucceededRealtimeUsages(context.Background(), record.CallHash, realtimeClosedRecordTTL); err != nil {
 			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
 			s.scheduleRealtimeFinalizationRetry(record)
+			return
+		}
+	}
+	if outcomes, ok := s.usageBillingRepo.(RealtimeBillingOutcomeStore); ok && outcomes != nil {
+		used, outcomeErr := outcomes.HasRealtimeBillingOutcome(context.Background(), record.CallHash)
+		if outcomeErr != nil {
+			_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+			s.scheduleRealtimeFinalizationRetry(record)
+			return
+		}
+		if used {
+			complete()
 			return
 		}
 	}
@@ -946,6 +969,48 @@ func (s *OpenAIGatewayService) retryFinalizingOfficialRealtimeCall(record *Realt
 	}
 }
 
+func (s *OpenAIGatewayService) completeOfficialRealtimeCleanup(record *RealtimeCallRecord, cleanup RealtimeCleanupStore) {
+	if record == nil {
+		return
+	}
+	if !s.finishOfficialRealtimeCleanup(record, cleanup) {
+		s.scheduleRealtimeCleanupRetry(record, cleanup)
+	}
+}
+
+func (s *OpenAIGatewayService) finishOfficialRealtimeCleanup(record *RealtimeCallRecord, cleanup RealtimeCleanupStore) bool {
+	if !s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID) {
+		return false
+	}
+	if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
+		finalizer.(func())()
+	}
+	if cleanup == nil {
+		return true
+	}
+	_, err := cleanup.MarkRealtimeCleanupCompleted(context.Background(), record.CallHash)
+	return err == nil
+}
+
+func (s *OpenAIGatewayService) scheduleRealtimeCleanupRetry(record *RealtimeCallRecord, cleanup RealtimeCleanupStore) {
+	if record == nil || cleanup == nil {
+		return
+	}
+	if _, loaded := s.realtimeCleanupMarkRetries.LoadOrStore(record.CallHash, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer s.realtimeCleanupMarkRetries.Delete(record.CallHash)
+		ticker := time.NewTicker(realtimeObserverRetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if s.finishOfficialRealtimeCleanup(record, cleanup) {
+				return
+			}
+		}
+	}()
+}
+
 func (s *OpenAIGatewayService) scheduleRealtimeFinalizationRetry(record *RealtimeCallRecord) {
 	if record == nil {
 		return
@@ -963,7 +1028,16 @@ func (s *OpenAIGatewayService) scheduleRealtimeFinalizationRetry(record *Realtim
 				return
 			}
 			controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
-			if err != nil || controller != RealtimeControllerFinalizing {
+			if err != nil {
+				return
+			}
+			if controller == RealtimeControllerClosed {
+				if cleanup, ok := store.(RealtimeCleanupStore); ok {
+					s.completeOfficialRealtimeCleanup(record, cleanup)
+				}
+				return
+			}
+			if controller != RealtimeControllerFinalizing {
 				return
 			}
 			s.finalizeOfficialRealtimeCall(record)
@@ -1025,12 +1099,12 @@ func (s *OpenAIGatewayService) refreshRealtimeLease(record *RealtimeCallRecord) 
 	return err == nil && ok
 }
 
-func (s *OpenAIGatewayService) releaseRealtimeLease(accountID, userID, apiKeyID int64, leaseID string) {
+func (s *OpenAIGatewayService) releaseRealtimeLease(accountID, userID, apiKeyID int64, leaseID string) bool {
 	cache, err := s.realtimeConcurrencyCache()
 	if err != nil {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), realtimeOperationTimeout)
 	defer cancel()
-	_ = cache.ReleaseRealtimeLease(ctx, accountID, userID, apiKeyID, leaseID)
+	return cache.ReleaseRealtimeLease(ctx, accountID, userID, apiKeyID, leaseID) == nil
 }

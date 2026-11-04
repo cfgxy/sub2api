@@ -140,6 +140,12 @@ func TestGatewayCacheRealtimeUsageSuccessSurvivesOwnerExitUntilCommitted(t *test
 	marked, err := cache.MarkRealtimeUsageSucceeded(ctx, "call", "response", "owner-a", time.Hour)
 	require.NoError(t, err)
 	require.True(t, marked)
+	pending, err := cache.HasPendingRealtimeUsage(ctx, "call")
+	require.NoError(t, err)
+	require.True(t, pending, "succeeded 状态仍表示尚未完成 Redis 幂等提交")
+	marked, err = cache.MarkRealtimeUsageSucceeded(ctx, "call", "response", "owner-a", time.Hour)
+	require.NoError(t, err)
+	require.True(t, marked, "成功标记响应不确定时，同一 owner 重试必须幂等")
 
 	// The original process has exited. Its short owner lease cannot turn a
 	// completed charge back into work another process may bill again.
@@ -238,6 +244,7 @@ func TestGatewayCacheListActiveRealtimeCallsSkipsClosedRecords(t *testing.T) {
 	cache, ok := NewGatewayCache(client).(interface {
 		service.RealtimeCallStore
 		service.RealtimeCallRecoveryStore
+		service.RealtimeFinalizationStore
 	})
 	require.True(t, ok)
 	ctx := context.Background()
@@ -247,11 +254,29 @@ func TestGatewayCacheListActiveRealtimeCallsSkipsClosedRecords(t *testing.T) {
 	} {
 		require.NoError(t, cache.SaveRealtimeCall(ctx, record, time.Hour))
 	}
-	closed, err := cache.MarkRealtimeCallClosed(ctx, "closed", time.Hour)
+	claimed, err := cache.ClaimRealtimeFinalization(ctx, "closed", "finalizer", time.Minute, time.Hour)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	closed, err := cache.CommitRealtimeFinalization(ctx, "closed", "finalizer", time.Hour)
 	require.NoError(t, err)
 	require.True(t, closed)
 
 	records, err := cache.ListActiveRealtimeCalls(ctx)
+	require.NoError(t, err)
+	require.Len(t, records, 2, "尚未完成资源清理的 closed 记录必须参与恢复")
+	byHash := make(map[string]*service.RealtimeCallRecord, len(records))
+	for _, record := range records {
+		byHash[record.CallHash] = record
+	}
+	require.False(t, byHash["active"].CleanupPending)
+	require.True(t, byHash["closed"].CleanupPending)
+
+	cleanup, ok := cache.(service.RealtimeCleanupStore)
+	require.True(t, ok)
+	completed, err := cleanup.MarkRealtimeCleanupCompleted(ctx, "closed")
+	require.NoError(t, err)
+	require.True(t, completed)
+	records, err = cache.ListActiveRealtimeCalls(ctx)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	require.Equal(t, "active", records[0].CallHash)

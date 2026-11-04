@@ -17,11 +17,15 @@ type realtimeLifecycleStore struct {
 	mu                      sync.Mutex
 	record                  *RealtimeCallRecord
 	usage                   map[string]struct{}
+	succeeded               map[string]struct{}
 	committed               map[string]struct{}
 	finalizer               string
 	finalizerCommitFailures atomic.Int32
 	finalizerCommitAfterSet atomic.Bool
+	controllerLookupErrors  atomic.Int32
 	usageCommitFailures     atomic.Int32
+	markSucceededCalls      atomic.Int32
+	usageCommitCalls        atomic.Int32
 }
 
 type realtimeUsageLeaseTestStore struct {
@@ -118,6 +122,9 @@ func (s *realtimeLifecycleStore) ReleaseRealtimeController(_ context.Context, ca
 }
 
 func (s *realtimeLifecycleStore) GetRealtimeController(_ context.Context, callHash string) (string, error) {
+	if s.controllerLookupErrors.Add(-1) >= 0 {
+		return "", errors.New("temporary controller lookup failure")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.record == nil || s.record.CallHash != callHash {
@@ -169,6 +176,7 @@ func (s *realtimeLifecycleStore) CommitRealtimeFinalization(_ context.Context, c
 	}
 	s.record.Controller = RealtimeControllerClosed
 	s.finalizer = ""
+	s.record.CleanupPending = true
 	if s.finalizerCommitAfterSet.Swap(false) {
 		return false, errors.New("transport lost after finalization commit")
 	}
@@ -194,6 +202,7 @@ func (s *realtimeLifecycleStore) ClaimRealtimeUsage(ctx context.Context, callHas
 }
 
 func (s *realtimeLifecycleStore) CommitRealtimeUsageClaim(_ context.Context, callHash, responseID, _ string, _ time.Duration) (bool, error) {
+	s.usageCommitCalls.Add(1)
 	if s.usageCommitFailures.Add(-1) >= 0 {
 		return false, errors.New("temporary usage commit failure")
 	}
@@ -207,6 +216,62 @@ func (s *realtimeLifecycleStore) CommitRealtimeUsageClaim(_ context.Context, cal
 		s.committed = make(map[string]struct{})
 	}
 	s.committed[key] = struct{}{}
+	delete(s.usage, key)
+	delete(s.succeeded, key)
+	return true, nil
+}
+
+func (s *realtimeLifecycleStore) MarkRealtimeUsageSucceeded(_ context.Context, callHash, responseID, _ string, _ time.Duration) (bool, error) {
+	s.markSucceededCalls.Add(1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := callHash + ":" + responseID
+	if _, ok := s.succeeded[key]; ok {
+		return true, nil
+	}
+	if _, ok := s.usage[key]; !ok {
+		return false, nil
+	}
+	if s.succeeded == nil {
+		s.succeeded = make(map[string]struct{})
+	}
+	s.succeeded[key] = struct{}{}
+	return true, nil
+}
+
+func (s *realtimeLifecycleStore) RenewRealtimeUsageClaim(_ context.Context, callHash, responseID, _ string, _ time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, pending := s.usage[callHash+":"+responseID]
+	return pending, nil
+}
+
+func (s *realtimeLifecycleStore) CommitSucceededRealtimeUsages(_ context.Context, callHash string, _ time.Duration) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	committed := 0
+	for key := range s.succeeded {
+		if len(key) <= len(callHash) || key[:len(callHash)+1] != callHash+":" {
+			continue
+		}
+		if s.committed == nil {
+			s.committed = make(map[string]struct{})
+		}
+		s.committed[key] = struct{}{}
+		delete(s.succeeded, key)
+		delete(s.usage, key)
+		committed++
+	}
+	return committed, nil
+}
+
+func (s *realtimeLifecycleStore) MarkRealtimeCleanupCompleted(_ context.Context, callHash string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record == nil || s.record.CallHash != callHash || s.record.Controller != RealtimeControllerClosed || !s.record.CleanupPending {
+		return false, nil
+	}
+	s.record.CleanupPending = false
 	return true, nil
 }
 
@@ -218,6 +283,7 @@ func (s *realtimeLifecycleStore) ReleaseRealtimeUsageClaim(_ context.Context, ca
 		return false, nil
 	}
 	delete(s.usage, key)
+	delete(s.succeeded, key)
 	return true, nil
 }
 
@@ -278,7 +344,7 @@ func (*realtimeLifecycleStore) ReleaseRealtimeWebhookClaim(context.Context, stri
 func (s *realtimeLifecycleStore) ListActiveRealtimeCalls(context.Context) ([]*RealtimeCallRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.record == nil || s.record.Controller == RealtimeControllerClosed {
+	if s.record == nil || (s.record.Controller == RealtimeControllerClosed && !s.record.CleanupPending) {
 		return nil, nil
 	}
 	copy := *s.record
@@ -525,6 +591,59 @@ func TestRealtimeUsageBusinessSuccessRetriesIdempotencyCommit(t *testing.T) {
 		return err == nil && used
 	}, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, int32(1), businessCalls.Load(), "重试不得再次执行业务扣费")
+	require.Equal(t, int32(1), store.markSucceededCalls.Load(), "成功标记完成后重试只能继续提交 claim")
+	require.Equal(t, int32(2), store.usageCommitCalls.Load())
+}
+
+func TestFinalizeOfficialRealtimeCallCommitsSucceededUsageBeforeConservativeSettlement(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call-succeeded-race", CallHash: hashRealtimeCallID("call-succeeded-race"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-succeeded-race", ReservationUSD: 0.9, Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	claimed, err := store.ClaimRealtimeUsage(context.Background(), record.CallHash, "actual", "owner", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	marked, err := store.MarkRealtimeUsageSucceeded(context.Background(), record.CallHash, "actual", "owner", time.Hour)
+	require.NoError(t, err)
+	require.True(t, marked)
+
+	var settlements atomic.Int32
+	svc := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(&realtimeLifecycleConcurrencyCache{})}
+	svc.SetOfficialRealtimeLifecycleCallbacks(nil, func(*RealtimeCallRecord) error { settlements.Add(1); return nil })
+	svc.finalizeOfficialRealtimeCall(record)
+
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, controller)
+	require.Equal(t, int32(0), settlements.Load(), "succeeded actual usage 不能触发保守结算")
+}
+
+type realtimeBillingOutcomeRepository struct {
+	UsageBillingRepository
+	hasOutcome bool
+}
+
+func (r *realtimeBillingOutcomeRepository) HasRealtimeBillingOutcome(context.Context, string) (bool, error) {
+	return r.hasOutcome, nil
+}
+
+func TestFinalizeOfficialRealtimeCallUsesPersistentBillingOutcomeAfterRedisMarkerLoss(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call-persistent-outcome", CallHash: hashRealtimeCallID("call-persistent-outcome"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-persistent-outcome", ReservationUSD: 0.9, Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	var settlements atomic.Int32
+	svc := &OpenAIGatewayService{
+		cache:              store,
+		concurrencyService: NewConcurrencyService(&realtimeLifecycleConcurrencyCache{}),
+		usageBillingRepo:   &realtimeBillingOutcomeRepository{hasOutcome: true},
+	}
+	svc.SetOfficialRealtimeLifecycleCallbacks(nil, func(*RealtimeCallRecord) error { settlements.Add(1); return nil })
+
+	svc.finalizeOfficialRealtimeCall(record)
+
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, controller)
+	require.Equal(t, int32(0), settlements.Load(), "持久化实际账务结果必须阻止保守结算")
 }
 
 func TestRecordRealtimeUsageRenewsClaimDuringLongBusinessCall(t *testing.T) {
