@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
@@ -358,7 +359,15 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 	if !claimed {
 		return ErrRealtimeControllerChanged
 	}
-	defer func() { _, _ = store.ReleaseRealtimeController(context.Background(), record.CallHash, owner) }()
+	controllerReleased := false
+	releaseController := func() {
+		if controllerReleased {
+			return
+		}
+		controllerReleased = true
+		_, _ = store.ReleaseRealtimeController(context.Background(), record.CallHash, owner)
+	}
+	defer releaseController()
 	upstream, err := s.dialOfficialRealtimeSideband(ctx, record)
 	if err != nil {
 		return err
@@ -366,8 +375,15 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 	defer upstream.Close()
 	downstream.SetReadLimit(openAIWSMessageReadLimitBytes)
 	clientFrames := realtimeModelBoundFrameConn{upstream: realtimeFrameConn{conn: downstream}, model: record.Model}
+	var providerSessionEnded atomic.Bool
 	_, exit := openaiwsv2.Relay(ctx, clientFrames, upstream, nil, openaiwsv2.RelayOptions{
 		StartClientAfterFirstDownstream: true,
+		BeforeWriteClient: func(messageType coderws.MessageType, payload []byte, _ bool) error {
+			if messageType == coderws.MessageText && realtimeObserverSessionEnded(strings.TrimSpace(gjson.GetBytes(payload, "type").String())) {
+				providerSessionEnded.Store(true)
+			}
+			return nil
+		},
 		OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
 			if strings.TrimSpace(turn.RequestID) == "" {
 				return
@@ -381,6 +397,16 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 			}
 		},
 	})
+	releaseController()
+	if providerSessionEnded.Load() {
+		s.finalizeOfficialRealtimeCall(record)
+	} else if !time.Now().Before(record.ExpiresAt) {
+		s.terminateOfficialRealtimeCall(record)
+	} else {
+		// 客户端控制连接断开不等于 WebRTC 媒体已经结束；改由服务端 observer
+		// 接管，持续接收终态 usage 并在上游明确结束时释放会话租约。
+		go s.ObserveOfficialRealtimeCall(record, onTurn)
+	}
 	if exit != nil && exit.Err != nil {
 		return exit.Err
 	}
@@ -423,6 +449,10 @@ func (s *OpenAIGatewayService) ObserveOfficialRealtimeCall(record *RealtimeCallR
 		}
 		if errors.Is(err, errRealtimeObserverSessionEnded) {
 			s.finalizeOfficialRealtimeCall(record)
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.terminateOfficialRealtimeCall(record)
 			return
 		}
 		if !s.waitForRealtimeObserverRetry(record) {
@@ -499,7 +529,7 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 				return ErrRealtimeUnavailable
 			}
 		case <-maxTimer.C:
-			return errRealtimeObserverSessionEnded
+			return context.DeadlineExceeded
 		}
 	}
 }
@@ -537,14 +567,28 @@ func (s *OpenAIGatewayService) maintainRealtimeCall(record *RealtimeCallRecord) 
 		select {
 		case <-ticker.C:
 			if !s.refreshRealtimeLease(record) {
-				s.finalizeOfficialRealtimeCall(record)
+				s.terminateOfficialRealtimeCall(record)
 				return
 			}
 		case <-timer.C:
-			s.finalizeOfficialRealtimeCall(record)
+			s.terminateOfficialRealtimeCall(record)
 			return
 		}
 	}
+}
+
+// terminateOfficialRealtimeCall 仅用于本地生命周期到期或丢失租约的兜底路径。
+// 上游请求失败时仍必须结束本地账本，避免失去并发约束的会话继续占用预留。
+func (s *OpenAIGatewayService) terminateOfficialRealtimeCall(record *RealtimeCallRecord) {
+	if record == nil {
+		return
+	}
+	if account, err := s.GetOfficialRealtimeCallAccount(context.Background(), record); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), realtimeOperationTimeout)
+		_ = s.ControlOfficialRealtimeCall(ctx, account, record.CallID, "hangup", "")
+		cancel()
+	}
+	s.finalizeOfficialRealtimeCall(record)
 }
 
 // FinalizeOfficialRealtimeCall provides the single first-writer terminal path
