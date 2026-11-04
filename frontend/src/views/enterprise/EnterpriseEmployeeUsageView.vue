@@ -251,7 +251,7 @@ const poolSourceLabel = computed(() =>
 const trendSourceLabel = computed(() =>
   sourceStates.trend === 'ready' ? t('enterprise.usage.trendSource') : sourceStatusLabel('unavailable', t),
 )
-const hasOverage = computed(() => Boolean(usage.value && usage.value.overage !== '0'))
+const hasOverage = computed(() => Number(usage.value?.overage ?? 0) > 0)
 
 const detailColumns = computed<Column[]>(() => [
   { key: 'request_at', label: t('enterprise.common.requestAt') },

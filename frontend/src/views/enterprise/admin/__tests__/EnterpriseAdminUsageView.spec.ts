@@ -54,6 +54,19 @@ describe('EnterpriseAdminUsageView', () => {
     wrapper.unmount()
   })
 
+  it('does not show a fixed-precision zero overage as exceeded', async () => {
+    getWorkbenchSummary.mockResolvedValueOnce({
+      ...summary,
+      employee_summaries: [{ ...summary.employee_summaries[0], overage_credit: '0.00000000' }],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.html()).not.toContain('0.00000000')
+    expect(wrapper.html()).not.toContain('text-red-600')
+    wrapper.unmount()
+  })
+
   it('preserves pagination and independent source failure recovery', async () => {
     listWorkbenchUsage.mockResolvedValueOnce(page([row], 45))
     const wrapper = mountView()

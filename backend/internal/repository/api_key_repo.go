@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseallocation"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 
@@ -1159,12 +1160,7 @@ func (r *apiKeyRepository) SyncEnterpriseEmployeeWeeklyLimit(
 	}
 
 	var limitText sql.NullString
-	err = tx.QueryRowContext(ctx, `
-		SELECT amount::text
-		FROM enterprise_weekly_allocations
-		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
-		  AND window_type = 'week' AND window_anchor = $4
-		FOR UPDATE`, identity.EnterpriseID, identity.EnterpriseSubscriptionID, *identity.EmployeeID, anchor).Scan(&limitText)
+	err = tx.QueryRowContext(ctx, enterpriseallocation.LockedEffectiveWeeklyAllocationQuery("$1", "$2", "$3", "$4"), identity.EnterpriseID, identity.EnterpriseSubscriptionID, *identity.EmployeeID, anchor).Scan(&limitText)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}

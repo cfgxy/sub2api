@@ -259,6 +259,7 @@ func TestInferenceFailoverExhaustionRestoresRetryAfter(t *testing.T) {
 
 	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
 	require.Equal(t, "17", recorder.Header().Get("Retry-After"))
+	require.Equal(t, "UPSTREAM_RATE_LIMITED", gjson.Get(recorder.Body.String(), "error.code").String())
 }
 
 func TestFailoverExhaustionRejectsSecretBearingRetryAfter(t *testing.T) {

@@ -265,7 +265,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		h.handleStreamingAwareErrorWithCode(c, status, code, billingErrorMachineCode(err), message, streamStarted)
 		return
 	}
 
@@ -277,7 +277,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		h.handleStreamingAwareErrorWithCode(c, status, code, billingErrorMachineCode(err), message, streamStarted)
 		return
 	}
 	defer inflightRelease()
@@ -1035,7 +1035,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							if retryAfter > 0 {
 								c.Header("Retry-After", strconv.Itoa(retryAfter))
 							}
-							h.handleStreamingAwareError(c, status, code, message, streamStarted)
+							h.handleStreamingAwareErrorWithCode(c, status, code, billingErrorMachineCode(err), message, streamStarted)
 							return
 						}
 						// 兜底重试按"直接请求兜底分组"处理：清除强制平台，允许按分组平台调度
@@ -1946,7 +1946,7 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 				c.Set(service.OpsSkipPassthroughKey, true)
 			}
 
-			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
+			h.handleStreamingAwareErrorWithCode(c, respCode, "upstream_error", upstreamRateLimitCode(statusCode), msg, streamStarted)
 			return
 		}
 	}
@@ -1957,14 +1957,14 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 
 	// 使用默认的错误映射
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
-	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+	h.handleStreamingAwareErrorWithCode(c, status, errType, upstreamRateLimitCode(statusCode), errMsg, streamStarted)
 }
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况
 func (h *GatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
 	service.SetOpsUpstreamError(c, statusCode, errMsg, "")
-	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+	h.handleStreamingAwareErrorWithCode(c, status, errType, upstreamRateLimitCode(statusCode), errMsg, streamStarted)
 }
 
 func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) {
@@ -2216,7 +2216,7 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.errorResponse(c, status, code, message)
+		h.errorResponseWithCode(c, status, code, billingErrorMachineCode(err), message)
 		return
 	}
 
@@ -2501,6 +2501,10 @@ func billingErrorDetails(err error) (status int, code, message string, retryAfte
 		}
 		return http.StatusServiceUnavailable, "billing_service_error", msg, 0
 	}
+	if errors.Is(err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded) {
+		msg := pkgerrors.Message(err)
+		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, 0
+	}
 	if errors.Is(err, service.ErrAPIKeyRateLimit5hExceeded) {
 		msg := pkgerrors.Message(err)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, 0
@@ -2537,6 +2541,21 @@ func billingErrorDetails(err error) (status int, code, message string, retryAfte
 		msg = "Billing error"
 	}
 	return http.StatusForbidden, "billing_error", msg, 0
+}
+
+// billingErrorMachineCode 只为新增的企业员工额度拒绝补充机器码；既有 error.type 保持不变。
+func billingErrorMachineCode(err error) string {
+	if errors.Is(err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded) {
+		return "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED"
+	}
+	return ""
+}
+
+func upstreamRateLimitCode(statusCode int) string {
+	if statusCode == http.StatusTooManyRequests {
+		return "UPSTREAM_RATE_LIMITED"
+	}
+	return ""
 }
 
 func (h *GatewayHandler) metadataBridgeEnabled() bool {

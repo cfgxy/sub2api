@@ -79,6 +79,18 @@ describe('EnterpriseEmployeeUsageView', () => {
     wrapper.unmount()
   })
 
+  it('does not mark a fixed-precision zero overage as exceeded', async () => {
+    getEmployeeUsage.mockResolvedValue({
+      usage: { ...baseUsage, overage: '0.00000000' },
+      enterprise_pool: basePool,
+    })
+    const wrapper = mount(EnterpriseEmployeeUsageView)
+    await flushPromises()
+
+    expect(wrapper.html()).not.toContain('text-red-600')
+    wrapper.unmount()
+  })
+
   it('shows an explicit empty state for the trend chart instead of a fabricated zero series', async () => {
     getEmployeeUsageTrend.mockResolvedValue([])
     const wrapper = mount(EnterpriseEmployeeUsageView)

@@ -269,11 +269,12 @@ func TestEmployeeHomeComposesPersonalPoolAndRecentTrendWithoutFabricatingData(t 
 	svc, mock := newMockService(t)
 	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM enterprise_employees`).WithArgs(int64(11), int64(22)).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(11), int64(22)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start", "weekly_limit_usd"}).AddRow(nil, nil, nil))
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}))
 	mock.ExpectQuery(`SELECT CASE WHEN enterprise_subscription\.id IS NULL`).WithArgs(int64(11)).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
+		WithArgs(int64(11), int64(22), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"day", "requests", "actual_cost"}))
 	store := &employeeKeyStoreStub{}
 	h := NewHandler(svc, store, employeeKeyGeneratorStub{value: "unused"}, nil)

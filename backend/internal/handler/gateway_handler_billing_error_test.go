@@ -41,6 +41,15 @@ func TestBillingErrorDetails_APIKeyRateLimitStillMaps(t *testing.T) {
 	}
 }
 
+func TestBillingErrorMachineCode_EnterpriseEmployeeAllocationIsDistinct(t *testing.T) {
+	status, errorType, _, _ := billingErrorDetails(service.ErrEnterpriseEmployeeWeeklyAllocationExceeded)
+
+	require.Equal(t, http.StatusTooManyRequests, status)
+	require.Equal(t, "rate_limit_exceeded", errorType)
+	require.Equal(t, "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED", billingErrorMachineCode(service.ErrEnterpriseEmployeeWeeklyAllocationExceeded))
+	require.Empty(t, billingErrorMachineCode(service.ErrAPIKeyRateLimit7dExceeded))
+}
+
 func TestBillingErrorDetails_BillingServiceUnavailableMapsTo503(t *testing.T) {
 	status, code, _, retryAfter := billingErrorDetails(service.ErrBillingServiceUnavailable)
 	require.Equal(t, http.StatusServiceUnavailable, status)

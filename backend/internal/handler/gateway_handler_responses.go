@@ -150,7 +150,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.responsesErrorResponse(c, status, code, message)
+		h.responsesErrorResponse(c, status, responseErrorCode(code, billingErrorMachineCode(err)), message)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.responsesErrorResponse(c, status, code, message)
+		h.responsesErrorResponse(c, status, responseErrorCode(code, billingErrorMachineCode(err)), message)
 		return
 	}
 	defer inflightRelease()
@@ -379,6 +379,13 @@ func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code
 			"message": message,
 		},
 	})
+}
+
+func responseErrorCode(defaultCode, machineCode string) string {
+	if machineCode != "" {
+		return machineCode
+	}
+	return defaultCode
 }
 
 // handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.

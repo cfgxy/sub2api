@@ -406,7 +406,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		googleErrorWithType(c, status, code, "", message)
+		googleErrorWithType(c, status, code, billingErrorMachineCode(err), message)
 		return
 	}
 
@@ -418,7 +418,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		googleErrorWithType(c, status, code, "", message)
+		googleErrorWithType(c, status, code, billingErrorMachineCode(err), message)
 		return
 	}
 	defer inflightRelease()
@@ -880,7 +880,7 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 			}
 
 			// 按透传规则改写的是上游错误，不登记本地错误类型。
-			googleErrorWithType(c, respCode, "", "", msg)
+			googleErrorWithType(c, respCode, "", upstreamRateLimitCode(statusCode), msg)
 			return
 		}
 	}
@@ -891,7 +891,7 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 
 	// 使用默认的错误映射
 	status, message := mapGeminiUpstreamError(statusCode)
-	googleError(c, status, message)
+	googleErrorWithType(c, status, googleClientErrorType(status), upstreamRateLimitCode(statusCode), message)
 }
 
 func mapGeminiUpstreamError(statusCode int) (int, string) {
@@ -930,12 +930,19 @@ func googlePlatformError(c *gin.Context, status int, message string) {
 // 与 Claude / OpenAI 格式错误同口径分类；errType 为空时不登记。
 func googleErrorWithType(c *gin.Context, status int, errType, code, message string) {
 	service.SetOpsLocalErrorType(c, errType, code)
+	errorBody := gin.H{
+		"code":    status,
+		"message": message,
+		"status":  googleapi.HTTPStatusToGoogleStatus(status),
+	}
+	if code != "" {
+		errorBody["details"] = []gin.H{{
+			"@type":  "type.googleapis.com/google.rpc.ErrorInfo",
+			"reason": code,
+		}}
+	}
 	c.JSON(status, gin.H{
-		"error": gin.H{
-			"code":    status,
-			"message": message,
-			"status":  googleapi.HTTPStatusToGoogleStatus(status),
-		},
+		"error": errorBody,
 	})
 }
 

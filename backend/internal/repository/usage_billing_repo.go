@@ -8,6 +8,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseallocation"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -205,14 +206,9 @@ func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Cont
 	}
 
 	var allocation float64
-	err = tx.QueryRowContext(ctx, `
-		SELECT amount
-		FROM enterprise_weekly_allocations
-		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
-		  AND window_type = 'week' AND window_anchor = $4
-		FOR UPDATE`, enterpriseID, enterpriseSubscriptionID, employeeID, anchor).Scan(&allocation)
+	err = tx.QueryRowContext(ctx, enterpriseallocation.LockedEffectiveWeeklyAllocationQuery("$1", "$2", "$3", "$4"), enterpriseID, enterpriseSubscriptionID, employeeID, anchor).Scan(&allocation)
 	if errors.Is(err, sql.ErrNoRows) || allocation <= 0 || rateLimit7d <= 0 {
-		return nil, service.ErrAPIKeyRateLimit7dExceeded
+		return nil, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded
 	}
 	if err != nil {
 		return nil, err
@@ -248,7 +244,7 @@ func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Cont
 		return nil, err
 	}
 	if hasBlockingInflight {
-		return nil, service.ErrAPIKeyRateLimit7dExceeded
+		return nil, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded
 	}
 
 	var reserved float64
@@ -262,7 +258,7 @@ func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Cont
 		return nil, err
 	}
 	if usage7d+reserved+cmd.ReservedUSD > allocation+0.000000001 {
-		return nil, service.ErrAPIKeyRateLimit7dExceeded
+		return nil, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded
 	}
 
 	result := &service.EnterpriseEmployeeUsageReservationResult{}

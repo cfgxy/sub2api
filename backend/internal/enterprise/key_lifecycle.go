@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/enterpriseallocation"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -596,12 +597,7 @@ func lockEmployeeKeySubscription(ctx context.Context, tx *sql.Tx, enterpriseID, 
 // preflight. It is not an unlimited-rate-limit fallback for employee keys.
 func lockEmployeeWeeklyAllocation(ctx context.Context, tx *sql.Tx, enterpriseID, subscriptionID, employeeID int64, anchor time.Time) (float64, error) {
 	var value sql.NullString
-	err := tx.QueryRowContext(ctx, `
-		SELECT amount::text
-		FROM enterprise_weekly_allocations
-		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
-		  AND window_type = 'week' AND window_anchor = $4
-		FOR UPDATE`, enterpriseID, subscriptionID, employeeID, anchor).Scan(&value)
+	err := tx.QueryRowContext(ctx, enterpriseallocation.LockedEffectiveWeeklyAllocationQuery("$1", "$2", "$3", "$4"), enterpriseID, subscriptionID, employeeID, anchor).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
