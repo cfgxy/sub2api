@@ -59,6 +59,10 @@ type realtimeEmployeeTurnReservations struct {
 	handles     map[string]*InflightReservation
 	descriptors map[string]RealtimeEmployeeTurnReservation
 	prepared    []string
+	pending     string
+	preparing   bool
+	prepareDone chan struct{}
+	prepareErr  error
 }
 
 const realtimeEmployeeTurnProvisionalPrefix = "realtime-preflight:"
@@ -128,6 +132,10 @@ func (s *OpenAIGatewayService) BeginOfficialRealtimeEmployeeTurn(record *Realtim
 // hold before any provider response is allowed to start. The provisional ID is
 // atomically replaced with the provider response ID once it arrives.
 func (s *OpenAIGatewayService) PrepareOfficialRealtimeEmployeeTurn(record *RealtimeCallRecord, model string, start RealtimeTurnStartFunc) error {
+	return s.ensureOfficialRealtimeEmployeeTurn(record, model, start)
+}
+
+func (s *OpenAIGatewayService) ensureOfficialRealtimeEmployeeTurn(record *RealtimeCallRecord, model string, start RealtimeTurnStartFunc) error {
 	if record == nil || start == nil {
 		return nil
 	}
@@ -135,44 +143,77 @@ func (s *OpenAIGatewayService) PrepareOfficialRealtimeEmployeeTurn(record *Realt
 	if turns == nil {
 		return ErrRealtimeCallNotFound
 	}
-	provisionalID := realtimeEmployeeTurnProvisionalPrefix + uuid.NewString()
-	handle, err := start(provisionalID, model)
-	if err != nil || handle == nil {
-		return err
-	}
-	descriptor := handle.enterpriseReservation().RealtimeSnapshot(provisionalID)
-	if descriptor.RequestID == "" || descriptor.SourceAPIKeyID <= 0 || descriptor.ReservedUSD <= 0 || descriptor.RequestFingerprint == "" {
-		handle.HandlerDone()
-		return ErrRealtimeUnavailable
-	}
+
 	turns.mu.Lock()
-	turns.handles[provisionalID] = handle
-	turns.descriptors[provisionalID] = descriptor
-	turns.prepared = append(turns.prepared, provisionalID)
-	turns.mu.Unlock()
-	if err := s.persistRealtimeEmployeeTurn(record, descriptor, true); err != nil {
+	if len(turns.prepared) > 0 {
+		turns.mu.Unlock()
+		return nil
+	}
+	if turns.preparing {
+		done := turns.prepareDone
+		turns.mu.Unlock()
+		<-done
+		turns.mu.Lock()
+		ready := len(turns.prepared) > 0
+		err := turns.prepareErr
+		turns.mu.Unlock()
+		if ready {
+			return nil
+		}
 		return err
 	}
-	return nil
+	turns.preparing = true
+	turns.prepareDone = make(chan struct{})
+	done := turns.prepareDone
+	pendingID := turns.pending
+	handle := turns.handles[pendingID]
+	descriptor := turns.descriptors[pendingID]
+	turns.mu.Unlock()
+
+	finish := func(err error) error {
+		turns.mu.Lock()
+		if err == nil {
+			turns.prepared = append(turns.prepared, pendingID)
+			turns.pending = ""
+		}
+		turns.prepareErr = err
+		turns.preparing = false
+		close(done)
+		turns.mu.Unlock()
+		return err
+	}
+
+	if pendingID == "" {
+		pendingID = realtimeEmployeeTurnProvisionalPrefix + uuid.NewString()
+		var err error
+		handle, err = start(pendingID, model)
+		if err != nil || handle == nil {
+			if err == nil {
+				err = ErrRealtimeUnavailable
+			}
+			return finish(err)
+		}
+		descriptor = handle.enterpriseReservation().RealtimeSnapshot(pendingID)
+		if descriptor.RequestID == "" || descriptor.SourceAPIKeyID <= 0 || descriptor.ReservedUSD <= 0 || descriptor.RequestFingerprint == "" {
+			handle.HandlerDone()
+			return finish(ErrRealtimeUnavailable)
+		}
+		turns.mu.Lock()
+		turns.handles[pendingID] = handle
+		turns.descriptors[pendingID] = descriptor
+		turns.pending = pendingID
+		turns.mu.Unlock()
+	}
+	if err := s.persistRealtimeEmployeeTurn(record, descriptor, true); err != nil {
+		return finish(err)
+	}
+	return finish(nil)
 }
 
 // EnsureOfficialRealtimeEmployeeTurn keeps one admission ready for provider-
 // initiated VAD responses without accumulating unused holds for the same turn.
 func (s *OpenAIGatewayService) EnsureOfficialRealtimeEmployeeTurn(record *RealtimeCallRecord, model string, start RealtimeTurnStartFunc) error {
-	if record == nil || start == nil {
-		return nil
-	}
-	turns := s.realtimeEmployeeTurns(record.CallHash)
-	if turns == nil {
-		return ErrRealtimeCallNotFound
-	}
-	turns.mu.Lock()
-	prepared := len(turns.prepared) > 0
-	turns.mu.Unlock()
-	if prepared {
-		return nil
-	}
-	return s.PrepareOfficialRealtimeEmployeeTurn(record, model, start)
+	return s.ensureOfficialRealtimeEmployeeTurn(record, model, start)
 }
 
 func (s *OpenAIGatewayService) realtimeEmployeeTurn(record *RealtimeCallRecord, responseID string) *InflightReservation {

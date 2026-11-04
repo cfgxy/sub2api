@@ -346,6 +346,95 @@ func TestRealtimeEmployeeTurnReusesInitialPreflightAndReplenishesAfterTerminalRe
 	require.NoError(t, svc.BeginOfficialRealtimeEmployeeTurn(record, "response-2", "gpt-realtime", start))
 }
 
+func TestEnsureOfficialRealtimeEmployeeTurnCoalescesConcurrentAdmissions(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-concurrent-preflight", CallHash: hashRealtimeCallID("call-concurrent-preflight"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+
+	started := make(chan struct{})
+	secondAdmission := make(chan struct{})
+	release := make(chan struct{})
+	var admissions atomic.Int32
+	start := func(responseID, _ string) (*InflightReservation, error) {
+		if admissions.Add(1) != 1 {
+			close(secondAdmission)
+			return nil, errors.New("employee allocation only permits one turn")
+		}
+		close(started)
+		<-release
+		result, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: "realtime-call:" + record.CallHash + ":" + responseID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result)), nil
+	}
+
+	errs := make(chan error, 2)
+	go func() { errs <- svc.EnsureOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start) }()
+	<-started
+	go func() { errs <- svc.EnsureOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start) }()
+	select {
+	case <-secondAdmission:
+		close(release)
+		require.FailNow(t, "concurrent Ensure started a second employee admission")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-errs)
+	require.NoError(t, <-errs)
+	require.Equal(t, int32(1), admissions.Load(), "并发 Ensure 必须只创建一笔员工额度预留")
+	repo.mu.Lock()
+	require.Len(t, repo.reserved, 1)
+	repo.mu.Unlock()
+}
+
+func TestEnsureOfficialRealtimeEmployeeTurnRetriesSameDescriptorAfterPersistenceFailure(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-preflight-retry", CallHash: hashRealtimeCallID("call-preflight-retry"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	store.saveFailures.Store(1)
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+
+	var admissions atomic.Int32
+	start := func(responseID, _ string) (*InflightReservation, error) {
+		admissions.Add(1)
+		result, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: "realtime-call:" + record.CallHash + ":" + responseID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result)), nil
+	}
+
+	require.Error(t, svc.EnsureOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start))
+	turns := svc.realtimeEmployeeTurns(record.CallHash)
+	turns.mu.Lock()
+	require.Empty(t, turns.prepared, "未持久化 descriptor 不能作为 admission-ready")
+	pendingID := turns.pending
+	pending := turns.descriptors[pendingID]
+	turns.mu.Unlock()
+	require.NotEmpty(t, pendingID)
+	require.NoError(t, svc.EnsureOfficialRealtimeEmployeeTurn(record, "gpt-realtime", start))
+	require.Equal(t, int32(1), admissions.Load(), "重试必须复用同一员工额度预留")
+
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, []RealtimeEmployeeTurnReservation{pending}, persisted.EmployeeTurnReservations)
+	require.NoError(t, svc.BeginOfficialRealtimeEmployeeTurn(record, "response-after-retry", "gpt-realtime", start))
+	persisted, err = store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, []RealtimeEmployeeTurnReservation{{
+		ResponseID: "response-after-retry", RequestID: pending.RequestID, RequestFingerprint: pending.RequestFingerprint,
+		SourceAPIKeyID: pending.SourceAPIKeyID, ReservedUSD: pending.ReservedUSD,
+	}}, persisted.EmployeeTurnReservations)
+}
+
 func TestRealtimeWebSocketLedgerRetriesConservativeSettlement(t *testing.T) {
 	store := &realtimeLifecycleStore{}
 	svc := &OpenAIGatewayService{cache: store}
