@@ -39,6 +39,7 @@ var (
 type realtimeLifecycleCallbacks struct {
 	observe            func(*RealtimeCallRecord)
 	settleConservative func(*RealtimeCallRecord) error
+	settleTurn         func(*RealtimeCallRecord, string) error
 }
 
 type realtimeUsageClaim struct {
@@ -118,13 +119,16 @@ func (s *OpenAIGatewayService) RealtimeEmployeeTurnReservation(record *RealtimeC
 	return s.realtimeEmployeeTurn(record, responseID)
 }
 
-func (s *OpenAIGatewayService) completeRealtimeEmployeeTurn(record *RealtimeCallRecord, responseID string) {
+func (s *OpenAIGatewayService) completeRealtimeEmployeeTurn(record *RealtimeCallRecord, responseID string) error {
 	if record == nil || strings.TrimSpace(responseID) == "" {
-		return
+		return nil
+	}
+	if err := s.persistRealtimeEmployeeTurn(record, RealtimeEmployeeTurnReservation{ResponseID: responseID}, false); err != nil {
+		return err
 	}
 	turns := s.realtimeEmployeeTurns(record.CallHash)
 	if turns == nil {
-		return
+		return nil
 	}
 	turns.mu.Lock()
 	handle := turns.handles[strings.TrimSpace(responseID)]
@@ -134,10 +138,30 @@ func (s *OpenAIGatewayService) completeRealtimeEmployeeTurn(record *RealtimeCall
 	if handle != nil {
 		handle.HandlerDone()
 	}
-	_ = s.persistRealtimeEmployeeTurn(record, RealtimeEmployeeTurnReservation{ResponseID: responseID}, false)
 	if empty {
 		s.realtimeEmployeeTurnReservations.Delete(record.CallHash)
 	}
+	return nil
+}
+
+func (s *OpenAIGatewayService) retryCompleteRealtimeEmployeeTurn(record *RealtimeCallRecord, responseID string) {
+	if record == nil || strings.TrimSpace(responseID) == "" {
+		return
+	}
+	key := record.CallHash + ":turn-complete:" + responseID
+	if _, loaded := s.realtimeUsageCommitRetries.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	go func() {
+		defer s.realtimeUsageCommitRetries.Delete(key)
+		ticker := time.NewTicker(realtimeObserverRetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if s.completeRealtimeEmployeeTurn(record, responseID) == nil {
+				return
+			}
+		}
+	}()
 }
 
 func (s *OpenAIGatewayService) releaseRealtimeEmployeeTurns(record *RealtimeCallRecord) {
@@ -207,21 +231,33 @@ func (s *OpenAIGatewayService) restoreRealtimeEmployeeTurns(record *RealtimeCall
 	if turns == nil {
 		return false
 	}
-	turns.mu.Lock()
-	defer turns.mu.Unlock()
 	for _, descriptor := range record.EmployeeTurnReservations {
-		if _, exists := turns.handles[descriptor.ResponseID]; exists {
-			continue
-		}
+		turns.mu.Lock()
+		_, attached := turns.handles[descriptor.ResponseID]
+		turns.mu.Unlock()
 		result, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
 			RequestID: descriptor.RequestID, RequestFingerprint: descriptor.RequestFingerprint,
 			SourceAPIKeyID: descriptor.SourceAPIKeyID, ReservedUSD: descriptor.ReservedUSD,
 		})
-		if err != nil || result == nil || result.Status != "reserved" {
+		if err != nil || result == nil {
 			return false
 		}
+		if result.Status != "reserved" {
+			if result.Status != "committed" && result.Status != "settled" && result.Status != "released" {
+				return false
+			}
+			if err := s.completeRealtimeEmployeeTurn(record, descriptor.ResponseID); err != nil {
+				return false
+			}
+			continue
+		}
+		if attached {
+			continue
+		}
 		result.RequestFingerprint = descriptor.RequestFingerprint
+		turns.mu.Lock()
 		turns.handles[descriptor.ResponseID] = AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result))
+		turns.mu.Unlock()
 	}
 	return true
 }
@@ -262,6 +298,21 @@ func (s *OpenAIGatewayService) SetOfficialRealtimeLifecycleCallbacks(observe fun
 		return
 	}
 	s.realtimeCallbacks.Store(&realtimeLifecycleCallbacks{observe: observe, settleConservative: settleConservative})
+}
+
+// SetOfficialRealtimeConservativeTurnCallback 为企业员工的逐 turn 保守结算注册回调，
+// 并与会话级预留的回调保持独立。
+func (s *OpenAIGatewayService) SetOfficialRealtimeConservativeTurnCallback(settleTurn func(*RealtimeCallRecord, string) error) {
+	if s == nil {
+		return
+	}
+	callbacks := s.realtimeCallbacksSnapshot()
+	if callbacks == nil {
+		callbacks = &realtimeLifecycleCallbacks{}
+	}
+	copy := *callbacks
+	copy.settleTurn = settleTurn
+	s.realtimeCallbacks.Store(&copy)
 }
 
 func (s *OpenAIGatewayService) realtimeCallbacksSnapshot() *realtimeLifecycleCallbacks {
@@ -827,7 +878,7 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 			}
 			if responseID, model, started := realtimeResponseStarted(payload); started {
 				if err := s.beginRealtimeEmployeeTurn(record, responseID, model, onTurnStart); err != nil {
-					return err
+					return s.cancelRejectedRealtimeTurn(upstream, record, responseID, err)
 				}
 			}
 			return nil
@@ -836,8 +887,11 @@ func (s *OpenAIGatewayService) ProxyOfficialRealtimeSideband(ctx context.Context
 			if strings.TrimSpace(turn.RequestID) == "" {
 				return
 			}
-			defer s.completeRealtimeEmployeeTurn(record, turn.RequestID)
-			_ = s.recordRealtimeUsage(record, store, turn, onTurn)
+			if err := s.recordRealtimeUsage(record, store, turn, onTurn); err == nil {
+				if err := s.completeRealtimeEmployeeTurn(record, turn.RequestID); err != nil {
+					s.retryCompleteRealtimeEmployeeTurn(record, turn.RequestID)
+				}
+			}
 		},
 	})
 	releaseController()
@@ -948,7 +1002,7 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 			}
 			if responseID, model, started := realtimeResponseStarted(payload); started {
 				if err := s.beginRealtimeEmployeeTurn(record, responseID, model, onTurnStart); err != nil {
-					return err
+					return s.cancelRejectedRealtimeTurn(upstream, record, responseID, err)
 				}
 			}
 			turn, terminal := openaiwsv2.ParseRealtimeTerminalEvent(payload, record.CreatedAt, time.Now())
@@ -956,9 +1010,11 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 				continue
 			}
 			err := s.recordRealtimeUsage(record, store, turn, onTurn)
-			s.completeRealtimeEmployeeTurn(record, turn.RequestID)
 			if err != nil {
 				return err
+			}
+			if err := s.completeRealtimeEmployeeTurn(record, turn.RequestID); err != nil {
+				s.retryCompleteRealtimeEmployeeTurn(record, turn.RequestID)
 			}
 		case err := <-errCh:
 			return err
@@ -978,6 +1034,19 @@ func (s *OpenAIGatewayService) runOfficialRealtimeObserverConnection(record *Rea
 			return context.DeadlineExceeded
 		}
 	}
+}
+
+func (s *OpenAIGatewayService) cancelRejectedRealtimeTurn(upstream openaiwsv2.FrameConn, record *RealtimeCallRecord, responseID string, admissionErr error) error {
+	payload, _ := json.Marshal(map[string]string{"type": "response.cancel", "response_id": responseID})
+	ctx, cancel := context.WithTimeout(context.Background(), realtimeOperationTimeout)
+	writeErr := upstream.WriteFrame(ctx, coderws.MessageText, payload)
+	cancel()
+	// 准入失败发现时 response 已启动，必须同时停止 response 与 call，避免继续消耗未预留媒体。
+	s.terminateOfficialRealtimeCall(record)
+	if writeErr != nil {
+		return fmt.Errorf("cancel rejected realtime response: %w", writeErr)
+	}
+	return admissionErr
 }
 
 func realtimeResponseStarted(payload []byte) (responseID, model string, started bool) {
@@ -1054,6 +1123,49 @@ func (s *OpenAIGatewayService) FinalizeOfficialRealtimeCall(record *RealtimeCall
 	s.finalizeOfficialRealtimeCall(record)
 }
 
+func (s *OpenAIGatewayService) settleConservativeRealtimeEmployeeTurns(record *RealtimeCallRecord, store RealtimeCallStore, owner string) (*RealtimeCallRecord, bool) {
+	if record == nil {
+		return nil, false
+	}
+	if !s.restoreRealtimeEmployeeTurns(record) {
+		return record, false
+	}
+	latest, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	if err != nil {
+		return record, false
+	}
+	if len(latest.EmployeeTurnReservations) == 0 {
+		return latest, true
+	}
+	callbacks := s.realtimeCallbacksSnapshot()
+	if callbacks == nil || callbacks.settleTurn == nil {
+		return latest, false
+	}
+	for _, descriptor := range latest.EmployeeTurnReservations {
+		claim, claimed, err := s.claimConservativeRealtimeUsage(store, latest.CallHash, descriptor.ResponseID, owner)
+		if err != nil || !claimed {
+			return latest, false
+		}
+		if err := callbacks.settleTurn(latest, descriptor.ResponseID); err != nil {
+			claim.release(context.Background())
+			return latest, false
+		}
+		if err := claim.commit(context.Background()); err != nil {
+			claim.release(context.Background())
+			return latest, false
+		}
+		if err := s.completeRealtimeEmployeeTurn(latest, descriptor.ResponseID); err != nil {
+			s.retryCompleteRealtimeEmployeeTurn(latest, descriptor.ResponseID)
+			return latest, false
+		}
+	}
+	latest, err = store.GetRealtimeCall(context.Background(), record.CallHash)
+	if err != nil || len(latest.EmployeeTurnReservations) != 0 {
+		return record, false
+	}
+	return latest, true
+}
+
 func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCallRecord) {
 	if record == nil {
 		return
@@ -1101,6 +1213,13 @@ func (s *OpenAIGatewayService) finalizeOfficialRealtimeCall(record *RealtimeCall
 			s.scheduleRealtimeFinalizationRetry(record)
 			return
 		}
+	}
+	var turnsSettled bool
+	record, turnsSettled = s.settleConservativeRealtimeEmployeeTurns(record, store, owner)
+	if !turnsSettled {
+		_, _ = finalization.ReleaseRealtimeFinalization(context.Background(), record.CallHash, owner)
+		s.scheduleRealtimeFinalizationRetry(record)
+		return
 	}
 	pending, err := claims.HasPendingRealtimeUsage(context.Background(), record.CallHash)
 	if err != nil {

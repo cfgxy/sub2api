@@ -399,6 +399,7 @@ func NewOpenAIGatewayHandler(
 	}
 	if gatewayService != nil {
 		gatewayService.SetOfficialRealtimeLifecycleCallbacks(handler.observeRecoveredOfficialRealtimeCall, handler.recordConservativeRealtimeUsage)
+		gatewayService.SetOfficialRealtimeConservativeTurnCallback(handler.recordConservativeRealtimeTurnUsage)
 	}
 	return handler
 }

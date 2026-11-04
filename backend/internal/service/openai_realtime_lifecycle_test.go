@@ -3,14 +3,31 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
+	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 )
+
+type realtimeRecordingFrameConn struct {
+	writes [][]byte
+}
+
+func (c *realtimeRecordingFrameConn) ReadFrame(context.Context) (coderws.MessageType, []byte, error) {
+	return 0, nil, io.EOF
+}
+
+func (c *realtimeRecordingFrameConn) WriteFrame(_ context.Context, _ coderws.MessageType, payload []byte) error {
+	c.writes = append(c.writes, append([]byte(nil), payload...))
+	return nil
+}
+
+func (c *realtimeRecordingFrameConn) Close() error { return nil }
 
 type realtimeLifecycleStore struct {
 	GatewayCache
@@ -26,6 +43,7 @@ type realtimeLifecycleStore struct {
 	usageCommitFailures     atomic.Int32
 	markSucceededCalls      atomic.Int32
 	usageCommitCalls        atomic.Int32
+	saveFailures            atomic.Int32
 }
 
 type realtimeUsageLeaseTestStore struct {
@@ -128,11 +146,113 @@ func (s *realtimeUsageLeaseTestStore) CommitSucceededRealtimeUsages(_ context.Co
 }
 
 func (s *realtimeLifecycleStore) SaveRealtimeCall(_ context.Context, record *RealtimeCallRecord, _ time.Duration) error {
+	if s.saveFailures.Add(-1) >= 0 {
+		return errors.New("temporary realtime ledger save failure")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copy := *record
 	s.record = &copy
 	return nil
+}
+
+func TestRestoreRealtimeEmployeeTurnsCleansTerminalLedgerStates(t *testing.T) {
+	for _, status := range []string{"committed", "settled", "released"} {
+		t.Run(status, func(t *testing.T) {
+			store := &realtimeLifecycleStore{}
+			repo := &realtimeEmployeeTurnReservationRepo{}
+			record := &RealtimeCallRecord{
+				CallID: "call-terminal-" + status, CallHash: hashRealtimeCallID("call-terminal-" + status),
+				Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour),
+			}
+			descriptor := RealtimeEmployeeTurnReservation{ResponseID: "response-1", RequestID: "realtime-turn-" + status, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1.25}
+			record.EmployeeTurnReservations = []RealtimeEmployeeTurnReservation{descriptor}
+			require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+			repo.reserved = map[string]EnterpriseEmployeeUsageReservationResult{descriptor.RequestID: {
+				RequestID: descriptor.RequestID, RequestFingerprint: descriptor.RequestFingerprint, SourceAPIKeyID: descriptor.SourceAPIKeyID,
+				ReservedUSD: descriptor.ReservedUSD, Status: status,
+			}}
+
+			svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+			require.True(t, svc.restoreRealtimeReservation(record))
+			persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+			require.NoError(t, err)
+			require.Empty(t, persisted.EmployeeTurnReservations)
+		})
+	}
+}
+
+func TestRestoreRealtimeEmployeeTurnsRetriesLedgerRemovalFailure(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-removal-retry", CallHash: hashRealtimeCallID("call-removal-retry"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	descriptor := RealtimeEmployeeTurnReservation{ResponseID: "response-1", RequestID: "realtime-turn-removal-retry", RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1.25}
+	record.EmployeeTurnReservations = []RealtimeEmployeeTurnReservation{descriptor}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	repo.reserved = map[string]EnterpriseEmployeeUsageReservationResult{descriptor.RequestID: {
+		RequestID: descriptor.RequestID, RequestFingerprint: descriptor.RequestFingerprint, SourceAPIKeyID: descriptor.SourceAPIKeyID,
+		ReservedUSD: descriptor.ReservedUSD, Status: "settled",
+	}}
+	store.saveFailures.Store(1)
+
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo}
+	require.False(t, svc.restoreRealtimeReservation(record))
+	require.True(t, svc.restoreRealtimeReservation(record))
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Empty(t, persisted.EmployeeTurnReservations)
+}
+
+func TestFinalizeOfficialRealtimeCallConservativelySettlesActiveEmployeeTurn(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	repo := &realtimeEmployeeTurnReservationRepo{}
+	record := &RealtimeCallRecord{CallID: "call-missing-terminal", CallHash: hashRealtimeCallID("call-missing-terminal"), AccountID: 11, APIKeyID: 42, UserID: 33, LeaseID: "lease-missing-terminal", Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store, usageBillingRepo: repo, concurrencyService: NewConcurrencyService(&realtimeLifecycleConcurrencyCache{})}
+	require.NoError(t, svc.beginRealtimeEmployeeTurn(record, "response-missing", "gpt-realtime", func(responseID, _ string) (*InflightReservation, error) {
+		result, err := repo.ReserveEnterpriseEmployeeUsage(context.Background(), &EnterpriseEmployeeUsageReservationCommand{
+			RequestID: "realtime-call:" + record.CallHash + ":" + responseID, RequestFingerprint: "fingerprint", SourceAPIKeyID: 42, ReservedUSD: 1.25,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return AttachEnterpriseEmployeeUsageReservation(nil, newEnterpriseEmployeeUsageReservation(repo, result)), nil
+	}))
+	var settlements atomic.Int32
+	svc.SetOfficialRealtimeConservativeTurnCallback(func(got *RealtimeCallRecord, responseID string) error {
+		require.Equal(t, record.CallHash, got.CallHash)
+		require.Equal(t, "response-missing", responseID)
+		settlements.Add(1)
+		repo.mu.Lock()
+		result := repo.reserved["realtime-call:"+record.CallHash+":"+responseID]
+		result.Status = "settled"
+		repo.reserved[result.RequestID] = result
+		repo.mu.Unlock()
+		return nil
+	})
+
+	svc.finalizeOfficialRealtimeCall(record)
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, persisted.Controller)
+	require.Empty(t, persisted.EmployeeTurnReservations)
+	require.Equal(t, int32(1), settlements.Load())
+}
+
+func TestCancelRejectedRealtimeTurnStopsResponseAndFinalizesCall(t *testing.T) {
+	store := &realtimeLifecycleStore{}
+	record := &RealtimeCallRecord{CallID: "call-rejected-turn", CallHash: hashRealtimeCallID("call-rejected-turn"), Controller: RealtimeControllerPending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store}
+	upstream := &realtimeRecordingFrameConn{}
+	admissionErr := errors.New("weekly employee allocation exhausted")
+
+	require.ErrorIs(t, svc.cancelRejectedRealtimeTurn(upstream, record, "response-rejected", admissionErr), admissionErr)
+	require.Len(t, upstream.writes, 1)
+	require.JSONEq(t, `{"type":"response.cancel","response_id":"response-rejected"}`, string(upstream.writes[0]))
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, persisted.Controller)
 }
 
 func TestRealtimeEmployeeTurnReservationSurvivesRecoveryAndReleasesOnce(t *testing.T) {

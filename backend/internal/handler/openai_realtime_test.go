@@ -39,6 +39,19 @@ func TestRealtimeResponseCreateFrame(t *testing.T) {
 	require.False(t, realtimeResponseCreateFrame([]byte(`not-json`)))
 }
 
+func TestRealtimeWSEmployeeTurnBindingsUseResponseIDInsteadOfTerminalOrder(t *testing.T) {
+	bindings := &realtimeWSEmployeeTurnBindings{}
+	reservationA := &service.InflightReservation{}
+	reservationB := &service.InflightReservation{}
+	bindings.add(reservationA)
+	bindings.add(reservationB)
+
+	bindings.bind("response-a")
+	bindings.bind("response-b")
+	require.Same(t, reservationB, bindings.take("response-b"), "B may terminate before A")
+	require.Same(t, reservationA, bindings.take("response-a"), "A must retain its own reservation")
+}
+
 func TestRealtimeCallIdentityFreezesAuthenticatedFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	request := httptest.NewRequest(http.MethodPost, "/v1/realtime/calls", nil)
