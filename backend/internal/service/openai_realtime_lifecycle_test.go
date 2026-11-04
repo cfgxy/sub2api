@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,7 @@ type realtimeLifecycleStore struct {
 	record    *RealtimeCallRecord
 	usage     map[string]struct{}
 	committed map[string]struct{}
+	finalizer string
 }
 
 func (s *realtimeLifecycleStore) SaveRealtimeCall(_ context.Context, record *RealtimeCallRecord, _ time.Duration) error {
@@ -84,6 +86,38 @@ func (s *realtimeLifecycleStore) MarkRealtimeCallClosed(_ context.Context, callH
 	return true, nil
 }
 
+func (s *realtimeLifecycleStore) ClaimRealtimeFinalization(_ context.Context, callHash, owner string, _ time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record == nil || s.record.CallHash != callHash || s.record.Controller == RealtimeControllerClosed || (s.record.Controller == RealtimeControllerFinalizing && s.finalizer != "" && s.finalizer != owner) {
+		return false, nil
+	}
+	s.record.Controller = RealtimeControllerFinalizing
+	s.finalizer = owner
+	return true, nil
+}
+
+func (s *realtimeLifecycleStore) ReleaseRealtimeFinalization(_ context.Context, callHash, owner string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record == nil || s.record.CallHash != callHash || s.record.Controller != RealtimeControllerFinalizing || s.finalizer != owner {
+		return false, nil
+	}
+	s.finalizer = ""
+	return true, nil
+}
+
+func (s *realtimeLifecycleStore) CommitRealtimeFinalization(_ context.Context, callHash, owner string, _ time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record == nil || s.record.CallHash != callHash || s.record.Controller != RealtimeControllerFinalizing || s.finalizer != owner {
+		return false, nil
+	}
+	s.record.Controller = RealtimeControllerClosed
+	s.finalizer = ""
+	return true, nil
+}
+
 func (s *realtimeLifecycleStore) BeginRealtimeUsage(_ context.Context, callHash, responseID string, _ time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,6 +172,19 @@ func (s *realtimeLifecycleStore) HasCommittedRealtimeUsage(_ context.Context, ca
 	return false, nil
 }
 
+func (s *realtimeLifecycleStore) HasPendingRealtimeUsage(_ context.Context, callHash string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.usage {
+		if len(key) > len(callHash) && key[:len(callHash)+1] == callHash+":" {
+			if _, committed := s.committed[key]; !committed {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func (*realtimeLifecycleStore) CommitRealtimeUsage(context.Context, string, string, time.Duration) error {
 	return nil
 }
@@ -181,7 +228,7 @@ func (s *realtimeLifecycleStore) ListActiveRealtimeCalls(context.Context) ([]*Re
 func (s *realtimeLifecycleStore) ResetRealtimeControllerForRecovery(_ context.Context, callHash string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.record == nil || s.record.CallHash != callHash || s.record.Controller == RealtimeControllerClosed {
+	if s.record == nil || s.record.CallHash != callHash || s.record.Controller == RealtimeControllerClosed || s.record.Controller == RealtimeControllerFinalizing {
 		return false, nil
 	}
 	s.record.Controller = RealtimeControllerPending
@@ -300,6 +347,68 @@ func TestFinalizeOfficialRealtimeCallConservativelySettlesOnlyWithoutUsage(t *te
 	require.Equal(t, int32(1), settlements.Load(), "actual usage must suppress conservative settlement")
 }
 
+func TestFinalizeOfficialRealtimeCallWaitsForPendingActualUsage(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call_pending", CallHash: hashRealtimeCallID("call_pending"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-pending", ReservationUSD: 0.9, Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	concurrency := &realtimeLifecycleConcurrencyCache{}
+	svc := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(concurrency)}
+	var settlements atomic.Int32
+	svc.SetOfficialRealtimeLifecycleCallbacks(nil, func(*RealtimeCallRecord) error { settlements.Add(1); return nil })
+
+	claimed, err := store.ClaimRealtimeUsage(context.Background(), record.CallHash, "actual", "owner", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	svc.finalizeOfficialRealtimeCall(record)
+	require.Equal(t, int32(0), settlements.Load(), "pending actual usage must block conservative settlement")
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerFinalizing, controller)
+
+	committed, err := store.CommitRealtimeUsageClaim(context.Background(), record.CallHash, "actual", "owner", time.Hour)
+	require.NoError(t, err)
+	require.True(t, committed)
+	svc.finalizeOfficialRealtimeCall(record)
+	controller, err = store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, controller)
+	require.Equal(t, int32(0), settlements.Load())
+}
+
+func TestFinalizeOfficialRealtimeCallRetriesConservativeSettlement(t *testing.T) {
+	record := &RealtimeCallRecord{CallID: "call_retry", CallHash: hashRealtimeCallID("call_retry"), AccountID: 11, APIKeyID: 22, UserID: 33, LeaseID: "lease-retry", ReservationUSD: 0.9, Controller: RealtimeControllerPending}
+	store := &realtimeLifecycleStore{}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	concurrency := &realtimeLifecycleConcurrencyCache{}
+	svc := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(concurrency)}
+	var attempts atomic.Int32
+	svc.SetOfficialRealtimeLifecycleCallbacks(nil, func(*RealtimeCallRecord) error {
+		if attempts.Add(1) == 1 {
+			return errors.New("temporary billing failure")
+		}
+		return nil
+	})
+
+	svc.finalizeOfficialRealtimeCall(record)
+	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerFinalizing, controller)
+	concurrency.mu.Lock()
+	releases := concurrency.releases
+	concurrency.mu.Unlock()
+	require.Equal(t, 0, releases)
+
+	require.Eventually(t, func() bool {
+		controller, err = store.GetRealtimeController(context.Background(), record.CallHash)
+		return err == nil && controller == RealtimeControllerClosed
+	}, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(2), attempts.Load())
+	concurrency.mu.Lock()
+	releases = concurrency.releases
+	concurrency.mu.Unlock()
+	require.Equal(t, 1, releases)
+}
+
 func TestRecoverOfficialRealtimeCallsRestartsObserverFromLedger(t *testing.T) {
 	record := &RealtimeCallRecord{
 		CallID: "call_recover", CallHash: hashRealtimeCallID("call_recover"), AccountID: 11,
@@ -311,6 +420,7 @@ func TestRecoverOfficialRealtimeCallsRestartsObserverFromLedger(t *testing.T) {
 	svc := &OpenAIGatewayService{cache: store, concurrencyService: NewConcurrencyService(&realtimeLifecycleConcurrencyCache{})}
 	restarted := make(chan *RealtimeCallRecord, 1)
 	svc.SetOfficialRealtimeLifecycleCallbacks(func(got *RealtimeCallRecord) { restarted <- got }, nil)
+	svc.RecoverOfficialRealtimeCalls()
 
 	require.Eventually(t, func() bool {
 		select {

@@ -48,6 +48,13 @@ type InflightBalanceReservationRenewer interface {
 	RenewInflightBalance(ctx context.Context, userID int64, requestID string, ttl time.Duration) (bool, error)
 }
 
+// InflightReservationRestorer 在进程重启后重建已通过准入的长会话 Redis 成员，
+// 不执行新的额度准入。
+type InflightReservationRestorer interface {
+	RestoreInflightBalance(ctx context.Context, userID int64, requestID string, amount float64, ttl time.Duration) error
+	RestoreInflightScope(ctx context.Context, scope, requestID string, amount float64, ttl time.Duration) error
+}
+
 const (
 	defaultInflightReservationTTL      = 15 * time.Minute
 	defaultInflightDefaultMaxTokens    = 8192
@@ -95,6 +102,14 @@ func (r *InflightReservation) Amount() float64 {
 		return 0
 	}
 	return r.amount
+}
+
+// Snapshot 返回恢复 Realtime reservation 所需的最小持久状态，避免创建第二个 request ID。
+func (r *InflightReservation) Snapshot() (requestID string, hasBalance bool, scopes []string) {
+	if r == nil {
+		return "", false, nil
+	}
+	return r.requestID, r.cache != nil, append([]string(nil), r.scopes...)
 }
 
 // Acquire 为一个异步计费任务增加引用；返回的 done 幂等，必须在任务结束（或被丢弃）时调用。
@@ -293,16 +308,81 @@ func (s *BillingCacheService) ReserveInflightForAPIKey(ctx context.Context, user
 		return r, err
 	}
 	subscriptionBill := group != nil && group.IsSubscriptionType() && subscription != nil
-	if subscriptionBill && (group.HasDailyLimit() || group.HasWeeklyLimit() || group.HasMonthlyLimit()) {
-		r, _ = s.reserveInflightScope(ctx, r, user.ID, inflightSubscriptionScope(subscription.ID), estimate)
+	var subscriptionPending, apiKeyPending float64
+	_, scopeReservationEnabled := s.cache.(InflightScopeReservationCache)
+	if subscriptionBill && scopeReservationEnabled && (group.HasDailyLimit() || group.HasWeeklyLimit() || group.HasMonthlyLimit()) {
+		r, subscriptionPending = s.reserveInflightScope(ctx, r, user.ID, inflightSubscriptionScope(subscription.ID), estimate)
 	}
-	if apiKey != nil && (apiKey.Quota > 0 || apiKey.HasRateLimits()) {
-		r, _ = s.reserveInflightScope(ctx, r, user.ID, inflightAPIKeyScope(apiKey.ID), estimate)
+	if apiKey != nil && scopeReservationEnabled && (apiKey.Quota > 0 || apiKey.HasRateLimits()) {
+		r, apiKeyPending = s.reserveInflightScope(ctx, r, user.ID, inflightAPIKeyScope(apiKey.ID), estimate)
+	}
+	if subscriptionBill && scopeReservationEnabled {
+		err = s.checkFixedChargeSubscription(ctx, user.ID, group, estimate+subscriptionPending)
+	}
+	if err == nil && apiKey != nil && scopeReservationEnabled {
+		err = s.checkFixedChargeAPIKey(ctx, apiKey, estimate+apiKeyPending)
+	}
+	if err != nil {
+		if r != nil {
+			r.Release()
+		}
+		return nil, err
 	}
 	if r != nil {
 		r.startRenewal(s.inflightBalanceRenewer(), s.inflightScopeRenewer())
 	}
 	return r, nil
+}
+
+// RestoreInflightReservation 从活动 Realtime ledger 重建预留成员并恢复独立续期。
+// ledger 仅在通过准入后写入，因此此处不重跑额度检查，也不分配新的 request ID。
+func (s *BillingCacheService) RestoreInflightReservation(userID int64, requestID string, amount float64, hasBalance bool, scopes []string) func() {
+	if s == nil || userID <= 0 || requestID == "" || amount <= 0 {
+		return noopRelease
+	}
+	cfg, ok := s.inflightReservationConfig()
+	if !ok {
+		return noopRelease
+	}
+	restorer, ok := s.cache.(InflightReservationRestorer)
+	if !ok || restorer == nil {
+		return noopRelease
+	}
+	ttl := defaultInflightReservationTTL
+	if cfg.TTLSeconds > 0 {
+		ttl = time.Duration(cfg.TTLSeconds) * time.Second
+	}
+	r := &InflightReservation{userID: userID, requestID: requestID, amount: amount, ttl: ttl}
+	r.refs.Store(1)
+	ctx, cancel := context.WithTimeout(context.Background(), inflightReservationReserveTimeout)
+	defer cancel()
+	if hasBalance {
+		cache, ok := s.cache.(InflightBalanceReservationCache)
+		if !ok || cache == nil || restorer.RestoreInflightBalance(ctx, userID, requestID, amount, ttl) != nil {
+			return noopRelease
+		}
+		r.cache = cache
+	}
+	if len(scopes) > 0 {
+		cache, ok := s.cache.(InflightScopeReservationCache)
+		if !ok || cache == nil {
+			r.Release()
+			return noopRelease
+		}
+		for _, scope := range scopes {
+			if restorer.RestoreInflightScope(ctx, scope, requestID, amount, ttl) != nil {
+				r.Release()
+				return noopRelease
+			}
+		}
+		r.scopeCache = cache
+		r.scopes = append(r.scopes, scopes...)
+	}
+	if r.cache == nil && len(r.scopes) == 0 {
+		return noopRelease
+	}
+	r.startRenewal(s.inflightBalanceRenewer(), s.inflightScopeRenewer())
+	return r.Release
 }
 
 func (s *BillingCacheService) inflightBalanceRenewer() InflightBalanceReservationRenewer {
@@ -735,29 +815,6 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 		return 0, false
 	}
 	return best, true
-}
-
-// EstimateInflightReservationCost 仅用基础定价的简化估算（保留给无 resolver 的调用方/测试）。
-//
-//	input_tokens  = min(bodyBytes / 4, max_input_tokens)
-//	output_tokens = min(max_tokens 或 default_max_tokens, max_output_tokens)
-//	cost = (input_tokens × 输入单价 + output_tokens × 输出单价) × rateMultiplier
-//
-// 无法取得定价时返回 (0, false)，调用方应 fail-open。
-func EstimateInflightReservationCost(billing *BillingService, cfg config.InflightReservationConfig, model string, bodyBytes, maxTokens int, rateMultiplier float64) (float64, bool) {
-	if billing == nil || model == "" || rateMultiplier <= 0 {
-		return 0, false
-	}
-	pricing, err := billing.GetModelPricing(model)
-	if err != nil || pricing == nil {
-		return 0, false
-	}
-	inputTokens, outputTokens := tokenCounts(cfg, bodyBytes, maxTokens)
-	cost := (float64(inputTokens)*pricing.InputPricePerToken + float64(outputTokens)*pricing.OutputPricePerToken) * rateMultiplier
-	if !validCost(cost) {
-		return 0, false
-	}
-	return cost, true
 }
 
 func inflightReservationCfg(cfg *config.Config) config.InflightReservationConfig {

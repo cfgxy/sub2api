@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -24,27 +25,40 @@ func TestEstimateInflightReservationCost(t *testing.T) {
 	cfg := config.InflightReservationConfig{DefaultMaxTokens: 8192, MaxOutputTokens: 64000, MaxInputTokens: 1000}
 
 	// explicit max_tokens; body 400 bytes → 100 input tokens
-	cost, ok := EstimateInflightReservationCost(billing, cfg, "claude-sonnet-4-5", 400, 1000, 1)
+	cost, ok := estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 400, 1000, 1)
 	require.True(t, ok)
 	require.InDelta(t, 100*pricing.InputPricePerToken+1000*pricing.OutputPricePerToken, cost, 1e-12)
 
 	// missing max_tokens → default; rate multiplier applied
-	cost, ok = EstimateInflightReservationCost(billing, cfg, "claude-sonnet-4-5", 0, 0, 2)
+	cost, ok = estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 0, 0, 2)
 	require.True(t, ok)
 	require.InDelta(t, 2*8192*pricing.OutputPricePerToken, cost, 1e-12)
 
 	// caps: input and output clamped
-	cost, ok = EstimateInflightReservationCost(billing, cfg, "claude-sonnet-4-5", 1_000_000, 1_000_000, 1)
+	cost, ok = estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 1_000_000, 1_000_000, 1)
 	require.True(t, ok)
 	require.InDelta(t, 1000*pricing.InputPricePerToken+64000*pricing.OutputPricePerToken, cost, 1e-12)
 
 	// free group / missing billing → fail open
-	_, ok = EstimateInflightReservationCost(billing, cfg, "claude-sonnet-4-5", 10, 10, 0)
+	_, ok = estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 10, 10, 0)
 	require.False(t, ok)
-	_, ok = EstimateInflightReservationCost(nil, cfg, "claude-sonnet-4-5", 10, 10, 1)
+	_, ok = estimateInflightReservationCostForTest(nil, cfg, "claude-sonnet-4-5", 10, 10, 1)
 	require.False(t, ok)
-	_, ok = EstimateInflightReservationCost(billing, cfg, "", 10, 10, 1)
+	_, ok = estimateInflightReservationCostForTest(billing, cfg, "", 10, 10, 1)
 	require.False(t, ok)
+}
+
+func estimateInflightReservationCostForTest(billing *BillingService, cfg config.InflightReservationConfig, model string, bodyBytes, maxTokens int, rateMultiplier float64) (float64, bool) {
+	if billing == nil || model == "" || rateMultiplier <= 0 {
+		return 0, false
+	}
+	pricing, err := billing.GetModelPricing(model)
+	if err != nil || pricing == nil {
+		return 0, false
+	}
+	inputTokens, outputTokens := tokenCounts(cfg, bodyBytes, maxTokens)
+	cost := (float64(inputTokens)*pricing.InputPricePerToken + float64(outputTokens)*pricing.OutputPricePerToken) * rateMultiplier
+	return cost, validCost(cost)
 }
 
 func TestReserveInflightBalance_NoReservationCacheFailsOpen(t *testing.T) {
@@ -97,7 +111,7 @@ func TestInflightEstimate_ChannelAliasUsesMappedModel(t *testing.T) {
 	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
 
 	// Old estimate (client model, base pricing only) → 0 → reservation bypassed.
-	_, ok := EstimateInflightReservationCost(svc.billingService, svc.cfg.Billing.InflightReservation, "my-alias", 4000, 1000, 1)
+	_, ok := estimateInflightReservationCostForTest(svc.billingService, svc.cfg.Billing.InflightReservation, "my-alias", 4000, 1000, 1)
 	require.False(t, ok, "precondition: alias has no base pricing")
 
 	est, priced := svc.EstimateInflightReservation(context.Background(), apiKey, InflightEstimateRequest{Model: "my-alias", BodyBytes: 4000, MaxTokens: 1000})
@@ -176,18 +190,23 @@ type memInflightCache struct {
 	deducts              atomic.Int32
 	releaseCt            atomic.Int32
 	scopes               map[string]time.Time
+	scopeAmounts         map[string]float64
 	scopeRenews          atomic.Int32
 	scopeContextCanceled atomic.Bool
 }
 
 func newMemInflightCache(balance float64) *memInflightCache {
-	return &memInflightCache{balance: balance, res: map[string]float64{}, exp: map[string]time.Time{}, scopes: map[string]time.Time{}}
+	return &memInflightCache{balance: balance, res: map[string]float64{}, exp: map[string]time.Time{}, scopes: map[string]time.Time{}, scopeAmounts: map[string]float64{}}
 }
 
 func (m *memInflightCache) GetUserBalance(context.Context, int64) (float64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.balance, nil
+}
+
+func (*memInflightCache) GetSubscriptionCache(context.Context, int64, int64) (*SubscriptionCacheData, error) {
+	return &SubscriptionCacheData{Status: SubscriptionStatusActive}, nil
 }
 
 func (m *memInflightCache) DeductUserBalance(_ context.Context, _ int64, amount float64) error {
@@ -244,6 +263,14 @@ func (m *memInflightCache) RenewInflightBalance(_ context.Context, _ int64, id s
 	return true, nil
 }
 
+func (m *memInflightCache) RestoreInflightBalance(_ context.Context, _ int64, id string, amount float64, ttl time.Duration) error {
+	m.mu.Lock()
+	m.res[id] = amount
+	m.exp[id] = time.Now().Add(ttl)
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *memInflightCache) count() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -255,11 +282,19 @@ func inflightScopeKey(scope, requestID string) string {
 	return scope + "\x00" + requestID
 }
 
-func (m *memInflightCache) ReserveInflightScope(_ context.Context, scope, requestID string, _ float64, ttl time.Duration) (float64, error) {
+func (m *memInflightCache) ReserveInflightScope(_ context.Context, scope, requestID string, amount float64, ttl time.Duration) (float64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.scopes[inflightScopeKey(scope, requestID)] = time.Now().Add(ttl)
-	return 0, nil
+	pending := 0.0
+	for key, value := range m.scopeAmounts {
+		if key != inflightScopeKey(scope, requestID) && m.scopes[key].After(time.Now()) {
+			pending += value
+		}
+	}
+	key := inflightScopeKey(scope, requestID)
+	m.scopes[key] = time.Now().Add(ttl)
+	m.scopeAmounts[key] = amount
+	return pending, nil
 }
 
 func (m *memInflightCache) RenewInflightScope(ctx context.Context, scope, requestID string, ttl time.Duration) (bool, error) {
@@ -280,7 +315,18 @@ func (m *memInflightCache) RenewInflightScope(ctx context.Context, scope, reques
 
 func (m *memInflightCache) ReleaseInflightScope(_ context.Context, scope, requestID string) error {
 	m.mu.Lock()
-	delete(m.scopes, inflightScopeKey(scope, requestID))
+	key := inflightScopeKey(scope, requestID)
+	delete(m.scopes, key)
+	delete(m.scopeAmounts, key)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *memInflightCache) RestoreInflightScope(_ context.Context, scope, requestID string, amount float64, ttl time.Duration) error {
+	m.mu.Lock()
+	key := inflightScopeKey(scope, requestID)
+	m.scopes[key] = time.Now().Add(ttl)
+	m.scopeAmounts[key] = amount
 	m.mu.Unlock()
 	return nil
 }
@@ -387,6 +433,84 @@ func TestInflightReservation_SubscriptionAndAPIKeyScopesRenewPastTTL(t *testing.
 	require.Equal(t, 0, cache.scopeCount())
 }
 
+func TestInflightReservation_APIKeyScopeRejectsConcurrentOverageAndReleasesFailedReservation(t *testing.T) {
+	cache := newMemInflightCache(10)
+	svc := newInflightSvc(t, cache, 60)
+	apiKey := &APIKey{ID: 8, User: &User{ID: 3}, Quota: 1}
+
+	first, err := svc.ReserveInflightForAPIKey(context.Background(), apiKey.User, apiKey, nil, nil, 0.6)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	require.Equal(t, 1, cache.scopeCount())
+
+	second, err := svc.ReserveInflightForAPIKey(context.Background(), apiKey.User, apiKey, nil, nil, 0.6)
+	require.ErrorIs(t, err, ErrAPIKeyQuotaExhausted)
+	require.Nil(t, second)
+	require.Equal(t, 1, cache.scopeCount(), "the rejected request must release its scope reservation")
+	first.Release()
+	require.Equal(t, 0, cache.scopeCount())
+}
+
+func TestInflightReservation_RestoreRealtimeReservationRenewsAllRecordedDimensions(t *testing.T) {
+	cache := newMemInflightCache(10)
+	svc := newInflightSvc(t, cache, 1)
+	limit := 10.0
+	group := &Group{ID: 4, SubscriptionType: SubscriptionTypeSubscription, DailyLimitUSD: &limit}
+	apiKey := &APIKey{ID: 8, User: &User{ID: 3}, Quota: 10}
+	reservation, err := svc.ReserveInflightForAPIKey(context.Background(), apiKey.User, apiKey, group, &UserSubscription{ID: 6}, 0.9)
+	require.NoError(t, err)
+	requestID, hasBalance, scopes := reservation.Snapshot()
+	require.False(t, hasBalance)
+	require.Len(t, scopes, 2)
+	reservation.Release()
+
+	// Realtime 账本可同时记录余额与两个 scope 的预留。
+	// 恢复必须以同一 request ID 重建并续期全部维度。
+	release := svc.RestoreInflightReservation(apiKey.User.ID, requestID, 0.9, true, scopes)
+	time.Sleep(2500 * time.Millisecond)
+	require.Equal(t, 1, cache.count(), "recovered balance reservation must outlive its original TTL")
+	require.Equal(t, 2, cache.scopeCount(), "recovered subscription and API key reservations must outlive their original TTL")
+	require.Greater(t, cache.renews.Load(), int32(1))
+	require.Greater(t, cache.scopeRenews.Load(), int32(3))
+	release()
+	require.Equal(t, 0, cache.count())
+	require.Equal(t, 0, cache.scopeCount())
+}
+
+func TestRecoverOfficialRealtimeFinalizingCallRenewsAndReleasesReservation(t *testing.T) {
+	cache := newMemInflightCache(10)
+	billing := newInflightSvc(t, cache, 1)
+	store := &realtimeLifecycleStore{}
+	record := &RealtimeCallRecord{
+		CallID: "call-recover-reservation", CallHash: hashRealtimeCallID("call-recover-reservation"), AccountID: 1, APIKeyID: 8, UserID: 3,
+		LeaseID: "lease-recover-reservation", Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+		Controller: RealtimeControllerFinalizing, ReservationUSD: 0.9, ReservationRequestID: "recover-reservation",
+		ReservationHasBalance: true, ReservationScopes: []string{inflightSubscriptionScope(6), inflightAPIKeyScope(8)},
+	}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	svc := &OpenAIGatewayService{cache: store, billingCacheService: billing}
+	svc.SetOfficialRealtimeLifecycleCallbacks(nil, func(*RealtimeCallRecord) error { return errors.New("temporary settlement failure") })
+	svc.RecoverOfficialRealtimeCalls()
+
+	time.Sleep(2500 * time.Millisecond)
+	require.Equal(t, 1, cache.count(), "恢复后的 finalizing call 必须持续续期余额预留")
+	require.Equal(t, 2, cache.scopeCount(), "恢复后的 finalizing call 必须持续续期全部 scope")
+
+	claimed, err := store.ClaimRealtimeUsage(context.Background(), record.CallHash, "actual", "owner", time.Second)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	committed, err := store.CommitRealtimeUsageClaim(context.Background(), record.CallHash, "actual", "owner", time.Hour)
+	require.NoError(t, err)
+	require.True(t, committed)
+	svc.FinalizeOfficialRealtimeCall(record)
+	require.Eventually(t, func() bool {
+		controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
+		return err == nil && controller == RealtimeControllerClosed
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, 0, cache.count())
+	require.Equal(t, 0, cache.scopeCount())
+}
+
 func TestSyncBalanceCacheAfterDeduction_SynchronousWhenInflightEnabled(t *testing.T) {
 	cache := newMemInflightCache(1)
 	svc := newInflightSvc(t, cache, 60)
@@ -438,7 +562,7 @@ func TestInflightEstimate_AccountLevelMappingFallsBackLikeBilling(t *testing.T) 
 	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: &Group{ID: groupID, Platform: PlatformAnthropic, RateMultiplier: 1}}
 	ctx := context.Background()
 
-	_, ok := EstimateInflightReservationCost(svc.billingService, svc.cfg.Billing.InflightReservation, "acct-alias-31", 4000, 1000, 1)
+	_, ok := estimateInflightReservationCostForTest(svc.billingService, svc.cfg.Billing.InflightReservation, "acct-alias-31", 4000, 1000, 1)
 	require.False(t, ok, "precondition: alias has no pricing")
 
 	est, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: "acct-alias-31", BodyBytes: 4000, MaxTokens: 1000})

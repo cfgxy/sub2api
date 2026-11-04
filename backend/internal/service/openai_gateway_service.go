@@ -522,6 +522,8 @@ type OpenAIGatewayService struct {
 	realtimeFinalizers sync.Map // key: string(call hash), value: func()
 	// realtimeCallbacks 由 handler 注入，以冻结账本记录重建 observer 和终态保守计费。
 	realtimeCallbacks atomic.Value // *realtimeLifecycleCallbacks
+	// realtimeFinalizationRetries 为每个持久化 finalizing 账本保留至多一个重试器。
+	realtimeFinalizationRetries sync.Map // key: string(call hash), value: struct{}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

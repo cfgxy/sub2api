@@ -407,10 +407,55 @@ var markRealtimeCallClosedScript = redis.NewScript(`
 	return 1
 `)
 
+var claimRealtimeFinalizationScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
+	local controller = redis.call('HGET', key, 'controller')
+	local current_owner = redis.call('HGET', key, 'finalizer_owner')
+	if controller == 'finalizing' and current_owner ~= '' and current_owner ~= ARGV[1] then return 0 end
+	redis.call('HSET', key, 'controller', 'finalizing', 'controller_owner', '', 'finalizer_owner', ARGV[1])
+	redis.call('EXPIRE', key, ARGV[2])
+	return 1
+`)
+
+var releaseRealtimeFinalizationScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[1], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[1], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	redis.call('HSET', KEYS[1], 'finalizer_owner', '')
+	return 1
+`)
+
+var commitRealtimeFinalizationScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[1], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[1], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	redis.call('HSET', KEYS[1], 'controller', 'closed', 'controller_owner', '', 'finalizer_owner', '')
+	redis.call('EXPIRE', KEYS[1], ARGV[2])
+	return 1
+`)
+
 var claimRealtimeReplayScript = redis.NewScript(`
 	local current = redis.call('GET', KEYS[1])
 	if current == false then
 		redis.call('PSETEX', KEYS[1], ARGV[2], 'pending:' .. ARGV[1])
+		return 1
+	end
+	return 0
+`)
+
+var claimRealtimeUsageScript = redis.NewScript(`
+	local controller = redis.call('HGET', KEYS[2], 'controller')
+	if controller == 'finalizing' or controller == 'closed' then return 0 end
+	local current = redis.call('GET', KEYS[1])
+	if current == false then
+		redis.call('PSETEX', KEYS[1], ARGV[2], 'pending:' .. ARGV[1])
+		return 1
+	end
+	return 0
+`)
+
+var claimRealtimeConservativeUsageScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[2], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[2], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	local current = redis.call('GET', KEYS[1])
+	if current == false then
+		redis.call('PSETEX', KEYS[1], ARGV[3], 'pending:' .. ARGV[2])
 		return 1
 	end
 	return 0
@@ -468,11 +513,6 @@ func realtimeUsageKey(callHash, responseID string) string {
 func realtimeWebhookKey(webhookID string) string {
 	hash := sha256.Sum256([]byte(webhookID))
 	return realtimeWebhookPrefix + hex.EncodeToString(hash[:])
-}
-
-func HashLiveCallID(callID string) string {
-	sum := sha256.Sum256([]byte(callID))
-	return hex.EncodeToString(sum[:])
 }
 
 func (c *gatewayCache) SaveLiveCall(ctx context.Context, record *service.LiveCallRecord, ttl time.Duration) error {
@@ -600,6 +640,8 @@ func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.Rea
 		"controller": record.Controller, "controller_owner": record.ControllerOwner,
 		"user_agent": record.UserAgent, "ip_address": record.IPAddress, "inbound_endpoint": record.InboundEndpoint,
 		"enterprise_attribution": attribution, "reservation_usd": strconv.FormatFloat(record.ReservationUSD, 'f', -1, 64),
+		"reservation_request_id": record.ReservationRequestID, "reservation_has_balance": strconv.FormatBool(record.ReservationHasBalance),
+		"reservation_scopes": strings.Join(record.ReservationScopes, ","),
 	}
 	pipe := c.rdb.TxPipeline()
 	pipe.HSet(ctx, realtimeCallKey(record.CallHash), values)
@@ -631,6 +673,11 @@ func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*s
 	}
 	if reservationUSD, err := strconv.ParseFloat(values["reservation_usd"], 64); err == nil {
 		record.ReservationUSD = reservationUSD
+	}
+	record.ReservationRequestID = values["reservation_request_id"]
+	record.ReservationHasBalance, _ = strconv.ParseBool(values["reservation_has_balance"])
+	if scopes := strings.TrimSpace(values["reservation_scopes"]); scopes != "" {
+		record.ReservationScopes = strings.Split(scopes, ",")
 	}
 	if raw := values["enterprise_attribution"]; raw != "" {
 		var snapshot service.EnterpriseUsageAttributionSnapshot
@@ -693,6 +740,24 @@ func (c *gatewayCache) MarkRealtimeCallClosed(ctx context.Context, callHash stri
 	return result == 1, err
 }
 
+func (c *gatewayCache) ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(owner) == "" || ttl <= 0 {
+		return false, errors.New("invalid realtime finalization claim")
+	}
+	result, err := claimRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner, int64(ttl.Seconds())).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) ReleaseRealtimeFinalization(ctx context.Context, callHash, owner string) (bool, error) {
+	result, err := releaseRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) CommitRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error) {
+	result, err := commitRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner, int64(ttl.Seconds())).Int()
+	return result == 1, err
+}
+
 func (c *gatewayCache) BeginRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error) {
 	if strings.TrimSpace(responseID) == "" || ttl <= 0 {
 		return false, errors.New("invalid realtime response id")
@@ -712,7 +777,15 @@ func (c *gatewayCache) ClaimRealtimeUsage(ctx context.Context, callHash, respons
 	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
 		return false, errors.New("invalid realtime usage claim")
 	}
-	claimed, err := claimRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, lease.Milliseconds()).Int()
+	claimed, err := claimRealtimeUsageScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID), realtimeCallKey(callHash)}, owner, lease.Milliseconds()).Int()
+	return claimed == 1, err
+}
+
+func (c *gatewayCache) ClaimRealtimeConservativeUsage(ctx context.Context, callHash, responseID, finalizerOwner, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(finalizerOwner) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime conservative usage claim")
+	}
+	claimed, err := claimRealtimeConservativeUsageScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID), realtimeCallKey(callHash)}, finalizerOwner, owner, lease.Milliseconds()).Int()
 	return claimed == 1, err
 }
 
@@ -740,6 +813,31 @@ func (c *gatewayCache) HasCommittedRealtimeUsage(ctx context.Context, callHash s
 			}
 			for _, value := range values {
 				if value == "committed" {
+					return true, nil
+				}
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return false, nil
+		}
+	}
+}
+
+func (c *gatewayCache) HasPendingRealtimeUsage(ctx context.Context, callHash string) (bool, error) {
+	var cursor uint64
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeUsagePrefix+callHash+":*", 100).Result()
+		if err != nil {
+			return false, err
+		}
+		if len(keys) > 0 {
+			values, err := c.rdb.MGet(ctx, keys...).Result()
+			if err != nil {
+				return false, err
+			}
+			for _, value := range values {
+				if text, ok := value.(string); ok && strings.HasPrefix(text, "pending:") {
 					return true, nil
 				}
 			}

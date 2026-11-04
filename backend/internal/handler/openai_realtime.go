@@ -258,6 +258,10 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeCall(c *gin.Context) {
 	}
 	defer accountRelease()
 	identity := realtimeCallIdentity(c, apiKey, subject.UserID, subscription, model, pricingAt)
+	if reservation := service.InflightReservationFromContext(c.Request.Context()); reservation != nil {
+		identity.ReservationUSD = reservation.Amount()
+		identity.ReservationRequestID, identity.ReservationHasBalance, identity.ReservationScopes = reservation.Snapshot()
+	}
 	created, _, err := h.gatewayService.CreateOfficialRealtimeTrackedCall(
 		c.Request.Context(), selection.Account, request, identity, subject.Concurrency, sessionReservationRelease,
 	)
@@ -526,6 +530,7 @@ func (h *OpenAIGatewayHandler) OfficialRealtimeSIPWebhook(c *gin.Context) {
 	}
 	if reservation := service.InflightReservationFromContext(pricingCtx); reservation != nil {
 		identity.ReservationUSD = reservation.Amount()
+		identity.ReservationRequestID, identity.ReservationHasBalance, identity.ReservationScopes = reservation.Snapshot()
 	}
 	if subscription != nil {
 		identity.SubscriptionID = &subscription.ID

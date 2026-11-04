@@ -105,10 +105,11 @@ type LiveConcurrencyCache interface {
 }
 
 const (
-	RealtimeControllerPending  = "pending"
-	RealtimeControllerObserver = "observer"
-	RealtimeControllerProxy    = "proxy"
-	RealtimeControllerClosed   = "closed"
+	RealtimeControllerPending    = "pending"
+	RealtimeControllerObserver   = "observer"
+	RealtimeControllerProxy      = "proxy"
+	RealtimeControllerFinalizing = "finalizing"
+	RealtimeControllerClosed     = "closed"
 )
 
 var (
@@ -133,6 +134,9 @@ type RealtimeCallIdentity struct {
 	IPAddress             string
 	InboundEndpoint       string
 	ReservationUSD        float64
+	ReservationRequestID  string
+	ReservationHasBalance bool
+	ReservationScopes     []string
 }
 
 // RealtimeCallRecord is the Redis-backed ownership and lifecycle ledger for a
@@ -158,6 +162,9 @@ type RealtimeCallRecord struct {
 	InboundEndpoint       string
 	EnterpriseAttribution *EnterpriseUsageAttributionSnapshot
 	ReservationUSD        float64
+	ReservationRequestID  string
+	ReservationHasBalance bool
+	ReservationScopes     []string
 }
 
 // RealtimeCallStore is intentionally a separate cache capability so a Live
@@ -185,9 +192,24 @@ type RealtimeUsageClaimStore interface {
 	CommitRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error)
 	ReleaseRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string) (bool, error)
 	HasCommittedRealtimeUsage(ctx context.Context, callHash string) (bool, error)
+	HasPendingRealtimeUsage(ctx context.Context, callHash string) (bool, error)
 	ClaimRealtimeWebhook(ctx context.Context, webhookID, owner string, lease time.Duration) (bool, error)
 	CommitRealtimeWebhookClaim(ctx context.Context, webhookID, owner string, ttl time.Duration) (bool, error)
 	ReleaseRealtimeWebhookClaim(ctx context.Context, webhookID, owner string) (bool, error)
+}
+
+// RealtimeConservativeUsageClaimStore 仅允许 finalizer owner 在 call finalizing
+// 时申请合成的保守结算；该状态会拒绝普通终态 usage claim。
+type RealtimeConservativeUsageClaimStore interface {
+	ClaimRealtimeConservativeUsage(ctx context.Context, callHash, responseID, finalizerOwner, owner string, lease time.Duration) (bool, error)
+}
+
+// RealtimeFinalizationStore 持久化终态，直到实际 usage 或保守结算提交完成。
+// 这能避免可重试的计费决策尚未持久化时提前释放额度。
+type RealtimeFinalizationStore interface {
+	ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error)
+	ReleaseRealtimeFinalization(ctx context.Context, callHash, owner string) (bool, error)
+	CommitRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error)
 }
 
 // RealtimeCallRecoveryStore lists live records from the Redis-backed ledger at

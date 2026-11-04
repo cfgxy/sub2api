@@ -57,6 +57,9 @@ type OpenAIGatewayHandler struct {
 func (h *OpenAIGatewayHandler) SetSubscriptionService(s *service.SubscriptionService) {
 	if h != nil {
 		h.subscriptionService = s
+		if h.gatewayService != nil {
+			go h.gatewayService.RecoverOfficialRealtimeCalls()
+		}
 	}
 }
 
@@ -4496,12 +4499,6 @@ func openAIWSCyberPricingAt(turnPricing *openAIWSTurnPricing, turnStart time.Tim
 		return turnStart
 	}
 	return turnPricing.currentOr(turnStart)
-}
-
-// clearCyberPolicyTurnState resets the cyber mark and recorded guard after a
-// logical WS turn has finished.
-func clearCyberPolicyTurnState(c *gin.Context) {
-	clearCyberPolicyAttemptState(c, true)
 }
 
 func clearCyberPolicyAttemptState(c *gin.Context, resetRecorded bool) {

@@ -5,7 +5,7 @@
 # SHAN-409（2026-09-29，go1.27）：v0.2.8 上游同步后刷新——行号漂移 59 行重生成；新增 13 条均为上游原产文件的新线索（团队 0 提交触及）：group_handler NewGroupHandler、antigravity DefaultGeminiModels/FallbackGeminiModelsList、gemini FallbackModelsList、requestmodel FromBody/FromJSON/JSONModelPath、resolveGeminiThinkingVariant、applyModelSpecificPricingPolicy、IsOpenCodeGo、CanonicalRequestedReasoningEffortFromReqBody、readerLoopClosedByPeer、OpenCodeGoModelProtocol
 # SHAN-453（2026-10-17，go1.27.2）：同步冻结官方 U=b0a02a3304a0a78cdd003ddda1dd23ba02c03084。
 # 相对企业 B=2318d288cac774c2d30ddd59c069689836ea0998 的登记：56 条仅位置漂移；新增 9 条均与 U 定义及引用同源；冲突解决新增 0。
-# 新增符号：Platforms、AnthropicToChatCompletionsRequest、ChatCompletionsToResponses、EstimateInflightReservationCost、
+# 新增符号：Platforms、AnthropicToChatCompletionsRequest、ChatCompletionsToResponses、
 # normalizeOpenAIResponsesWebSocketCompatibilityBody、normalizeOpenAIResponsesLegacyIngress、BuildPlatformCatalog、providerProfileInfo、cloneProtocolRules。
 # 收缩 2 条：FallbackModelsList 已可达，OpenCodeGoModelProtocol 已由上游移除；328 → 335 条。逐项来源及调用点证据见本单 CI 接续附件。
 ent/schema/account.go:208:16: unreachable func: Account.Edges
@@ -117,7 +117,6 @@ internal/handler/admin/idempotency_helper.go:99:6: unreachable func: executeAdmi
 internal/handler/auth_dingtalk_oauth.go:604:6: unreachable func: decideDingTalkStep34Strategy
 internal/handler/dto/mappers.go:550:6: unreachable func: ProxyWithAccountCountFromService
 internal/handler/dto/mappers.go:863:6: unreachable func: SettingFromService
-internal/handler/openai_gateway_handler.go:4490:6: unreachable func: clearCyberPolicyTurnState
 internal/handler/ops_error_logger.go:272:6: unreachable func: StopOpsErrorLogWorkers
 internal/handler/ops_error_logger.go:282:6: unreachable func: stopOpsErrorLogWorkers
 internal/handler/ops_error_logger.go:314:6: unreachable func: OpsErrorLogQueueLength
@@ -192,7 +191,6 @@ internal/pkg/xai/oauth.go:681:6: unreachable func: BuildVideosGenerationsURL
 internal/pkg/xai/oauth.go:693:6: unreachable func: BuildVideosEditsURL
 internal/pkg/xai/oauth.go:705:6: unreachable func: BuildVideosExtensionsURL
 internal/pkg/xai/oauth.go:717:6: unreachable func: BuildVideoURL
-internal/repository/gateway_cache.go:399:6: unreachable func: HashLiveCallID
 internal/repository/http_upstream.go:684:31: unreachable func: httpUpstreamService.acquireClient
 internal/repository/http_upstream.go:708:31: unreachable func: httpUpstreamService.getOrCreateClient
 internal/repository/scheduler_cache.go:228:6: unreachable func: NewSchedulerCache
@@ -284,9 +282,6 @@ ent/schema/usage_log.go:232:17: unreachable func: UsageLog.Indexes
 internal/config/config.go:1842:6: unreachable func: Load
 internal/handler/dto/mappers.go:551:6: unreachable func: ProxyWithAccountCountFromService
 internal/handler/dto/mappers.go:864:6: unreachable func: SettingFromService
-internal/handler/openai_gateway_handler.go:4499:6: unreachable func: clearCyberPolicyTurnState
-internal/repository/gateway_cache.go:445:6: unreachable func: HashLiveCallID
-internal/service/billing_inflight_reservation.go:704:6: unreachable func: EstimateInflightReservationCost
 internal/service/billing_service.go:1923:26: unreachable func: BillingService.applyModelSpecificPricingPolicy
 internal/service/openai_images.go:1504:6: unreachable func: collectOpenAIImageInlineAssets
 internal/service/openai_images.go:1517:6: unreachable func: walkOpenAIImageInlineAssets
@@ -348,7 +343,6 @@ pkg/pluginapi/v1/runtime.go:78:6: unreachable func: Serve
 internal/domain/platforms.go:62:6: unreachable func: Platforms
 internal/pkg/apicompat/chatcompletions_anthropic_bridge.go:42:6: unreachable func: AnthropicToChatCompletionsRequest
 internal/pkg/apicompat/chatcompletions_to_responses.go:20:6: unreachable func: ChatCompletionsToResponses
-internal/service/billing_inflight_reservation.go:691:6: unreachable func: EstimateInflightReservationCost
 internal/service/openai_gateway_request_body.go:1433:6: unreachable func: normalizeOpenAIResponsesWebSocketCompatibilityBody
 internal/service/openai_responses_ingress_compat.go:16:6: unreachable func: normalizeOpenAIResponsesLegacyIngress
 internal/service/platform_catalog.go:45:6: unreachable func: BuildPlatformCatalog
