@@ -196,6 +196,7 @@ func TestResponsesFailoverExhaustedAfterForwardedTerminalMarksOpsWithoutDuplicat
 	require.True(t, ok)
 	require.Equal(t, http.StatusTooManyRequests, streamErr.IntendedStatus)
 	require.Equal(t, "rate_limit_error", streamErr.ErrType)
+	require.Equal(t, "UPSTREAM_RATE_LIMITED", gjson.Get(markerRecorder.Body.String(), "response.error.code").String())
 
 	heartbeatRecorder := httptest.NewRecorder()
 	heartbeatContext, _ := gin.CreateTestContext(heartbeatRecorder)
@@ -204,10 +205,24 @@ func TestResponsesFailoverExhaustedAfterForwardedTerminalMarksOpsWithoutDuplicat
 	require.NoError(t, err)
 	recordGatewayStreamHeartbeat(heartbeatContext, written)
 	(&GatewayHandler{}).handleResponsesFailoverExhausted(heartbeatContext, &service.UpstreamFailoverError{
-		StatusCode: http.StatusBadGateway,
+		StatusCode: http.StatusTooManyRequests,
 	}, true)
 	require.True(t, strings.HasPrefix(heartbeatRecorder.Body.String(), heartbeat))
 	require.Equal(t, 1, strings.Count(heartbeatRecorder.Body.String(), "event: response.failed"))
+	require.Equal(t, "UPSTREAM_RATE_LIMITED", gjson.Get(heartbeatRecorder.Body.String(), "response.error.code").String())
+}
+
+func TestResponsesFailoverExhaustedUpstreamRateLimitUsesMachineCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	(&GatewayHandler{}).handleResponsesFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode: http.StatusTooManyRequests,
+	}, false)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Equal(t, "UPSTREAM_RATE_LIMITED", gjson.Get(recorder.Body.String(), "error.code").String())
 }
 
 func TestGatewayChatInferenceExhaustionRestoresRetryAfter(t *testing.T) {
