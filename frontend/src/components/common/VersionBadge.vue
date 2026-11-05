@@ -666,10 +666,14 @@ const isAdmin = computed(() => authStore.isAdmin)
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 
+function formatDisplayVersion(version: string): string {
+  return version.replace(/-(ent|ob)\.(\d{8})-[1-9]\d*$/, '-$1.$2')
+}
+
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() =>
-  (appStore.currentVersion || appStore.siteVersion || props.version || '').replace(/^v/, '')
+  formatDisplayVersion((appStore.currentVersion || appStore.siteVersion || props.version || '').replace(/^v/, ''))
 )
 const versionStatus = computed(() => {
   if (appStore.versionError) return t('version.checkFailed')
@@ -677,7 +681,7 @@ const versionStatus = computed(() => {
   if (!appStore.versionLoaded) return t('version.notChecked')
   return hasUpdate.value ? t('version.updateAvailable') : t('version.upToDate')
 })
-const latestVersion = computed(() => appStore.latestVersion)
+const latestVersion = computed(() => formatDisplayVersion(appStore.latestVersion))
 const hasUpdate = computed(() =>
   appStore.versionLoaded && !appStore.versionError && appStore.hasUpdate
 )
