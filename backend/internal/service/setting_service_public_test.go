@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -278,6 +279,42 @@ func TestSettingService_GetPublicSettingsForInjection_MirrorsSubscriptionEnabled
 		require.True(t, ok)
 		require.Equal(t, value == "true", payload.SubscriptionEnabled, "value=%q", value)
 	}
+}
+
+func TestSettingService_GetPublicSettingsForInjection_DefersLargeHomeBranding(t *testing.T) {
+	const dataLogo = "data:image/png;base64,large-logo"
+	const homeContent = "<section>custom home</section>"
+	repo := &settingPublicRepoStub{values: map[string]string{
+		SettingKeySiteLogo:    dataLogo,
+		SettingKeyHomeContent: homeContent,
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	raw, err := svc.GetPublicSettingsForInjection(context.Background())
+	require.NoError(t, err)
+	payload, ok := raw.(*PublicSettingsInjectionPayload)
+	require.True(t, ok)
+	require.Empty(t, payload.SiteLogo)
+	require.Empty(t, payload.HomeContent)
+	require.True(t, payload.DeferredPublicSettingsFetch)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), dataLogo)
+	require.NotContains(t, string(encoded), homeContent)
+}
+
+func TestSettingService_GetPublicSettingsForInjection_KeepsURLLogoAtStartup(t *testing.T) {
+	const logoURL = "https://example.com/logo.svg"
+	repo := &settingPublicRepoStub{values: map[string]string{SettingKeySiteLogo: logoURL}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	raw, err := svc.GetPublicSettingsForInjection(context.Background())
+	require.NoError(t, err)
+	payload, ok := raw.(*PublicSettingsInjectionPayload)
+	require.True(t, ok)
+	require.Equal(t, logoURL, payload.SiteLogo)
+	require.False(t, payload.DeferredPublicSettingsFetch)
 }
 
 // payment_balance_disabled is exposed publicly so the user shell can derive the site

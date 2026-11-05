@@ -103,6 +103,12 @@ describe('HomeView compact mode', () => {
     expect(wrapper.get('[data-testid="compact-home"]').text()).toContain('Test site')
   })
 
+  it('requests full settings when custom home content was deferred from startup', () => {
+    mountHome({ deferred_public_settings_fetch: true })
+
+    expect(appStore.fetchPublicSettings).toHaveBeenCalledOnce()
+  })
+
   it.each([undefined, false])('selects the default home when compact mode is %s', (enabled) => {
     const settings = enabled === undefined ? {} : { compact_home_enabled: enabled }
     const wrapper = mountHome(settings)

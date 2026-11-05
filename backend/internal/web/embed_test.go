@@ -126,11 +126,16 @@ func TestInjectSiteFavicon(t *testing.T) {
 		assert.NotContains(t, string(result), `/logo.png`)
 	})
 
-	t.Run("supports_relative_and_data_image_urls", func(t *testing.T) {
+	t.Run("supports_relative_image_urls", func(t *testing.T) {
 		html := []byte(`<link rel="icon" href="/logo.png" />`)
 
 		assert.Contains(t, string(injectSiteFavicon(html, []byte(`{"site_logo":"/uploads/logo.svg"}`))), `/uploads/logo.svg`)
-		assert.Contains(t, string(injectSiteFavicon(html, []byte(`{"site_logo":"data:image/png;base64,abc"}`))), `data:image/png;base64,abc`)
+	})
+
+	t.Run("defers_data_image_urls", func(t *testing.T) {
+		html := []byte(`<link rel="icon" href="/logo.png" />`)
+
+		assert.Equal(t, string(html), string(injectSiteFavicon(html, []byte(`{"site_logo":"data:image/png;base64,abc"}`))))
 	})
 
 	t.Run("rejects_unsafe_logo_urls", func(t *testing.T) {

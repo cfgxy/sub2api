@@ -215,7 +215,8 @@ func injectSiteFavicon(html, settingsJSON []byte) []byte {
 	}
 
 	logoURL := safeImageURL(cfg.SiteLogo)
-	if logoURL == "" {
+	// data URL 在注入配置中代价很高；完整设置拉取并更新前，保留静态 favicon。
+	if logoURL == "" || strings.HasPrefix(strings.ToLower(logoURL), "data:image/") {
 		return html
 	}
 

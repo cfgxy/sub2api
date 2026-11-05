@@ -573,8 +573,8 @@ onMounted(() => {
   // Check auth state
   authStore.checkAuth()
 
-  // Ensure public settings are loaded (will use cache if already loaded from injected config)
-  if (!appStore.publicSettingsLoaded) {
+	// 自定义首页内容可从启动 HTML 延后，以缩小匿名登录路由；当前路由挂载后再取完整设置。
+	if (!appStore.publicSettingsLoaded || appStore.cachedPublicSettings?.deferred_public_settings_fetch === true) {
     appStore.fetchPublicSettings()
   }
 })

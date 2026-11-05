@@ -326,7 +326,7 @@ export const useAppStore = defineStore('app', () => {
   /**
    * Apply settings to store state (internal helper to avoid code duplication)
    */
-  function applySettings(config: PublicSettings): void {
+	function applySettings(config: PublicSettings): void {
     const wasEnabled = cachedPublicSettings.value?.auto_update_check_enabled !== false
     const enabled = config.auto_update_check_enabled !== false
     if (wasEnabled !== enabled) {
@@ -360,7 +360,7 @@ export const useAppStore = defineStore('app', () => {
     }
 
     // Check for injected config from server (eliminates flash)
-    if (!publicSettingsLoaded.value && !force && window.__APP_CONFIG__) {
+		if (!publicSettingsLoaded.value && !force && window.__APP_CONFIG__ && window.__APP_CONFIG__.deferred_public_settings_fetch !== true) {
       applySettings(window.__APP_CONFIG__)
       return Promise.resolve(window.__APP_CONFIG__)
     }
@@ -475,6 +475,10 @@ export const useAppStore = defineStore('app', () => {
   function initFromInjectedConfig(): boolean {
     if (window.__APP_CONFIG__) {
       applySettings(window.__APP_CONFIG__)
+			// 启动载荷保留全部 feature flag，大型首页内容和 data-URI 品牌在首个路由可交互后再拉取。
+			if (window.__APP_CONFIG__.deferred_public_settings_fetch === true) {
+				publicSettingsLoaded.value = false
+			}
       return true
     }
     return false
