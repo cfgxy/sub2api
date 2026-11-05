@@ -17,7 +17,7 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 }))
 
 function settings(enabled: boolean) {
-  return { version: '0.2.17-ent.20261018-1', auto_update_check_enabled: enabled }
+  return { version: '0.2.17-ent.20261018-419497871001', auto_update_check_enabled: enabled }
 }
 
 describe('版本徽标', () => {
@@ -32,11 +32,27 @@ describe('版本徽标', () => {
     window.__APP_CONFIG__ = settings(false) as NonNullable<typeof window.__APP_CONFIG__>
     const wrapper = mount(VersionBadge)
     await flushPromises()
-    expect(wrapper.get('button').text()).toContain('v0.2.17-ent.20261018-1')
+    expect(wrapper.get('button').text()).toContain('v0.2.17-ent.20261018')
+    expect(wrapper.get('button').text()).not.toContain('419497871001')
     expect(wrapper.find('.animate-pulse').exists()).toBe(false)
     expect(wrapper.get('button').attributes('title')).toBe('version.notChecked')
     expect(checkUpdates).not.toHaveBeenCalled()
     expect(store.versionLoaded).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('在窄侧栏中隐藏打包序号并约束版本文本宽度', async () => {
+    window.__APP_CONFIG__ = settings(false) as NonNullable<typeof window.__APP_CONFIG__>
+    const wrapper = mount(VersionBadge, { attachTo: document.body })
+    await flushPromises()
+
+    const badge = wrapper.get('button')
+    const version = badge.get('span')
+    expect(badge.classes()).toContain('max-w-full')
+    expect(version.classes()).toEqual(expect.arrayContaining(['min-w-0', 'truncate']))
+    expect(badge.text()).toContain('v0.2.17-ent.20261018')
+    expect(badge.text()).not.toContain('419497871001')
+
     wrapper.unmount()
   })
 
@@ -45,7 +61,7 @@ describe('版本徽标', () => {
     vi.mocked(checkUpdates).mockRejectedValueOnce(new Error('测试错误'))
     const wrapper = mount(VersionBadge)
     await flushPromises()
-    expect(wrapper.get('button').text()).toContain('v0.2.17-ent.20261018-1')
+    expect(wrapper.get('button').text()).toContain('v0.2.17-ent.20261018')
     expect(wrapper.get('button').attributes('title')).toBe('version.checkFailed')
     vi.mocked(checkUpdates).mockResolvedValueOnce({
       current_version: '0.2.17-ent.20261018-1', latest_version: '0.2.17',
@@ -76,7 +92,8 @@ describe('版本徽标', () => {
     await wrapper.get('button[title="version.refresh"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('button').text()).toContain(`v${config.version}`)
+    expect(wrapper.get('button').text()).toContain('v0.2.17-ent.20261018')
+    expect(wrapper.get('button').text()).not.toContain('419497871001')
     expect(wrapper.get('button').attributes('title')).toBe('version.checkFailed')
     expect(wrapper.text()).toContain('version.checkFailed')
     expect(wrapper.text()).not.toContain('version.upToDate')
