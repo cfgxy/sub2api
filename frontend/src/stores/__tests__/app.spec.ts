@@ -419,6 +419,29 @@ describe('useAppStore', () => {
       expect(store.publicSettingsLoaded).toBe(true)
     })
 
+    it('延后注入配置会请求完整公开设置', async () => {
+      const deferredSettings = createPublicSettings({
+        site_logo: '',
+        home_content: '',
+        deferred_public_settings_fetch: true,
+      })
+      const completeSettings = createPublicSettings({
+        site_logo: 'data:image/png;base64,logo',
+        home_content: '<section>custom home</section>',
+      })
+      window.__APP_CONFIG__ = deferredSettings
+      vi.mocked(getPublicSettings).mockResolvedValue(completeSettings)
+
+      const store = useAppStore()
+      expect(store.initFromInjectedConfig()).toBe(true)
+      expect(store.publicSettingsLoaded).toBe(false)
+
+      await expect(store.fetchPublicSettings()).resolves.toEqual(completeSettings)
+      expect(getPublicSettings).toHaveBeenCalledOnce()
+      expect(store.siteLogo).toBe(completeSettings.site_logo)
+      expect(store.cachedPublicSettings?.home_content).toBe(completeSettings.home_content)
+    })
+
     it('无注入配置时返回 false', () => {
       const store = useAppStore()
       const result = store.initFromInjectedConfig()

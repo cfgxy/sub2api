@@ -209,6 +209,8 @@ export interface LoginAgreementDocument {
 }
 
 export interface PublicSettings {
+	/** 大型品牌或首页内容延后时，在启动后拉取完整公开设置。 */
+	deferred_public_settings_fetch?: boolean
   registration_enabled: boolean
   email_verify_enabled: boolean
   force_email_on_third_party_signup: boolean
