@@ -18,8 +18,9 @@ jobs:
           check-latest: false
       - name: Team files guard
         run: |
-          BASE="${{ github.base_ref }}"
-          if [ -z "$BASE" ]; then BASE=fd80b08c90b55edcad5b00171b53f08721d30da1; fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=fd80b08c90b55edcad5b00171b53f08721d30da1; fi
           bash backend/scripts/check-team-files.sh "$BASE"
       - name: Deadcode and U1000 guards
         run: bash backend/scripts/check-deadcode.sh

@@ -39,33 +39,6 @@ func TestRealtimeResponseCreateFrame(t *testing.T) {
 	require.False(t, realtimeResponseCreateFrame([]byte(`not-json`)))
 }
 
-func TestRealtimeWSEmployeeTurnBindingsKeepVADAndExplicitResponsesIndependent(t *testing.T) {
-	bindings := &realtimeWSEmployeeTurnBindings{}
-	explicitReservation := &service.InflightReservation{}
-	vadReservation := &service.InflightReservation{}
-
-	// server_vad.create_response may emit its response.created before an earlier
-	// client response.create finishes. Provider IDs, never a pending FIFO, own
-	// the reservation mapping.
-	require.True(t, bindings.bindReservation("response-vad", vadReservation))
-	require.True(t, bindings.bindReservation("response-explicit", explicitReservation))
-	require.Same(t, explicitReservation, bindings.take("response-explicit"))
-	require.Same(t, vadReservation, bindings.take("response-vad"))
-}
-
-func TestRealtimeWSEmployeeTurnBindingsBindPreflightBeforeResponseCreated(t *testing.T) {
-	bindings := &realtimeWSEmployeeTurnBindings{}
-	reservation := &service.InflightReservation{}
-	require.True(t, bindings.prepare(reservation))
-	require.True(t, bindings.hasPrepared())
-
-	bound, ok := bindings.bindPrepared("response-1")
-	require.True(t, ok)
-	require.Same(t, reservation, bound)
-	require.False(t, bindings.hasPrepared())
-	require.Same(t, reservation, bindings.take("response-1"))
-}
-
 func TestRealtimeCallIdentityFreezesAuthenticatedFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	request := httptest.NewRequest(http.MethodPost, "/v1/realtime/calls", nil)

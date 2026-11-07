@@ -1063,29 +1063,6 @@ func reserveEnterpriseEmployeeUsage(ctx context.Context, repo UsageBillingReposi
 	return newEnterpriseEmployeeUsageReservation(reservationRepo, result), nil
 }
 
-// EstimateInflightReservationCost 仅用基础定价的简化估算（保留给无 resolver 的调用方/测试）。
-//
-//	input_tokens  = min(bodyBytes / 4, max_input_tokens)
-//	output_tokens = min(max_tokens 或 default_max_tokens, max_output_tokens)
-//	cost = (input_tokens × 输入单价 + output_tokens × 输出单价) × rateMultiplier
-//
-// 无法取得定价时返回 (0, false)，调用方应 fail-open。
-func EstimateInflightReservationCost(billing *BillingService, cfg config.InflightReservationConfig, model string, bodyBytes, maxTokens int, rateMultiplier float64) (float64, bool) {
-	if billing == nil || model == "" || rateMultiplier <= 0 {
-		return 0, false
-	}
-	pricing, err := billing.GetModelPricing(model)
-	if err != nil || pricing == nil {
-		return 0, false
-	}
-	inputTokens, outputTokens := tokenCounts(cfg, bodyBytes, maxTokens)
-	cost := (float64(inputTokens)*pricing.InputPricePerToken + float64(outputTokens)*pricing.OutputPricePerToken) * rateMultiplier
-	if !validCost(cost) {
-		return 0, false
-	}
-	return cost, true
-}
-
 func inflightReservationCfg(cfg *config.Config) config.InflightReservationConfig {
 	if cfg == nil {
 		return config.InflightReservationConfig{}

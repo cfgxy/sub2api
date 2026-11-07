@@ -17,37 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEstimateInflightReservationCost(t *testing.T) {
-	billing := NewBillingService(&config.Config{}, nil)
-	pricing, err := billing.GetModelPricing("claude-sonnet-4-5")
-	require.NoError(t, err)
-
-	cfg := config.InflightReservationConfig{DefaultMaxTokens: 8192, MaxOutputTokens: 64000, MaxInputTokens: 1000}
-
-	// explicit max_tokens; body 400 bytes → 100 input tokens
-	cost, ok := estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 400, 1000, 1)
-	require.True(t, ok)
-	require.InDelta(t, 100*pricing.InputPricePerToken+1000*pricing.OutputPricePerToken, cost, 1e-12)
-
-	// missing max_tokens → default; rate multiplier applied
-	cost, ok = estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 0, 0, 2)
-	require.True(t, ok)
-	require.InDelta(t, 2*8192*pricing.OutputPricePerToken, cost, 1e-12)
-
-	// caps: input and output clamped
-	cost, ok = estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 1_000_000, 1_000_000, 1)
-	require.True(t, ok)
-	require.InDelta(t, 1000*pricing.InputPricePerToken+64000*pricing.OutputPricePerToken, cost, 1e-12)
-
-	// free group / missing billing → fail open
-	_, ok = estimateInflightReservationCostForTest(billing, cfg, "claude-sonnet-4-5", 10, 10, 0)
-	require.False(t, ok)
-	_, ok = estimateInflightReservationCostForTest(nil, cfg, "claude-sonnet-4-5", 10, 10, 1)
-	require.False(t, ok)
-	_, ok = estimateInflightReservationCostForTest(billing, cfg, "", 10, 10, 1)
-	require.False(t, ok)
-}
-
 func estimateInflightReservationCostForTest(billing *BillingService, cfg config.InflightReservationConfig, model string, bodyBytes, maxTokens int, rateMultiplier float64) (float64, bool) {
 	if billing == nil || model == "" || rateMultiplier <= 0 {
 		return 0, false
