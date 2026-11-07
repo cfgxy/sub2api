@@ -18,6 +18,9 @@ import (
 const stickySessionPrefix = "sticky_session:"
 const openAIResponsesSessionWindowPrefix = "openai_responses_session_window:"
 const liveCallPrefix = "live:call:"
+const realtimeCallPrefix = "realtime:call:"
+const realtimeUsagePrefix = "realtime:usage:"
+const realtimeWebhookPrefix = "realtime:webhook:"
 
 type gatewayCache struct {
 	rdb *redis.Client
@@ -227,6 +230,7 @@ func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key string) e
 // Compile-time assertion: gatewayCache must implement CyberSessionBlockStore.
 var _ service.CyberSessionBlockStore = (*gatewayCache)(nil)
 var _ service.LiveCallStore = (*gatewayCache)(nil)
+var _ service.RealtimeCallStore = (*gatewayCache)(nil)
 
 const reasoningContentPrefix = "reasoning_content:"
 
@@ -382,6 +386,228 @@ var markLiveCallClosedScript = redis.NewScript(`
 	return 1
 `)
 
+var claimRealtimeControllerScript = redis.NewScript(`
+	local key = KEYS[1]
+	local target = ARGV[1]
+	local owner = ARGV[2]
+	local current = redis.call('HGET', key, 'controller')
+	if current == false or current == 'closed' then return 0 end
+	if target == 'observer' and current ~= 'pending' then return 0 end
+	if target == 'proxy' and current ~= 'pending' and current ~= 'observer' and
+		(current ~= 'proxy' or redis.call('HGET', key, 'controller_owner') ~= owner) then return 0 end
+	redis.call('HSET', key, 'controller', target, 'controller_owner', owner)
+	return 1
+`)
+
+var markRealtimeCallClosedScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
+	redis.call('HSET', key, 'controller', 'closed', 'controller_owner', '')
+	redis.call('EXPIRE', key, ARGV[1])
+	return 1
+`)
+
+// updateRealtimeEmployeeTurnScript owns only employee_turn_reservations. It
+// deliberately never writes controller, finalizer, or cleanup fields because
+// finalization changes those fields under its own owner lease.
+var updateRealtimeEmployeeTurnScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 then return 0 end
+	if ARGV[2] == '1' then
+		local controller = redis.call('HGET', key, 'controller')
+		if controller ~= 'pending' and controller ~= 'observer' and controller ~= 'proxy' then return -1 end
+	end
+	local current = redis.call('HGET', key, 'employee_turn_reservations')
+	local turns = {}
+	if current and current ~= '' then turns = cjson.decode(current) end
+	local response_id = ARGV[1]
+	local add = ARGV[2] == '1'
+	local updated = {}
+	local found = false
+	for _, turn in ipairs(turns) do
+		if turn.ResponseID == response_id then
+			found = true
+			if add then table.insert(updated, turn) end
+		else
+			table.insert(updated, turn)
+		end
+	end
+	if add and not found then table.insert(updated, cjson.decode(ARGV[3])) end
+	redis.call('HSET', key, 'employee_turn_reservations', cjson.encode(updated))
+	return 1
+`)
+
+// restoreRealtimeEmployeeTurnForFinalizationScript is intentionally separate
+// from normal turn writes: only the owner holding the finalization lease can
+// recover a descriptor after its original Redis write failed.
+var restoreRealtimeEmployeeTurnForFinalizationScript = redis.NewScript(`
+local key = KEYS[1]
+if redis.call('EXISTS', key) == 0 then return 0 end
+if redis.call('HGET', key, 'controller') ~= 'finalizing' or redis.call('HGET', key, 'finalizer_owner') ~= ARGV[1] then return -1 end
+local turns = redis.call('HGET', key, 'employee_turn_reservations')
+local updated = {}
+if turns and turns ~= '' then updated = cjson.decode(turns) end
+for _, existing in ipairs(updated) do
+  if existing.ResponseID == ARGV[2] then return 1 end
+end
+table.insert(updated, cjson.decode(ARGV[3]))
+redis.call('HSET', key, 'employee_turn_reservations', cjson.encode(updated))
+return 1
+`)
+
+var bindRealtimeEmployeeTurnScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 then return 0 end
+	local controller = redis.call('HGET', key, 'controller')
+	if controller ~= 'pending' and controller ~= 'observer' and controller ~= 'proxy' then return -1 end
+	local current = redis.call('HGET', key, 'employee_turn_reservations')
+	local turns = {}
+	if current and current ~= '' then turns = cjson.decode(current) end
+	local provisional_id = ARGV[1]
+	local descriptor = cjson.decode(ARGV[2])
+	local updated = {}
+	local found_provisional = false
+	local found_response = false
+	for _, turn in ipairs(turns) do
+		if turn.ResponseID == provisional_id then
+			found_provisional = true
+		elseif turn.ResponseID == descriptor.ResponseID then
+			found_response = true
+			table.insert(updated, turn)
+		else
+			table.insert(updated, turn)
+		end
+	end
+	if found_provisional and not found_response then
+		table.insert(updated, descriptor)
+	elseif not found_provisional and not found_response then
+		return 0
+	end
+	redis.call('HSET', key, 'employee_turn_reservations', cjson.encode(updated))
+	return 1
+`)
+
+var claimRealtimeFinalizationScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
+	local controller = redis.call('HGET', key, 'controller')
+	local current_owner = redis.call('HGET', key, 'finalizer_owner')
+	local time = redis.call('TIME')
+	local now = time[1] * 1000 + math.floor(time[2] / 1000)
+	local owner_until = tonumber(redis.call('HGET', key, 'finalizer_owner_until')) or 0
+	if controller == 'finalizing' and current_owner ~= '' and current_owner ~= ARGV[1] and owner_until > now then return 0 end
+	redis.call('HSET', key, 'controller', 'finalizing', 'controller_owner', '', 'finalizer_owner', ARGV[1], 'finalizer_owner_until', now + ARGV[2])
+	redis.call('EXPIRE', key, ARGV[3])
+	return 1
+`)
+
+var releaseRealtimeFinalizationScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[1], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[1], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	redis.call('HSET', KEYS[1], 'finalizer_owner', '', 'finalizer_owner_until', '0')
+	return 1
+`)
+
+var commitRealtimeFinalizationScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[1], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[1], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	local turns = redis.call('HGET', KEYS[1], 'employee_turn_reservations')
+	if turns and turns ~= '' and #cjson.decode(turns) > 0 then return 0 end
+	local time = redis.call('TIME')
+	local now = time[1] * 1000 + math.floor(time[2] / 1000)
+	local owner_until = tonumber(redis.call('HGET', KEYS[1], 'finalizer_owner_until')) or 0
+	if owner_until <= now then return 0 end
+	redis.call('HSET', KEYS[1], 'controller', 'closed', 'controller_owner', '', 'finalizer_owner', '', 'finalizer_owner_until', '0', 'cleanup_pending', '1')
+	redis.call('EXPIRE', KEYS[1], ARGV[2])
+	return 1
+`)
+
+var markRealtimeCleanupCompletedScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[1], 'controller') ~= 'closed' or redis.call('HGET', KEYS[1], 'cleanup_pending') ~= '1' then return 0 end
+	redis.call('HSET', KEYS[1], 'cleanup_pending', '0')
+	return 1
+`)
+
+var claimRealtimeReplayScript = redis.NewScript(`
+	local current = redis.call('GET', KEYS[1])
+	if current == false then
+		redis.call('PSETEX', KEYS[1], ARGV[2], 'pending:' .. ARGV[1])
+		return 1
+	end
+	return 0
+`)
+
+var claimRealtimeUsageScript = redis.NewScript(`
+	local controller = redis.call('HGET', KEYS[2], 'controller')
+	if controller == 'finalizing' or controller == 'closed' then return 0 end
+	local current = redis.call('GET', KEYS[1])
+	if current == false then
+		redis.call('PSETEX', KEYS[1], ARGV[2], 'pending:' .. ARGV[1])
+		return 1
+	end
+	return 0
+`)
+
+var renewRealtimeUsageClaimScript = redis.NewScript(`
+	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	redis.call('PEXPIRE', KEYS[1], ARGV[2])
+	return 1
+`)
+
+var markRealtimeUsageSucceededScript = redis.NewScript(`
+	local current = redis.call('GET', KEYS[1])
+	if current == 'succeeded:' .. ARGV[1] then return 1 end
+	if current ~= 'pending:' .. ARGV[1] then return 0 end
+	redis.call('PSETEX', KEYS[1], ARGV[2], 'succeeded:' .. ARGV[1])
+	return 1
+`)
+
+var claimRealtimeConservativeUsageScript = redis.NewScript(`
+	if redis.call('HGET', KEYS[2], 'controller') ~= 'finalizing' or redis.call('HGET', KEYS[2], 'finalizer_owner') ~= ARGV[1] then return 0 end
+	local time = redis.call('TIME')
+	local now = time[1] * 1000 + math.floor(time[2] / 1000)
+	local owner_until = tonumber(redis.call('HGET', KEYS[2], 'finalizer_owner_until')) or 0
+	if owner_until <= now then return 0 end
+	local current = redis.call('GET', KEYS[1])
+	if current == false then
+		redis.call('PSETEX', KEYS[1], ARGV[3], 'pending:' .. ARGV[2])
+		return 1
+	end
+	return 0
+`)
+
+var commitRealtimeReplayScript = redis.NewScript(`
+	local current = redis.call('GET', KEYS[1])
+	if current ~= 'pending:' .. ARGV[1] and current ~= 'succeeded:' .. ARGV[1] then return 0 end
+	redis.call('PSETEX', KEYS[1], ARGV[2], 'committed')
+	return 1
+`)
+
+var commitSucceededRealtimeReplayScript = redis.NewScript(`
+	local current = redis.call('GET', KEYS[1])
+	if string.sub(current or '', 1, 10) ~= 'succeeded:' then return 0 end
+	redis.call('PSETEX', KEYS[1], ARGV[1], 'committed')
+	return 1
+`)
+
+var releaseRealtimeReplayScript = redis.NewScript(`
+	if redis.call('GET', KEYS[1]) ~= 'pending:' .. ARGV[1] then return 0 end
+	redis.call('DEL', KEYS[1])
+	return 1
+`)
+
+var releaseRealtimeControllerScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('HGET', key, 'controller') ~= 'proxy' or redis.call('HGET', key, 'controller_owner') ~= ARGV[1] then return 0 end
+	redis.call('HSET', key, 'controller', 'pending', 'controller_owner', '')
+	return 1
+`)
+
+var resetRealtimeControllerForRecoveryScript = redis.NewScript(`
+	local key = KEYS[1]
+	if redis.call('EXISTS', key) == 0 or redis.call('HGET', key, 'controller') == 'closed' then return 0 end
+	redis.call('HSET', key, 'controller', 'pending', 'controller_owner', '')
+	return 1
+`)
+
 var releaseLiveControllerScript = redis.NewScript(`
 	local key = KEYS[1]
 	if redis.call('HGET', key, 'controller') ~= 'proxy' or
@@ -396,9 +622,18 @@ func liveCallKey(callHash string) string {
 	return liveCallPrefix + callHash
 }
 
-func HashLiveCallID(callID string) string {
-	sum := sha256.Sum256([]byte(callID))
-	return hex.EncodeToString(sum[:])
+func realtimeCallKey(callHash string) string {
+	return realtimeCallPrefix + callHash
+}
+
+func realtimeUsageKey(callHash, responseID string) string {
+	sum := sha256.Sum256([]byte(responseID))
+	return realtimeUsagePrefix + callHash + ":" + hex.EncodeToString(sum[:])
+}
+
+func realtimeWebhookKey(webhookID string) string {
+	hash := sha256.Sum256([]byte(webhookID))
+	return realtimeWebhookPrefix + hex.EncodeToString(hash[:])
 }
 
 func (c *gatewayCache) SaveLiveCall(ctx context.Context, record *service.LiveCallRecord, ttl time.Duration) error {
@@ -504,4 +739,400 @@ func (c *gatewayCache) ReleaseLiveController(ctx context.Context, callHash, owne
 func (c *gatewayCache) MarkLiveCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error) {
 	result, err := markLiveCallClosedScript.Run(ctx, c.rdb, []string{liveCallKey(callHash)}, int64(ttl.Seconds())).Int()
 	return result == 1, err
+}
+
+func (c *gatewayCache) SaveRealtimeCall(ctx context.Context, record *service.RealtimeCallRecord, ttl time.Duration) error {
+	if record == nil || record.CallHash == "" || record.CallID == "" || record.PricingAt.IsZero() {
+		return errors.New("invalid realtime call record")
+	}
+	var attribution string
+	if record.EnterpriseAttribution != nil {
+		raw, err := json.Marshal(record.EnterpriseAttribution)
+		if err != nil {
+			return err
+		}
+		attribution = string(raw)
+	}
+	var employeeTurnReservations string
+	if len(record.EmployeeTurnReservations) > 0 {
+		raw, err := json.Marshal(record.EmployeeTurnReservations)
+		if err != nil {
+			return err
+		}
+		employeeTurnReservations = string(raw)
+	}
+	values := map[string]any{
+		"call_id": record.CallID, "account_id": record.AccountID, "api_key_id": record.APIKeyID,
+		"user_id": record.UserID, "group_id": record.GroupID, "subscription_id": record.SubscriptionID,
+		"lease_id": record.LeaseID, "model": record.Model, "pricing_at": record.PricingAt.UnixMilli(),
+		"created_at": record.CreatedAt.UnixMilli(), "expires_at": record.ExpiresAt.UnixMilli(),
+		"controller": record.Controller, "controller_owner": record.ControllerOwner,
+		"user_agent": record.UserAgent, "ip_address": record.IPAddress, "inbound_endpoint": record.InboundEndpoint,
+		"enterprise_attribution": attribution, "reservation_usd": strconv.FormatFloat(record.ReservationUSD, 'f', -1, 64),
+		"reservation_request_id": record.ReservationRequestID, "reservation_has_balance": strconv.FormatBool(record.ReservationHasBalance),
+		"reservation_scopes":         strings.Join(record.ReservationScopes, ","),
+		"employee_turn_reservations": employeeTurnReservations,
+		"cleanup_pending":            strconv.FormatBool(record.CleanupPending),
+	}
+	pipe := c.rdb.TxPipeline()
+	pipe.HSet(ctx, realtimeCallKey(record.CallHash), values)
+	pipe.Expire(ctx, realtimeCallKey(record.CallHash), ttl)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (c *gatewayCache) UpdateRealtimeEmployeeTurn(ctx context.Context, callHash string, descriptor service.RealtimeEmployeeTurnReservation, add bool) error {
+	callHash = strings.TrimSpace(callHash)
+	descriptor.ResponseID = strings.TrimSpace(descriptor.ResponseID)
+	if callHash == "" || descriptor.ResponseID == "" {
+		return service.ErrRealtimeCallNotFound
+	}
+	raw, err := json.Marshal(descriptor)
+	if err != nil {
+		return err
+	}
+	addValue := "0"
+	if add {
+		addValue = "1"
+	}
+	updated, err := updateRealtimeEmployeeTurnScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, descriptor.ResponseID, addValue, string(raw)).Int()
+	if err != nil {
+		return err
+	}
+	if updated == -1 {
+		return service.ErrRealtimeControllerChanged
+	}
+	if updated != 1 {
+		return service.ErrRealtimeCallNotFound
+	}
+	return nil
+}
+
+func (c *gatewayCache) RestoreRealtimeEmployeeTurnForFinalization(ctx context.Context, callHash, finalizerOwner string, descriptor service.RealtimeEmployeeTurnReservation) error {
+	callHash = strings.TrimSpace(callHash)
+	finalizerOwner = strings.TrimSpace(finalizerOwner)
+	descriptor.ResponseID = strings.TrimSpace(descriptor.ResponseID)
+	if callHash == "" || finalizerOwner == "" || descriptor.ResponseID == "" {
+		return service.ErrRealtimeCallNotFound
+	}
+	raw, err := json.Marshal(descriptor)
+	if err != nil {
+		return err
+	}
+	restored, err := restoreRealtimeEmployeeTurnForFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, finalizerOwner, descriptor.ResponseID, string(raw)).Int()
+	if err != nil {
+		return err
+	}
+	if restored == -1 {
+		return service.ErrRealtimeControllerChanged
+	}
+	if restored == 0 {
+		return service.ErrRealtimeCallNotFound
+	}
+	return nil
+}
+
+func (c *gatewayCache) BindRealtimeEmployeeTurn(ctx context.Context, callHash, provisionalID string, descriptor service.RealtimeEmployeeTurnReservation) error {
+	callHash = strings.TrimSpace(callHash)
+	provisionalID = strings.TrimSpace(provisionalID)
+	descriptor.ResponseID = strings.TrimSpace(descriptor.ResponseID)
+	if callHash == "" || provisionalID == "" || descriptor.ResponseID == "" {
+		return service.ErrRealtimeCallNotFound
+	}
+	raw, err := json.Marshal(descriptor)
+	if err != nil {
+		return err
+	}
+	bound, err := bindRealtimeEmployeeTurnScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, provisionalID, string(raw)).Int()
+	if err != nil {
+		return err
+	}
+	if bound == -1 {
+		return service.ErrRealtimeControllerChanged
+	}
+	if bound != 1 {
+		return service.ErrRealtimeCallNotFound
+	}
+	return nil
+}
+
+func (c *gatewayCache) GetRealtimeCall(ctx context.Context, callHash string) (*service.RealtimeCallRecord, error) {
+	values, err := c.rdb.HGetAll(ctx, realtimeCallKey(callHash)).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(values) == 0 {
+		return nil, service.ErrRealtimeCallNotFound
+	}
+	parseInt := func(field string) int64 { value, _ := strconv.ParseInt(values[field], 10, 64); return value }
+	pricingAtMillis, err := strconv.ParseInt(values["pricing_at"], 10, 64)
+	if err != nil || pricingAtMillis <= 0 {
+		return nil, errors.New("realtime call record has no pricing timestamp")
+	}
+	record := &service.RealtimeCallRecord{
+		CallID: values["call_id"], CallHash: callHash, AccountID: parseInt("account_id"), APIKeyID: parseInt("api_key_id"),
+		UserID: parseInt("user_id"), GroupID: parseInt("group_id"), SubscriptionID: parseInt("subscription_id"),
+		LeaseID: values["lease_id"], Model: values["model"], PricingAt: time.UnixMilli(pricingAtMillis),
+		CreatedAt: time.UnixMilli(parseInt("created_at")), ExpiresAt: time.UnixMilli(parseInt("expires_at")),
+		Controller: values["controller"], ControllerOwner: values["controller_owner"], UserAgent: values["user_agent"],
+		IPAddress: values["ip_address"], InboundEndpoint: values["inbound_endpoint"],
+	}
+	if reservationUSD, err := strconv.ParseFloat(values["reservation_usd"], 64); err == nil {
+		record.ReservationUSD = reservationUSD
+	}
+	record.ReservationRequestID = values["reservation_request_id"]
+	record.ReservationHasBalance, _ = strconv.ParseBool(values["reservation_has_balance"])
+	record.CleanupPending, _ = strconv.ParseBool(values["cleanup_pending"])
+	if scopes := strings.TrimSpace(values["reservation_scopes"]); scopes != "" {
+		record.ReservationScopes = strings.Split(scopes, ",")
+	}
+	if raw := values["enterprise_attribution"]; raw != "" {
+		var snapshot service.EnterpriseUsageAttributionSnapshot
+		if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+			return nil, err
+		}
+		record.EnterpriseAttribution = &snapshot
+	}
+	if raw := values["employee_turn_reservations"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &record.EmployeeTurnReservations); err != nil {
+			return nil, err
+		}
+	}
+	return record, nil
+}
+
+func (c *gatewayCache) ListActiveRealtimeCalls(ctx context.Context) ([]*service.RealtimeCallRecord, error) {
+	var cursor uint64
+	var records []*service.RealtimeCallRecord
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeCallPrefix+"*", 100).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			callHash := strings.TrimPrefix(key, realtimeCallPrefix)
+			record, err := c.GetRealtimeCall(ctx, callHash)
+			if err != nil || (record.Controller == service.RealtimeControllerClosed && !record.CleanupPending) {
+				continue
+			}
+			records = append(records, record)
+		}
+		cursor = next
+		if cursor == 0 {
+			return records, nil
+		}
+	}
+}
+
+func (c *gatewayCache) ClaimRealtimeController(ctx context.Context, callHash, controller, owner string) (bool, error) {
+	result, err := claimRealtimeControllerScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, controller, owner).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) GetRealtimeController(ctx context.Context, callHash string) (string, error) {
+	value, err := c.rdb.HGet(ctx, realtimeCallKey(callHash), "controller").Result()
+	if errors.Is(err, redis.Nil) {
+		return "", service.ErrRealtimeCallNotFound
+	}
+	return value, err
+}
+
+func (c *gatewayCache) ReleaseRealtimeController(ctx context.Context, callHash, owner string) (bool, error) {
+	result, err := releaseRealtimeControllerScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) ResetRealtimeControllerForRecovery(ctx context.Context, callHash string) (bool, error) {
+	result, err := resetRealtimeControllerForRecoveryScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) MarkRealtimeCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error) {
+	result, err := markRealtimeCallClosedScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, int64(ttl.Seconds())).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) ClaimRealtimeFinalization(ctx context.Context, callHash, owner string, lease, recordTTL time.Duration) (bool, error) {
+	if strings.TrimSpace(owner) == "" || lease <= 0 || recordTTL <= 0 {
+		return false, errors.New("invalid realtime finalization claim")
+	}
+	result, err := claimRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner, lease.Milliseconds(), int64(recordTTL.Seconds())).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) ReleaseRealtimeFinalization(ctx context.Context, callHash, owner string) (bool, error) {
+	result, err := releaseRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) CommitRealtimeFinalization(ctx context.Context, callHash, owner string, ttl time.Duration) (bool, error) {
+	result, err := commitRealtimeFinalizationScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}, owner, int64(ttl.Seconds())).Int()
+	return result == 1, err
+}
+
+func (c *gatewayCache) MarkRealtimeCleanupCompleted(ctx context.Context, callHash string) (bool, error) {
+	completed, err := markRealtimeCleanupCompletedScript.Run(ctx, c.rdb, []string{realtimeCallKey(callHash)}).Int()
+	return completed == 1, err
+}
+
+func (c *gatewayCache) BeginRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || ttl <= 0 {
+		return false, errors.New("invalid realtime response id")
+	}
+	return c.rdb.SetNX(ctx, realtimeUsageKey(callHash, responseID), "pending", ttl).Result()
+}
+
+func (c *gatewayCache) CommitRealtimeUsage(ctx context.Context, callHash, responseID string, ttl time.Duration) error {
+	return c.rdb.Set(ctx, realtimeUsageKey(callHash, responseID), "committed", ttl).Err()
+}
+
+func (c *gatewayCache) ReleaseRealtimeUsage(ctx context.Context, callHash, responseID string) error {
+	return c.rdb.Del(ctx, realtimeUsageKey(callHash, responseID)).Err()
+}
+
+func (c *gatewayCache) ClaimRealtimeUsage(ctx context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime usage claim")
+	}
+	claimed, err := claimRealtimeUsageScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID), realtimeCallKey(callHash)}, owner, lease.Milliseconds()).Int()
+	return claimed == 1, err
+}
+
+func (c *gatewayCache) RenewRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime usage claim renewal")
+	}
+	renewed, err := renewRealtimeUsageClaimScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, lease.Milliseconds()).Int()
+	return renewed == 1, err
+}
+
+func (c *gatewayCache) MarkRealtimeUsageSucceeded(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(owner) == "" || ttl <= 0 {
+		return false, errors.New("invalid realtime usage completion")
+	}
+	marked, err := markRealtimeUsageSucceededScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, ttl.Milliseconds()).Int()
+	return marked == 1, err
+}
+
+func (c *gatewayCache) ClaimRealtimeConservativeUsage(ctx context.Context, callHash, responseID, finalizerOwner, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(responseID) == "" || strings.TrimSpace(finalizerOwner) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime conservative usage claim")
+	}
+	claimed, err := claimRealtimeConservativeUsageScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID), realtimeCallKey(callHash)}, finalizerOwner, owner, lease.Milliseconds()).Int()
+	return claimed == 1, err
+}
+
+func (c *gatewayCache) CommitRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string, ttl time.Duration) (bool, error) {
+	committed, err := commitRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner, ttl.Milliseconds()).Int()
+	return committed == 1, err
+}
+
+func (c *gatewayCache) CommitSucceededRealtimeUsages(ctx context.Context, callHash string, ttl time.Duration) (int, error) {
+	var committed int
+	var cursor uint64
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeUsagePrefix+callHash+":*", 100).Result()
+		if err != nil {
+			return committed, err
+		}
+		for _, key := range keys {
+			result, err := commitSucceededRealtimeReplayScript.Run(ctx, c.rdb, []string{key}, ttl.Milliseconds()).Int()
+			if err != nil {
+				return committed, err
+			}
+			committed += int(result)
+		}
+		cursor = next
+		if cursor == 0 {
+			return committed, nil
+		}
+	}
+}
+
+func (c *gatewayCache) ReleaseRealtimeUsageClaim(ctx context.Context, callHash, responseID, owner string) (bool, error) {
+	released, err := releaseRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeUsageKey(callHash, responseID)}, owner).Int()
+	return released == 1, err
+}
+
+func (c *gatewayCache) HasCommittedRealtimeUsage(ctx context.Context, callHash string) (bool, error) {
+	var cursor uint64
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeUsagePrefix+callHash+":*", 100).Result()
+		if err != nil {
+			return false, err
+		}
+		if len(keys) > 0 {
+			values, err := c.rdb.MGet(ctx, keys...).Result()
+			if err != nil {
+				return false, err
+			}
+			for _, value := range values {
+				if value == "committed" {
+					return true, nil
+				}
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return false, nil
+		}
+	}
+}
+
+func (c *gatewayCache) HasPendingRealtimeUsage(ctx context.Context, callHash string) (bool, error) {
+	var cursor uint64
+	for {
+		keys, next, err := c.rdb.Scan(ctx, cursor, realtimeUsagePrefix+callHash+":*", 100).Result()
+		if err != nil {
+			return false, err
+		}
+		if len(keys) > 0 {
+			values, err := c.rdb.MGet(ctx, keys...).Result()
+			if err != nil {
+				return false, err
+			}
+			for _, value := range values {
+				if text, ok := value.(string); ok && (strings.HasPrefix(text, "pending:") || strings.HasPrefix(text, "succeeded:")) {
+					return true, nil
+				}
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return false, nil
+		}
+	}
+}
+
+func (c *gatewayCache) BeginRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) (bool, error) {
+	if strings.TrimSpace(webhookID) == "" || ttl <= 0 {
+		return false, errors.New("invalid realtime webhook id")
+	}
+	return c.rdb.SetNX(ctx, realtimeWebhookKey(webhookID), "pending", ttl).Result()
+}
+
+func (c *gatewayCache) CommitRealtimeWebhook(ctx context.Context, webhookID string, ttl time.Duration) error {
+	return c.rdb.Set(ctx, realtimeWebhookKey(webhookID), "committed", ttl).Err()
+}
+
+func (c *gatewayCache) ReleaseRealtimeWebhook(ctx context.Context, webhookID string) error {
+	return c.rdb.Del(ctx, realtimeWebhookKey(webhookID)).Err()
+}
+
+func (c *gatewayCache) ClaimRealtimeWebhook(ctx context.Context, webhookID, owner string, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(webhookID) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("invalid realtime webhook claim")
+	}
+	claimed, err := claimRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeWebhookKey(webhookID)}, owner, lease.Milliseconds()).Int()
+	return claimed == 1, err
+}
+
+func (c *gatewayCache) CommitRealtimeWebhookClaim(ctx context.Context, webhookID, owner string, ttl time.Duration) (bool, error) {
+	committed, err := commitRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeWebhookKey(webhookID)}, owner, ttl.Milliseconds()).Int()
+	return committed == 1, err
+}
+
+func (c *gatewayCache) ReleaseRealtimeWebhookClaim(ctx context.Context, webhookID, owner string) (bool, error) {
+	released, err := releaseRealtimeReplayScript.Run(ctx, c.rdb, []string{realtimeWebhookKey(webhookID)}, owner).Int()
+	return released == 1, err
 }

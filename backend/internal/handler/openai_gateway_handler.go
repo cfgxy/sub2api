@@ -39,6 +39,7 @@ type OpenAIGatewayHandler struct {
 	gatewayService             *service.OpenAIGatewayService
 	billingCacheService        *service.BillingCacheService
 	apiKeyService              *service.APIKeyService
+	subscriptionService        *service.SubscriptionService
 	usageRecordWorkerPool      *service.UsageRecordWorkerPool
 	errorPassthroughService    *service.ErrorPassthroughService
 	contentModerationService   *service.ContentModerationService
@@ -49,6 +50,17 @@ type OpenAIGatewayHandler struct {
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	cfg                        *config.Config
+}
+
+// SetSubscriptionService wires the optional lookup used only by server-originated
+// Realtime SIP calls. Normal API-key paths obtain their subscription in middleware.
+func (h *OpenAIGatewayHandler) SetSubscriptionService(s *service.SubscriptionService) {
+	if h != nil {
+		h.subscriptionService = s
+		if h.gatewayService != nil {
+			go h.gatewayService.RecoverOfficialRealtimeCalls()
+		}
+	}
 }
 
 type openAIWSTurnChannelMappingSnapshot struct {
@@ -372,7 +384,7 @@ func NewOpenAIGatewayHandler(
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
 		}
 	}
-	return &OpenAIGatewayHandler{
+	handler := &OpenAIGatewayHandler{
 		gatewayService:           gatewayService,
 		billingCacheService:      billingCacheService,
 		apiKeyService:            apiKeyService,
@@ -385,6 +397,11 @@ func NewOpenAIGatewayHandler(
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
 	}
+	if gatewayService != nil {
+		gatewayService.SetOfficialRealtimeLifecycleCallbacks(handler.observeRecoveredOfficialRealtimeCall, handler.recordConservativeRealtimeUsage)
+		gatewayService.SetOfficialRealtimeConservativeTurnCallback(handler.recordConservativeRealtimeTurnUsage)
+	}
+	return handler
 }
 
 // Responses handles OpenAI Responses API endpoint
@@ -4596,12 +4613,6 @@ func openAIWSCyberPricingAt(turnPricing *openAIWSTurnPricing, turnStart time.Tim
 		return turnStart
 	}
 	return turnPricing.currentOr(turnStart)
-}
-
-// clearCyberPolicyTurnState resets the cyber mark and recorded guard after a
-// logical WS turn has finished.
-func clearCyberPolicyTurnState(c *gin.Context) {
-	clearCyberPolicyAttemptState(c, true)
 }
 
 func clearCyberPolicyAttemptState(c *gin.Context, resetRecorded bool) {

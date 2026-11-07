@@ -163,6 +163,19 @@ func TestNormalizeKeepsFingerprintDerivedFromRawAmounts(t *testing.T) {
 	require.Equal(t, expected, cmd.RequestFingerprint)
 }
 
+func TestUsageBillingCommandFingerprintIgnoresRealtimeCallHash(t *testing.T) {
+	base := &UsageBillingCommand{
+		RequestID: "response-id", APIKeyID: 2, UserID: 3, AccountID: 4,
+		AccountType: AccountTypeAPIKey, Model: "gpt-realtime", BalanceCost: 0.1,
+	}
+	withCallHash := *base
+	withCallHash.RealtimeCallHash = "call-hash"
+
+	base.Normalize()
+	withCallHash.Normalize()
+	require.Equal(t, base.RequestFingerprint, withCallHash.RequestFingerprint, "会话终态关联字段不得改变既有请求幂等键")
+}
+
 // 显式设置的指纹不被覆盖，且金额仍会被量化。
 func TestNormalizePreservesExplicitFingerprint(t *testing.T) {
 	cmd := &UsageBillingCommand{

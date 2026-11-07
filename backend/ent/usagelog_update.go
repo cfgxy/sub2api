@@ -435,6 +435,48 @@ func (_u *UsageLogUpdate) AddCacheCreation1hTokens(v int) *UsageLogUpdate {
 	return _u
 }
 
+// SetAudioInputTokens sets the "audio_input_tokens" field.
+func (_u *UsageLogUpdate) SetAudioInputTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetAudioInputTokens()
+	_u.mutation.SetAudioInputTokens(v)
+	return _u
+}
+
+// SetNillableAudioInputTokens sets the "audio_input_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAudioInputTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAudioInputTokens(*v)
+	}
+	return _u
+}
+
+// AddAudioInputTokens adds value to the "audio_input_tokens" field.
+func (_u *UsageLogUpdate) AddAudioInputTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddAudioInputTokens(v)
+	return _u
+}
+
+// SetAudioOutputTokens sets the "audio_output_tokens" field.
+func (_u *UsageLogUpdate) SetAudioOutputTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetAudioOutputTokens()
+	_u.mutation.SetAudioOutputTokens(v)
+	return _u
+}
+
+// SetNillableAudioOutputTokens sets the "audio_output_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAudioOutputTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAudioOutputTokens(*v)
+	}
+	return _u
+}
+
+// AddAudioOutputTokens adds value to the "audio_output_tokens" field.
+func (_u *UsageLogUpdate) AddAudioOutputTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddAudioOutputTokens(v)
+	return _u
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_u *UsageLogUpdate) SetInputCost(v float64) *UsageLogUpdate {
 	_u.mutation.ResetInputCost()
@@ -516,6 +558,48 @@ func (_u *UsageLogUpdate) SetNillableCacheReadCost(v *float64) *UsageLogUpdate {
 // AddCacheReadCost adds value to the "cache_read_cost" field.
 func (_u *UsageLogUpdate) AddCacheReadCost(v float64) *UsageLogUpdate {
 	_u.mutation.AddCacheReadCost(v)
+	return _u
+}
+
+// SetAudioInputCost sets the "audio_input_cost" field.
+func (_u *UsageLogUpdate) SetAudioInputCost(v float64) *UsageLogUpdate {
+	_u.mutation.ResetAudioInputCost()
+	_u.mutation.SetAudioInputCost(v)
+	return _u
+}
+
+// SetNillableAudioInputCost sets the "audio_input_cost" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAudioInputCost(v *float64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAudioInputCost(*v)
+	}
+	return _u
+}
+
+// AddAudioInputCost adds value to the "audio_input_cost" field.
+func (_u *UsageLogUpdate) AddAudioInputCost(v float64) *UsageLogUpdate {
+	_u.mutation.AddAudioInputCost(v)
+	return _u
+}
+
+// SetAudioOutputCost sets the "audio_output_cost" field.
+func (_u *UsageLogUpdate) SetAudioOutputCost(v float64) *UsageLogUpdate {
+	_u.mutation.ResetAudioOutputCost()
+	_u.mutation.SetAudioOutputCost(v)
+	return _u
+}
+
+// SetNillableAudioOutputCost sets the "audio_output_cost" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAudioOutputCost(v *float64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAudioOutputCost(*v)
+	}
+	return _u
+}
+
+// AddAudioOutputCost adds value to the "audio_output_cost" field.
+func (_u *UsageLogUpdate) AddAudioOutputCost(v float64) *UsageLogUpdate {
+	_u.mutation.AddAudioOutputCost(v)
 	return _u
 }
 
@@ -1228,6 +1312,18 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedCacheCreation1hTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheCreation1hTokens, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.AudioInputTokens(); ok {
+		_spec.SetField(usagelog.FieldAudioInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAudioInputTokens(); ok {
+		_spec.AddField(usagelog.FieldAudioInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AudioOutputTokens(); ok {
+		_spec.SetField(usagelog.FieldAudioOutputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAudioOutputTokens(); ok {
+		_spec.AddField(usagelog.FieldAudioOutputTokens, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
 	}
@@ -1251,6 +1347,18 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedCacheReadCost(); ok {
 		_spec.AddField(usagelog.FieldCacheReadCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AudioInputCost(); ok {
+		_spec.SetField(usagelog.FieldAudioInputCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAudioInputCost(); ok {
+		_spec.AddField(usagelog.FieldAudioInputCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AudioOutputCost(); ok {
+		_spec.SetField(usagelog.FieldAudioOutputCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAudioOutputCost(); ok {
+		_spec.AddField(usagelog.FieldAudioOutputCost, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.TotalCost(); ok {
 		_spec.SetField(usagelog.FieldTotalCost, field.TypeFloat64, value)
@@ -1949,6 +2057,48 @@ func (_u *UsageLogUpdateOne) AddCacheCreation1hTokens(v int) *UsageLogUpdateOne 
 	return _u
 }
 
+// SetAudioInputTokens sets the "audio_input_tokens" field.
+func (_u *UsageLogUpdateOne) SetAudioInputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAudioInputTokens()
+	_u.mutation.SetAudioInputTokens(v)
+	return _u
+}
+
+// SetNillableAudioInputTokens sets the "audio_input_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAudioInputTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAudioInputTokens(*v)
+	}
+	return _u
+}
+
+// AddAudioInputTokens adds value to the "audio_input_tokens" field.
+func (_u *UsageLogUpdateOne) AddAudioInputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAudioInputTokens(v)
+	return _u
+}
+
+// SetAudioOutputTokens sets the "audio_output_tokens" field.
+func (_u *UsageLogUpdateOne) SetAudioOutputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAudioOutputTokens()
+	_u.mutation.SetAudioOutputTokens(v)
+	return _u
+}
+
+// SetNillableAudioOutputTokens sets the "audio_output_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAudioOutputTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAudioOutputTokens(*v)
+	}
+	return _u
+}
+
+// AddAudioOutputTokens adds value to the "audio_output_tokens" field.
+func (_u *UsageLogUpdateOne) AddAudioOutputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAudioOutputTokens(v)
+	return _u
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_u *UsageLogUpdateOne) SetInputCost(v float64) *UsageLogUpdateOne {
 	_u.mutation.ResetInputCost()
@@ -2030,6 +2180,48 @@ func (_u *UsageLogUpdateOne) SetNillableCacheReadCost(v *float64) *UsageLogUpdat
 // AddCacheReadCost adds value to the "cache_read_cost" field.
 func (_u *UsageLogUpdateOne) AddCacheReadCost(v float64) *UsageLogUpdateOne {
 	_u.mutation.AddCacheReadCost(v)
+	return _u
+}
+
+// SetAudioInputCost sets the "audio_input_cost" field.
+func (_u *UsageLogUpdateOne) SetAudioInputCost(v float64) *UsageLogUpdateOne {
+	_u.mutation.ResetAudioInputCost()
+	_u.mutation.SetAudioInputCost(v)
+	return _u
+}
+
+// SetNillableAudioInputCost sets the "audio_input_cost" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAudioInputCost(v *float64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAudioInputCost(*v)
+	}
+	return _u
+}
+
+// AddAudioInputCost adds value to the "audio_input_cost" field.
+func (_u *UsageLogUpdateOne) AddAudioInputCost(v float64) *UsageLogUpdateOne {
+	_u.mutation.AddAudioInputCost(v)
+	return _u
+}
+
+// SetAudioOutputCost sets the "audio_output_cost" field.
+func (_u *UsageLogUpdateOne) SetAudioOutputCost(v float64) *UsageLogUpdateOne {
+	_u.mutation.ResetAudioOutputCost()
+	_u.mutation.SetAudioOutputCost(v)
+	return _u
+}
+
+// SetNillableAudioOutputCost sets the "audio_output_cost" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAudioOutputCost(v *float64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAudioOutputCost(*v)
+	}
+	return _u
+}
+
+// AddAudioOutputCost adds value to the "audio_output_cost" field.
+func (_u *UsageLogUpdateOne) AddAudioOutputCost(v float64) *UsageLogUpdateOne {
+	_u.mutation.AddAudioOutputCost(v)
 	return _u
 }
 
@@ -2772,6 +2964,18 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	if value, ok := _u.mutation.AddedCacheCreation1hTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheCreation1hTokens, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.AudioInputTokens(); ok {
+		_spec.SetField(usagelog.FieldAudioInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAudioInputTokens(); ok {
+		_spec.AddField(usagelog.FieldAudioInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AudioOutputTokens(); ok {
+		_spec.SetField(usagelog.FieldAudioOutputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAudioOutputTokens(); ok {
+		_spec.AddField(usagelog.FieldAudioOutputTokens, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
 	}
@@ -2795,6 +2999,18 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedCacheReadCost(); ok {
 		_spec.AddField(usagelog.FieldCacheReadCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AudioInputCost(); ok {
+		_spec.SetField(usagelog.FieldAudioInputCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAudioInputCost(); ok {
+		_spec.AddField(usagelog.FieldAudioInputCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AudioOutputCost(); ok {
+		_spec.SetField(usagelog.FieldAudioOutputCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAudioOutputCost(); ok {
+		_spec.AddField(usagelog.FieldAudioOutputCost, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.TotalCost(); ok {
 		_spec.SetField(usagelog.FieldTotalCost, field.TypeFloat64, value)

@@ -68,12 +68,46 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 			return nil, err
 		}
 	}
+	if err := recordRealtimeBillingOutcome(ctx, tx, cmd); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
 	return result, nil
+}
+
+func recordRealtimeBillingOutcome(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	if cmd == nil || strings.TrimSpace(cmd.RealtimeCallHash) == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO realtime_billing_outcomes (call_hash, request_id, api_key_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (call_hash) DO NOTHING
+	`, cmd.RealtimeCallHash, cmd.RequestID, cmd.APIKeyID)
+	return err
+}
+
+func (r *usageBillingRepository) HasRealtimeBillingOutcome(ctx context.Context, callHash string) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, errors.New("usage billing repository db is nil")
+	}
+	callHash = strings.TrimSpace(callHash)
+	if callHash == "" {
+		return false, nil
+	}
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM realtime_billing_outcomes
+			WHERE call_hash = $1
+		)
+	`, callHash).Scan(&exists)
+	return exists, err
 }
 
 // persistEnterpriseEmployeeCommittedSettlement writes the exact charge in the

@@ -84,6 +84,7 @@ type postUsageBillingParams struct {
 	Account               *Account
 	Subscription          *UserSubscription
 	RequestPayloadHash    string
+	RealtimeCallHash      string
 	IsSubscriptionBill    bool
 	AccountRateMultiplier float64
 	APIKeyService         APIKeyQuotaUpdater
@@ -304,6 +305,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		AccountID:          p.Account.ID,
 		AccountType:        p.Account.Type,
 		RequestPayloadHash: strings.TrimSpace(p.RequestPayloadHash),
+		RealtimeCallHash:   strings.TrimSpace(p.RealtimeCallHash),
 	}
 	if usageLog != nil {
 		cmd.Model = usageLog.Model

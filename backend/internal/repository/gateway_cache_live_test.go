@@ -35,7 +35,7 @@ func TestGatewayCacheLiveCallIdentityAndController(t *testing.T) {
 	}
 	record := &service.LiveCallRecord{
 		CallID:                "call_secret",
-		CallHash:              HashLiveCallID("call_secret"),
+		CallHash:              "call-secret-hash",
 		AccountID:             11,
 		APIKeyID:              22,
 		UserID:                33,

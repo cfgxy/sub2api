@@ -29,15 +29,19 @@ const (
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
 	// 格式: concurrency:api_key:{apiKeyID}
-	apiKeySlotKeyPrefix      = "concurrency:api_key:"
-	liveAccountSlotKeyPrefix = "concurrency:live:account:"
-	liveUserSlotKeyPrefix    = "concurrency:live:user:"
-	liveAPIKeySlotKeyPrefix  = "concurrency:live:api_key:"
+	apiKeySlotKeyPrefix          = "concurrency:api_key:"
+	liveAccountSlotKeyPrefix     = "concurrency:live:account:"
+	liveUserSlotKeyPrefix        = "concurrency:live:user:"
+	liveAPIKeySlotKeyPrefix      = "concurrency:live:api_key:"
+	realtimeAccountSlotKeyPrefix = "concurrency:realtime:account:"
+	realtimeUserSlotKeyPrefix    = "concurrency:realtime:user:"
+	realtimeAPIKeySlotKeyPrefix  = "concurrency:realtime:api_key:"
 	// API-key-scoped client WebSocket ingress leases use a shorter TTL than
 	// ordinary request slots, because idle ingress sessions do not hold a turn slot.
 	openAIWSIngressLeaseKeyPrefix  = "concurrency:openai_ws_ingress:api_key:"
 	openAIWSIngressLeaseTTLSeconds = 60
 	liveLeaseTTLSeconds            = 60
+	realtimeLeaseTTLSeconds        = 60
 	// 等待队列计数器格式: concurrency:wait:{userID}
 	waitQueueKeyPrefix = "concurrency:wait:"
 	// 账号级等待队列计数器格式: wait:account:{accountID}
@@ -63,7 +67,7 @@ const (
 var (
 	// acquireScript 使用有序集合计数并在未达上限时添加槽位
 	// 使用 Redis TIME 命令获取服务器时间，避免多实例时钟不同步问题
-	// KEYS[1] = 普通槽位键，KEYS[2] = 对应 Live 槽位键
+	// KEYS[1] = 普通槽位键，KEYS[2] = 对应 Live 槽位键，KEYS[3] = 官方 Realtime 槽位键
 	// ARGV[1] = maxConcurrency
 	// ARGV[2] = TTL（秒）
 	// ARGV[3] = requestID
@@ -74,6 +78,7 @@ var (
 		redis.replicate_commands()
 		local key = KEYS[1]
 		local liveKey = KEYS[2]
+			local realtimeKey = KEYS[3]
 		local maxConcurrency = tonumber(ARGV[1])
 		local ttl = tonumber(ARGV[2])
 		local requestID = ARGV[3]
@@ -86,6 +91,7 @@ var (
 		-- 清理过期槽位
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', now - 60)
+			redis.call('ZREMRANGEBYSCORE', realtimeKey, '-inf', now - 60)
 
 		-- 检查是否已存在（支持重试场景刷新时间戳）
 		local exists = redis.call('ZSCORE', key, requestID)
@@ -96,7 +102,7 @@ var (
 		end
 
 		-- 检查是否达到并发上限
-		local count = redis.call('ZCARD', key) + redis.call('ZCARD', liveKey)
+			local count = redis.call('ZCARD', key) + redis.call('ZCARD', liveKey) + redis.call('ZCARD', realtimeKey)
 		if count < maxConcurrency then
 			redis.call('ZADD', key, now, requestID)
 			redis.call('EXPIRE', key, ttl)
@@ -108,7 +114,7 @@ var (
 
 	// getCountScript 统计有序集合中的槽位数量并清理过期条目
 	// 使用 Redis TIME 命令获取服务器时间
-	// KEYS[1] = 普通槽位键，KEYS[2] = 对应 Live 槽位键
+	// KEYS[1] = 普通槽位键，KEYS[2] = 对应 Live 槽位键，KEYS[3] = 官方 Realtime 槽位键
 	// ARGV[1] = TTL（秒）
 	getCountScript = redis.NewScript(`
 		-- Redis 3.2-4.x compat: opt into effects replication so redis.call('TIME')
@@ -116,6 +122,7 @@ var (
 		redis.replicate_commands()
 		local key = KEYS[1]
 		local liveKey = KEYS[2]
+			local realtimeKey = KEYS[3]
 		local ttl = tonumber(ARGV[1])
 
 		-- 使用 Redis 服务器时间
@@ -125,7 +132,8 @@ var (
 
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', now - 60)
-		return redis.call('ZCARD', key) + redis.call('ZCARD', liveKey)
+			redis.call('ZREMRANGEBYSCORE', realtimeKey, '-inf', now - 60)
+			return redis.call('ZCARD', key) + redis.call('ZCARD', liveKey) + redis.call('ZCARD', realtimeKey)
 	`)
 
 	acquireLiveLeaseScript = redis.NewScript(`
@@ -309,6 +317,31 @@ var (
 			return 1
 		`)
 
+	acquireRealtimeLeaseScript = redis.NewScript(`
+			redis.replicate_commands()
+			local accountRegular, accountLive, accountRealtime = KEYS[1], KEYS[2], KEYS[3]
+			local userRegular, userLive, userRealtime = KEYS[4], KEYS[5], KEYS[6]
+			local apiRealtime = KEYS[7]
+			local accountMax, userMax, ttl, leaseID, replacing = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3]), ARGV[4], tonumber(ARGV[5])
+			local now = tonumber(redis.call('TIME')[1])
+			for _, key in ipairs({accountRealtime, userRealtime, apiRealtime}) do redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl) end
+			if redis.call('ZSCORE', accountRealtime, leaseID) ~= false then return 1 end
+			local allowance = 0; if replacing == 1 then allowance = 1 end
+			if accountMax > 0 and redis.call('ZCARD', accountRegular) + redis.call('ZCARD', accountLive) + redis.call('ZCARD', accountRealtime) >= accountMax + allowance then return 0 end
+			if userMax > 0 and redis.call('ZCARD', userRegular) + redis.call('ZCARD', userLive) + redis.call('ZCARD', userRealtime) >= userMax + allowance then return 0 end
+			for _, key in ipairs({accountRealtime, userRealtime, apiRealtime}) do redis.call('ZADD', key, now, leaseID); redis.call('EXPIRE', key, ttl) end
+			return 1
+		`)
+
+	refreshRealtimeLeaseScript = redis.NewScript(`
+			redis.replicate_commands()
+			local ttl, leaseID = tonumber(ARGV[1]), ARGV[2]
+			local now = tonumber(redis.call('TIME')[1])
+			for _, key in ipairs(KEYS) do redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl); if redis.call('ZSCORE', key, leaseID) == false then return 0 end end
+			for _, key in ipairs(KEYS) do redis.call('ZADD', key, now, leaseID); redis.call('EXPIRE', key, ttl) end
+			return 1
+		`)
+
 	// cleanupExpiredSlotsScript 清理单个账号/用户有序集合中过期槽位
 	// KEYS[1] = 有序集合键
 	// ARGV[1] = TTL（秒）
@@ -400,6 +433,16 @@ func liveUserSlotKey(userID int64) string {
 
 func liveAPIKeySlotKey(apiKeyID int64) string {
 	return fmt.Sprintf("%s%d", liveAPIKeySlotKeyPrefix, apiKeyID)
+}
+
+func realtimeAccountSlotKey(accountID int64) string {
+	return fmt.Sprintf("%s%d", realtimeAccountSlotKeyPrefix, accountID)
+}
+func realtimeUserSlotKey(userID int64) string {
+	return fmt.Sprintf("%s%d", realtimeUserSlotKeyPrefix, userID)
+}
+func realtimeAPIKeySlotKey(apiKeyID int64) string {
+	return fmt.Sprintf("%s%d", realtimeAPIKeySlotKeyPrefix, apiKeyID)
 }
 
 func openAIWSIngressLeaseKey(apiKeyID int64) string {
@@ -631,7 +674,7 @@ func runScriptInt64Pair(ctx context.Context, rdb *redis.Client, script *redis.Sc
 func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
 	key := accountSlotKey(accountID)
 	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取，确保多实例时钟一致
-	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveAccountSlotKey(accountID)}, maxConcurrency, c.slotTTLSeconds, requestID)
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveAccountSlotKey(accountID), realtimeAccountSlotKey(accountID)}, maxConcurrency, c.slotTTLSeconds, requestID)
 	if err != nil {
 		return false, err
 	}
@@ -655,7 +698,7 @@ func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int
 func (c *concurrencyCache) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
 	key := accountSlotKey(accountID)
 	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取
-	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveAccountSlotKey(accountID)}, c.slotTTLSeconds).Int()
+	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveAccountSlotKey(accountID), realtimeAccountSlotKey(accountID)}, c.slotTTLSeconds).Int()
 	if err != nil {
 		return 0, err
 	}
@@ -675,20 +718,24 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 
 	pipe := c.rdb.Pipeline()
 	type accountCmd struct {
-		accountID int64
-		zcardCmd  *redis.IntCmd
-		liveCmd   *redis.IntCmd
+		accountID   int64
+		zcardCmd    *redis.IntCmd
+		liveCmd     *redis.IntCmd
+		realtimeCmd *redis.IntCmd
 	}
 	cmds := make([]accountCmd, 0, len(accountIDs))
 	for _, accountID := range accountIDs {
 		slotKey := accountSlotKeyPrefix + strconv.FormatInt(accountID, 10)
 		liveKey := liveAccountSlotKeyPrefix + strconv.FormatInt(accountID, 10)
+		realtimeKey := realtimeAccountSlotKeyPrefix + strconv.FormatInt(accountID, 10)
 		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
 		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
+		pipe.ZRemRangeByScore(ctx, realtimeKey, "-inf", strconv.FormatInt(now.Unix()-realtimeLeaseTTLSeconds, 10))
 		cmds = append(cmds, accountCmd{
-			accountID: accountID,
-			zcardCmd:  pipe.ZCard(ctx, slotKey),
-			liveCmd:   pipe.ZCard(ctx, liveKey),
+			accountID:   accountID,
+			zcardCmd:    pipe.ZCard(ctx, slotKey),
+			liveCmd:     pipe.ZCard(ctx, liveKey),
+			realtimeCmd: pipe.ZCard(ctx, realtimeKey),
 		})
 	}
 
@@ -698,7 +745,7 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 
 	result := make(map[int64]int, len(accountIDs))
 	for _, cmd := range cmds {
-		result[cmd.accountID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
+		result[cmd.accountID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val() + cmd.realtimeCmd.Val())
 	}
 	return result, nil
 }
@@ -708,7 +755,7 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 func (c *concurrencyCache) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
 	key := userSlotKey(userID)
 	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取，确保多实例时钟一致
-	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveUserSlotKey(userID)}, maxConcurrency, c.slotTTLSeconds, requestID)
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveUserSlotKey(userID), realtimeUserSlotKey(userID)}, maxConcurrency, c.slotTTLSeconds, requestID)
 	if err != nil {
 		return false, err
 	}
@@ -732,7 +779,7 @@ func (c *concurrencyCache) ReleaseUserSlot(ctx context.Context, userID int64, re
 func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64) (int, error) {
 	key := userSlotKey(userID)
 	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取
-	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveUserSlotKey(userID)}, c.slotTTLSeconds).Int()
+	result, err := getCountScript.Run(ctx, c.rdb, []string{key, liveUserSlotKey(userID), realtimeUserSlotKey(userID)}, c.slotTTLSeconds).Int()
 	if err != nil {
 		return 0, err
 	}
@@ -843,6 +890,43 @@ func (c *concurrencyCache) ReleaseLiveLease(ctx context.Context, accountID, user
 	return err
 }
 
+func (c *concurrencyCache) AcquireRealtimeLease(ctx context.Context, accountID int64, accountMax int, userID int64, userMax int, apiKeyID int64, leaseID string, replacingRegularSlots bool) (bool, error) {
+	if c == nil || c.rdb == nil || accountID <= 0 || userID <= 0 || apiKeyID <= 0 || leaseID == "" {
+		return false, nil
+	}
+	replacing := 0
+	if replacingRegularSlots {
+		replacing = 1
+	}
+	result, err := acquireRealtimeLeaseScript.Run(ctx, c.rdb, []string{
+		accountSlotKey(accountID), liveAccountSlotKey(accountID), realtimeAccountSlotKey(accountID),
+		userSlotKey(userID), liveUserSlotKey(userID), realtimeUserSlotKey(userID), realtimeAPIKeySlotKey(apiKeyID),
+	}, accountMax, userMax, realtimeLeaseTTLSeconds, leaseID, replacing).Int()
+	return result == 1, err
+}
+
+func (c *concurrencyCache) RefreshRealtimeLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) (bool, error) {
+	if c == nil || c.rdb == nil || leaseID == "" {
+		return false, nil
+	}
+	result, err := refreshRealtimeLeaseScript.Run(ctx, c.rdb, []string{
+		realtimeAccountSlotKey(accountID), realtimeUserSlotKey(userID), realtimeAPIKeySlotKey(apiKeyID),
+	}, realtimeLeaseTTLSeconds, leaseID).Int()
+	return result == 1, err
+}
+
+func (c *concurrencyCache) ReleaseRealtimeLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) error {
+	if c == nil || c.rdb == nil || leaseID == "" {
+		return nil
+	}
+	pipe := c.rdb.TxPipeline()
+	pipe.ZRem(ctx, realtimeAccountSlotKey(accountID), leaseID)
+	pipe.ZRem(ctx, realtimeUserSlotKey(userID), leaseID)
+	pipe.ZRem(ctx, realtimeAPIKeySlotKey(apiKeyID), leaseID)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
 func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error) {
 	if len(apiKeyIDs) == 0 {
 		return map[int64]int{}, nil
@@ -856,20 +940,24 @@ func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKey
 
 	pipe := c.rdb.Pipeline()
 	type apiKeyCmd struct {
-		apiKeyID int64
-		zcardCmd *redis.IntCmd
-		liveCmd  *redis.IntCmd
+		apiKeyID    int64
+		zcardCmd    *redis.IntCmd
+		liveCmd     *redis.IntCmd
+		realtimeCmd *redis.IntCmd
 	}
 	cmds := make([]apiKeyCmd, 0, len(apiKeyIDs))
 	for _, apiKeyID := range apiKeyIDs {
 		slotKey := apiKeySlotKeyPrefix + strconv.FormatInt(apiKeyID, 10)
 		liveKey := liveAPIKeySlotKeyPrefix + strconv.FormatInt(apiKeyID, 10)
+		realtimeKey := realtimeAPIKeySlotKeyPrefix + strconv.FormatInt(apiKeyID, 10)
 		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
 		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
+		pipe.ZRemRangeByScore(ctx, realtimeKey, "-inf", strconv.FormatInt(now.Unix()-realtimeLeaseTTLSeconds, 10))
 		cmds = append(cmds, apiKeyCmd{
-			apiKeyID: apiKeyID,
-			zcardCmd: pipe.ZCard(ctx, slotKey),
-			liveCmd:  pipe.ZCard(ctx, liveKey),
+			apiKeyID:    apiKeyID,
+			zcardCmd:    pipe.ZCard(ctx, slotKey),
+			liveCmd:     pipe.ZCard(ctx, liveKey),
+			realtimeCmd: pipe.ZCard(ctx, realtimeKey),
 		})
 	}
 
@@ -879,7 +967,7 @@ func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKey
 
 	result := make(map[int64]int, len(apiKeyIDs))
 	for _, cmd := range cmds {
-		result[cmd.apiKeyID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
+		result[cmd.apiKeyID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val() + cmd.realtimeCmd.Val())
 	}
 	return result, nil
 }
@@ -966,20 +1054,24 @@ func (c *concurrencyCache) GetAccountsLoadBatch(ctx context.Context, accounts []
 		maxConcurrency int
 		zcardCmd       *redis.IntCmd
 		liveCmd        *redis.IntCmd
+		realtimeCmd    *redis.IntCmd
 		getCmd         *redis.StringCmd
 	}
 	cmds := make([]accountCmds, 0, len(accounts))
 	for _, acc := range accounts {
 		slotKey := accountSlotKeyPrefix + strconv.FormatInt(acc.ID, 10)
 		liveKey := liveAccountSlotKeyPrefix + strconv.FormatInt(acc.ID, 10)
+		realtimeKey := realtimeAccountSlotKeyPrefix + strconv.FormatInt(acc.ID, 10)
 		waitKey := accountWaitKeyPrefix + strconv.FormatInt(acc.ID, 10)
 		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
 		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
+		pipe.ZRemRangeByScore(ctx, realtimeKey, "-inf", strconv.FormatInt(now.Unix()-realtimeLeaseTTLSeconds, 10))
 		ac := accountCmds{
 			id:             acc.ID,
 			maxConcurrency: acc.MaxConcurrency,
 			zcardCmd:       pipe.ZCard(ctx, slotKey),
 			liveCmd:        pipe.ZCard(ctx, liveKey),
+			realtimeCmd:    pipe.ZCard(ctx, realtimeKey),
 			getCmd:         pipe.Get(ctx, waitKey),
 		}
 		cmds = append(cmds, ac)
@@ -991,7 +1083,7 @@ func (c *concurrencyCache) GetAccountsLoadBatch(ctx context.Context, accounts []
 
 	loadMap := make(map[int64]*service.AccountLoadInfo, len(accounts))
 	for _, ac := range cmds {
-		currentConcurrency := int(ac.zcardCmd.Val() + ac.liveCmd.Val())
+		currentConcurrency := int(ac.zcardCmd.Val() + ac.liveCmd.Val() + ac.realtimeCmd.Val())
 		waitingCount := 0
 		if v, err := ac.getCmd.Int(); err == nil {
 			waitingCount = v
@@ -1030,20 +1122,24 @@ func (c *concurrencyCache) GetUsersLoadBatch(ctx context.Context, users []servic
 		maxConcurrency int
 		zcardCmd       *redis.IntCmd
 		liveCmd        *redis.IntCmd
+		realtimeCmd    *redis.IntCmd
 		getCmd         *redis.StringCmd
 	}
 	cmds := make([]userCmds, 0, len(users))
 	for _, u := range users {
 		slotKey := userSlotKeyPrefix + strconv.FormatInt(u.ID, 10)
 		liveKey := liveUserSlotKeyPrefix + strconv.FormatInt(u.ID, 10)
+		realtimeKey := realtimeUserSlotKeyPrefix + strconv.FormatInt(u.ID, 10)
 		waitKey := waitQueueKeyPrefix + strconv.FormatInt(u.ID, 10)
 		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
 		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
+		pipe.ZRemRangeByScore(ctx, realtimeKey, "-inf", strconv.FormatInt(now.Unix()-realtimeLeaseTTLSeconds, 10))
 		uc := userCmds{
 			id:             u.ID,
 			maxConcurrency: u.MaxConcurrency,
 			zcardCmd:       pipe.ZCard(ctx, slotKey),
 			liveCmd:        pipe.ZCard(ctx, liveKey),
+			realtimeCmd:    pipe.ZCard(ctx, realtimeKey),
 			getCmd:         pipe.Get(ctx, waitKey),
 		}
 		cmds = append(cmds, uc)
@@ -1055,7 +1151,7 @@ func (c *concurrencyCache) GetUsersLoadBatch(ctx context.Context, users []servic
 
 	loadMap := make(map[int64]*service.UserLoadInfo, len(users))
 	for _, uc := range cmds {
-		currentConcurrency := int(uc.zcardCmd.Val() + uc.liveCmd.Val())
+		currentConcurrency := int(uc.zcardCmd.Val() + uc.liveCmd.Val() + uc.realtimeCmd.Val())
 		waitingCount := 0
 		if v, err := uc.getCmd.Int(); err == nil {
 			waitingCount = v

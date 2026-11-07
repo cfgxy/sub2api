@@ -441,6 +441,133 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 	require.Equal(t, 1, userRepo.deductCalls)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_PersistsSeparatedRealtimeAudioBuckets(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	usage := OpenAIUsage{
+		InputTokens:           20,
+		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
+		AudioInputTokens:      30,
+		AudioCacheReadTokens:  20,
+		CacheReadInputTokens:  40,
+		OutputTokens:          35,
+		ImageOutputTokens:     15,
+		AudioOutputTokens:     30,
+		TokenBucketsSeparated: true,
+	}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:      "resp_realtime_audio",
+			Model:          "gpt-5.1",
+			Stream:         true,
+			OpenAIRealtime: true,
+			Usage:          usage,
+			Duration:       time.Second,
+		},
+		APIKey:  &APIKey{ID: 1003, Group: &Group{RateMultiplier: 1}},
+		User:    &User{ID: 2003},
+		Account: &Account{ID: 3003, Type: AccountTypeAPIKey},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, RequestTypeRealtime, usageRepo.lastLog.RequestType)
+	require.Equal(t, 20, usageRepo.lastLog.InputTokens, "已分桶文本输入不得再次扣缓存")
+	require.Equal(t, 35, usageRepo.lastLog.OutputTokens)
+	require.Equal(t, 10, usageRepo.lastLog.ImageInputTokens)
+	require.Equal(t, 15, usageRepo.lastLog.ImageOutputTokens)
+	require.Equal(t, 30, usageRepo.lastLog.AudioInputTokens)
+	require.Equal(t, 30, usageRepo.lastLog.AudioOutputTokens)
+	require.Equal(t, 40, usageRepo.lastLog.CacheReadTokens)
+	require.Equal(t, map[string]int{
+		"audio_cache_read_tokens": 20,
+		"image_cache_read_tokens": 10,
+	}, usageRepo.lastLog.ImageSizeBreakdown)
+
+	expected, err := svc.billingService.CalculateCost("gpt-5.1", UsageTokens{
+		InputTokens:           20,
+		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
+		AudioInputTokens:      30,
+		OutputTokens:          35,
+		ImageOutputTokens:     15,
+		AudioOutputTokens:     30,
+		CacheReadTokens:       40,
+		TokenBucketsSeparated: true,
+	}, 1.1)
+	require.NoError(t, err)
+	require.InDelta(t, expected.AudioInputCost, usageRepo.lastLog.AudioInputCost, 1e-12)
+	require.InDelta(t, expected.AudioOutputCost, usageRepo.lastLog.AudioOutputCost, 1e-12)
+	require.InDelta(t, expected.TotalCost, usageRepo.lastLog.TotalCost, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_PersistsMixedRealtimeTurnLedger(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
+	usage := OpenAIUsage{
+		InputTokens:           152,
+		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
+		AudioInputTokens:      22,
+		AudioCacheReadTokens:  20,
+		CacheReadInputTokens:  80,
+		OutputTokens:          70,
+		ImageOutputTokens:     30,
+		AudioOutputTokens:     60,
+		TokenBucketsSeparated: true,
+	}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:      "resp_realtime_mixed_turns",
+			Model:          "gpt-5.1",
+			Stream:         true,
+			OpenAIRealtime: true,
+			Usage:          usage,
+			Duration:       time.Second,
+		},
+		APIKey:  &APIKey{ID: 1004, Group: &Group{RateMultiplier: 1}},
+		User:    &User{ID: 2004},
+		Account: &Account{ID: 3004, Type: AccountTypeAPIKey},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, 152, usageRepo.lastLog.InputTokens)
+	require.Equal(t, 10, usageRepo.lastLog.ImageInputTokens)
+	require.Equal(t, 22, usageRepo.lastLog.AudioInputTokens)
+	require.Equal(t, 80, usageRepo.lastLog.CacheReadTokens)
+	require.Equal(t, 70, usageRepo.lastLog.OutputTokens)
+	require.Equal(t, 30, usageRepo.lastLog.ImageOutputTokens)
+	require.Equal(t, 60, usageRepo.lastLog.AudioOutputTokens)
+	require.Equal(t, map[string]int{
+		"audio_cache_read_tokens": 20,
+		"image_cache_read_tokens": 10,
+	}, usageRepo.lastLog.ImageSizeBreakdown)
+
+	expected, err := svc.billingService.CalculateCost("gpt-5.1", UsageTokens{
+		InputTokens:           152,
+		ImageInputTokens:      10,
+		ImageCacheReadTokens:  10,
+		AudioInputTokens:      22,
+		OutputTokens:          70,
+		CacheReadTokens:       80,
+		ImageOutputTokens:     30,
+		AudioOutputTokens:     60,
+		TokenBucketsSeparated: true,
+	}, 1.1)
+	require.NoError(t, err)
+	require.InDelta(t, expected.TotalCost, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, expected.ActualCost, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
+	require.Equal(t, 1, userRepo.deductCalls)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *testing.T) {
 	groupID := int64(14)
 	groupRate := 1.0

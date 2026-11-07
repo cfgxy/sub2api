@@ -56,7 +56,7 @@ func newInflightTestGinContext() *gin.Context {
 	return c
 }
 
-func TestReserveInflightBalance_SkipsWhenDisabledOrSubscription(t *testing.T) {
+func TestReserveInflightBalance_SkipsWhenDisabledAndEstimatesSubscription(t *testing.T) {
 	cfg := &config.Config{}
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
@@ -73,7 +73,7 @@ func TestReserveInflightBalance_SkipsWhenDisabledOrSubscription(t *testing.T) {
 	done, err = reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, &service.UserSubscription{}, tokenInflightEstimate("m", []byte(`{}`)))
 	require.NoError(t, err)
 	done()
-	require.Equal(t, 0, est.calls, "subscription mode must be unaffected")
+	require.Equal(t, 1, est.calls, "subscription mode must establish its own inflight reservation")
 }
 
 func TestReserveInflightBalance_UnpricedFailOpenByDefaultFailClosedOptIn(t *testing.T) {
@@ -113,6 +113,21 @@ func TestEnterpriseEmployeeUnknownMaximumStopsBeforeUpstreamCall(t *testing.T) {
 	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeMaximumCostUnknown)
 	require.Equal(t, 1, estimator.reserveCalls)
 	require.Zero(t, upstreamCalls)
+}
+
+func TestReserveRealtimeSessionInflightSkipsEnterpriseEmployeeReservation(t *testing.T) {
+	estimator := &failClosedEmployeeEstimator{}
+	apiKey := &service.APIKey{
+		ID: 1, User: &service.User{ID: 2}, EnterpriseEmployeeWeeklyLimit: true,
+	}
+
+	done, err := reserveRealtimeSessionInflightBalance(
+		newInflightTestGinContext(), nil, estimator, apiKey, nil,
+		tokenInflightEstimate("gpt-realtime", []byte(`{"type":"response.create"}`)),
+	)
+	require.NoError(t, err)
+	done()
+	require.Zero(t, estimator.reserveCalls, "Realtime session admission must not create a reusable employee reservation")
 }
 
 // handlerInflightCache 内存版余额缓存 + 在途预留（语义同 Redis Lua）。

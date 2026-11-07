@@ -94,9 +94,6 @@ func reserveInflightBalanceCtx(
 	if billing == nil || !billing.InflightReservationEnabled() {
 		return ctx, inflightNoop, nil
 	}
-	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && subscription != nil {
-		return ctx, inflightNoop, nil
-	}
 	estimate, priced := estimator.EstimateInflightReservation(ctx, apiKey, req)
 	if !priced && billing.InflightReservationFailClosedOnUnpriced() {
 		return ctx, inflightNoop, service.ErrInsufficientBalance
@@ -104,7 +101,7 @@ func reserveInflightBalanceCtx(
 	if estimate <= 0 {
 		return ctx, inflightNoop, nil
 	}
-	res, err := billing.ReserveInflight(ctx, apiKey.User, apiKey.Group, subscription, estimate)
+	res, err := billing.ReserveInflightForAPIKey(ctx, apiKey.User, apiKey, apiKey.Group, subscription, estimate)
 	if err != nil {
 		return ctx, inflightNoop, err
 	}
@@ -112,6 +109,39 @@ func reserveInflightBalanceCtx(
 		return ctx, inflightNoop, nil
 	}
 	return service.WithInflightReservation(ctx, res), res.HandlerDone, nil
+}
+
+// reserveRealtimeSessionInflightBalance 为 Realtime 会话登记非员工余额预留。
+// 企业员工的周额度必须以 response turn 为单位预留和结算；不能在建连时创建一条
+// 会话级 reservation 后让任意数量的 turn 复用该 request ID。
+func reserveRealtimeSessionInflightBalance(
+	c *gin.Context,
+	billing *service.BillingCacheService,
+	estimator inflightReservationEstimator,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	req service.InflightEstimateRequest,
+) (func(), error) {
+	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
+		return inflightNoop, nil
+	}
+	return reserveInflightBalance(c, billing, estimator, apiKey, subscription, req)
+}
+
+// reserveRealtimeSessionInflightBalanceCtx is the context variant used by SIP
+// webhook ingress. Employee reservations are created by individual usage turns.
+func reserveRealtimeSessionInflightBalanceCtx(
+	ctx context.Context,
+	billing *service.BillingCacheService,
+	estimator inflightReservationEstimator,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	req service.InflightEstimateRequest,
+) (context.Context, func(), error) {
+	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
+		return ctx, inflightNoop, nil
+	}
+	return reserveInflightBalanceCtx(ctx, billing, estimator, apiKey, subscription, req)
 }
 
 // grokMediaInflightEstimate 媒体生成请求的估算输入；状态/内容查询返回空模型（不预留：

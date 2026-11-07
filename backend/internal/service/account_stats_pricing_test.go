@@ -264,6 +264,38 @@ func TestCalculateStatsCost_TokenBilling_WithImageOutput(t *testing.T) {
 	require.InDelta(t, 0.3, *result, 1e-12)
 }
 
+func TestCalculateStatsCost_TokenBilling_UsesSeparatedAudioAndImageBuckets(t *testing.T) {
+	upperBound := 100
+	pricing := &ChannelModelPricing{
+		BillingMode:      BillingModeToken,
+		InputPrice:       testPtrFloat64(0.01),
+		OutputPrice:      testPtrFloat64(0.02),
+		ImageOutputPrice: testPtrFloat64(0.03),
+		Intervals: []PricingInterval{
+			{
+				MinTokens:   0,
+				MaxTokens:   &upperBound,
+				InputPrice:  testPtrFloat64(0.1),
+				OutputPrice: testPtrFloat64(0.2),
+			},
+		},
+	}
+	tokens := UsageTokens{
+		InputTokens:           10,
+		ImageInputTokens:      20,
+		AudioInputTokens:      30,
+		OutputTokens:          5,
+		ImageOutputTokens:     8,
+		AudioOutputTokens:     7,
+		TokenBucketsSeparated: true,
+	}
+
+	result := calculateStatsCost(pricing, tokens, 1)
+	require.NotNil(t, result)
+	// 60 input * 0.1 + 12 text/audio output * 0.2 + 8 image output * 0.03 = 8.64.
+	require.InDelta(t, 8.64, *result, 1e-12)
+}
+
 func TestCalculateStatsCost_TokenBilling_PartialPricesNil(t *testing.T) {
 	pricing := &ChannelModelPricing{
 		BillingMode: BillingModeToken,
