@@ -1622,13 +1622,14 @@ func (s *OpenAIGatewayService) completeOfficialRealtimeCleanup(record *RealtimeC
 }
 
 func (s *OpenAIGatewayService) finishOfficialRealtimeCleanup(record *RealtimeCallRecord, cleanup RealtimeCleanupStore) bool {
-	if record.LeaseID != "" && !s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID) {
-		return false
-	}
+	leaseReleased := record.LeaseID == "" || s.releaseRealtimeLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
 	if finalizer, ok := s.realtimeFinalizers.LoadAndDelete(record.CallHash); ok {
 		finalizer.(func())()
 	}
 	s.releaseRealtimeEmployeeTurns(record)
+	if !leaseReleased {
+		return false
+	}
 	if cleanup == nil {
 		return true
 	}
@@ -1637,7 +1638,7 @@ func (s *OpenAIGatewayService) finishOfficialRealtimeCleanup(record *RealtimeCal
 }
 
 func (s *OpenAIGatewayService) scheduleRealtimeCleanupRetry(record *RealtimeCallRecord, cleanup RealtimeCleanupStore) {
-	if record == nil || cleanup == nil {
+	if record == nil {
 		return
 	}
 	if _, loaded := s.realtimeCleanupMarkRetries.LoadOrStore(record.CallHash, struct{}{}); loaded {

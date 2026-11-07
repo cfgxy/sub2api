@@ -990,8 +990,9 @@ func (s *realtimeLifecycleStore) ResetRealtimeControllerForRecovery(_ context.Co
 
 type realtimeLifecycleConcurrencyCache struct {
 	ConcurrencyCache
-	mu       sync.Mutex
-	releases int
+	mu              sync.Mutex
+	releases        int
+	releaseFailures int
 }
 
 func (*realtimeLifecycleConcurrencyCache) AcquireRealtimeLease(context.Context, int64, int, int64, int, int64, string, bool) (bool, error) {
@@ -1004,8 +1005,12 @@ func (*realtimeLifecycleConcurrencyCache) RefreshRealtimeLease(context.Context, 
 
 func (c *realtimeLifecycleConcurrencyCache) ReleaseRealtimeLease(context.Context, int64, int64, int64, string) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.releases++
-	c.mu.Unlock()
+	if c.releaseFailures > 0 {
+		c.releaseFailures--
+		return errors.New("temporary realtime lease release failure")
+	}
 	return nil
 }
 
@@ -1034,6 +1039,39 @@ func TestFinalizeOfficialRealtimeCallIsIdempotent(t *testing.T) {
 	controller, err := store.GetRealtimeController(context.Background(), record.CallHash)
 	require.NoError(t, err)
 	require.Equal(t, RealtimeControllerClosed, controller)
+}
+
+func TestFinalizeOfficialRealtimeCallRetriesLeaseReleaseAfterReservationCleanup(t *testing.T) {
+	record := &RealtimeCallRecord{
+		CallID: "call-lease-release-retry", CallHash: hashRealtimeCallID("call-lease-release-retry"), AccountID: 11,
+		APIKeyID: 22, UserID: 33, LeaseID: "lease-release-retry", Controller: RealtimeControllerPending,
+	}
+	store := &realtimeLifecycleStore{}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+	concurrency := &realtimeLifecycleConcurrencyCache{releaseFailures: 1}
+	service := &OpenAIGatewayService{
+		cache:              store,
+		concurrencyService: NewConcurrencyService(concurrency),
+	}
+	var reservationReleases atomic.Int32
+	service.realtimeFinalizers.Store(record.CallHash, func() { reservationReleases.Add(1) })
+
+	service.finalizeOfficialRealtimeCall(record)
+
+	persisted, err := store.GetRealtimeCall(context.Background(), record.CallHash)
+	require.NoError(t, err)
+	require.Equal(t, RealtimeControllerClosed, persisted.Controller)
+	require.True(t, persisted.CleanupPending, "租约释放失败时必须保留可恢复的 cleanup 标记")
+	require.Equal(t, int32(1), reservationReleases.Load(), "关闭态不得因租约失败继续保留预留")
+
+	require.Eventually(t, func() bool {
+		persisted, err = store.GetRealtimeCall(context.Background(), record.CallHash)
+		return err == nil && !persisted.CleanupPending
+	}, 2*time.Second, 10*time.Millisecond)
+	concurrency.mu.Lock()
+	require.Equal(t, 2, concurrency.releases, "租约释放失败必须重试")
+	concurrency.mu.Unlock()
+	require.Equal(t, int32(1), reservationReleases.Load(), "预留释放必须保持幂等")
 }
 
 func TestGetOfficialRealtimeCallForIdentityRejectsMismatchedCaller(t *testing.T) {
