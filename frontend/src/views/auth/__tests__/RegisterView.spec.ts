@@ -103,6 +103,7 @@ describe('RegisterView', () => {
     pushMock.mockReset()
     verifyActionMock.mockReset()
     appStoreMock.cachedPublicSettings = null
+    delete window.__APP_CONFIG__
     sessionStorage.removeItem('register_data')
     verifyActionMock.mockResolvedValue({ token: 'ticket', randstr: 'randstr' })
     getPublicSettingsMock.mockResolvedValue(publicSettings)
@@ -134,6 +135,23 @@ describe('RegisterView', () => {
     const wrapper = mountRegister()
 
     expect(wrapper.find('#promo_code').exists()).toBe(true)
+  })
+
+  it('uses injected settings to enable registration controls while the refresh request is pending', () => {
+    window.__APP_CONFIG__ = {
+      ...publicSettings,
+      turnstile_enabled: false,
+      login_agreement_enabled: false,
+      login_agreement_documents: []
+    } as typeof window.__APP_CONFIG__
+    getPublicSettingsMock.mockReturnValueOnce(new Promise(() => {}))
+
+    const wrapper = mountRegister()
+
+    expect(wrapper.get('#email').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('#password').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('#confirmPassword').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
   })
 
   it.each([

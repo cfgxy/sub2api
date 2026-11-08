@@ -95,6 +95,7 @@ describe('LoginView registration entry', () => {
   beforeEach(() => {
     getPublicSettingsMock.mockReset()
     pushMock.mockReset()
+    delete window.__APP_CONFIG__
     getPublicSettingsMock.mockResolvedValue(publicSettings)
   })
 
@@ -115,5 +116,16 @@ describe('LoginView registration entry', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('auth.signUp')
+  })
+
+  it('uses injected settings to enable login controls while the refresh request is pending', () => {
+    window.__APP_CONFIG__ = { ...publicSettings } as typeof window.__APP_CONFIG__
+    getPublicSettingsMock.mockReturnValueOnce(new Promise(() => {}))
+
+    const wrapper = mountLogin()
+
+    expect(wrapper.get('#email').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('#password').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
   })
 })

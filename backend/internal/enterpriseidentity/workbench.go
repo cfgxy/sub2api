@@ -327,6 +327,12 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		if currentWeek == nil {
 			return result, nil
 		}
+		// 当前周解析是无筛选工作台的权威订阅范围。先写入响应，后续总池查询
+		// 仅补充额度状态，不能因两次查询之间的数据变化而擦除分配请求所需标识。
+		subscriptionID := currentWeek.SubscriptionID
+		windowAnchor := currentWeek.Anchor
+		result.SubscriptionID = &subscriptionID
+		result.PoolWindowAnchor = &windowAnchor
 	}
 	scope := buildWorkbenchUsageScope(enterpriseID, q, currentWeek)
 	if err := h.owner.service.db.QueryRowContext(ctx, `
@@ -414,7 +420,9 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	if poolStatus.Valid {
 		result.PoolSourceStatus = poolStatus.String
 	}
-	result.SubscriptionID = nullableInt64(subscriptionID)
+	if currentWeek == nil {
+		result.SubscriptionID = nullableInt64(subscriptionID)
+	}
 	result.SubscriptionPlan = plan.String
 	result.SubscriptionStatus = subscriptionStatus.String
 	if poolLimit.Valid {
@@ -427,7 +435,7 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		result.EnterprisePoolRemaining = poolRemaining.String
 	}
 	result.EnterprisePoolExhausted = poolExhausted.Valid && poolExhausted.Bool
-	if poolAnchor.Valid {
+	if poolAnchor.Valid && currentWeek == nil {
 		anchor := poolAnchor.Time
 		result.PoolWindowAnchor = &anchor
 	}

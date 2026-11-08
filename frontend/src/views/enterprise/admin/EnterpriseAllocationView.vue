@@ -16,7 +16,7 @@
             <Icon name="refresh" size="md" class="mr-2" :class="{ 'animate-spin': loading }" />
             刷新数据
           </button>
-          <button type="button" class="btn btn-primary" :disabled="!subscriptionId" @click="openDialog()">
+          <button type="button" class="btn btn-primary" :disabled="!subscriptionId || !windowAnchor" @click="openDialog()">
             <Icon name="plus" size="md" class="mr-2" />
             调整员工{{ terms.allocation }}
           </button>
@@ -50,6 +50,16 @@
           <span class="text-sm font-semibold text-gray-900 dark:text-white">暂无生效订阅</span>
           <span class="text-xs text-gray-500 dark:text-dark-400">
             企业当前没有生效订阅，无法进行{{ terms.allocation }}分配。
+          </span>
+        </div>
+        <div
+          v-else-if="!loading && !windowAnchor"
+          role="status"
+          class="card flex flex-col gap-1 border-l-4 border-l-amber-500 p-4"
+        >
+          <span class="text-sm font-semibold text-gray-900 dark:text-white">订阅周期尚未就绪</span>
+          <span class="text-xs text-gray-500 dark:text-dark-400">
+            无法获取当前订阅周期，暂不能调整员工{{ terms.allocation }}。
           </span>
         </div>
 
@@ -105,11 +115,11 @@
     </template>
 
     <template #table>
-      <div v-if="sourceState === 'unavailable' || (!loading && !subscriptionId)" class="p-6">
+      <div v-if="sourceState === 'unavailable' || (!loading && (!subscriptionId || !windowAnchor))" class="p-6">
         <EmptyState
           icon="inbox"
-          :title="sourceState === 'unavailable' ? '暂不展示历史数据' : '暂无可分配的订阅'"
-          description="恢复数据来源或激活订阅后，员工额度明细会在此展示。"
+          :title="sourceState === 'unavailable' ? '暂不展示历史数据' : (!subscriptionId ? '暂无可分配的订阅' : '订阅周期尚未就绪')"
+          description="恢复数据来源或激活包含当前周期的订阅后，员工额度明细会在此展示。"
         />
       </div>
       <DataTable
