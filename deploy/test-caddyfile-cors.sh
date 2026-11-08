@@ -29,10 +29,22 @@ caddy_pid=''
 cleanup() {
 	if [ -n "$caddy_pid" ]; then
 		kill "$caddy_pid" 2>/dev/null || true
+		attempt=0
+		while kill -0 "$caddy_pid" 2>/dev/null && [ "$attempt" -lt 50 ]; do
+			attempt=$((attempt + 1))
+			sleep 0.1
+		done
+		kill -KILL "$caddy_pid" 2>/dev/null || true
 		wait "$caddy_pid" 2>/dev/null || true
 	fi
 	if [ -n "$backend_pid" ]; then
 		kill "$backend_pid" 2>/dev/null || true
+		attempt=0
+		while kill -0 "$backend_pid" 2>/dev/null && [ "$attempt" -lt 50 ]; do
+			attempt=$((attempt + 1))
+			sleep 0.1
+		done
+		kill -KILL "$backend_pid" 2>/dev/null || true
 		wait "$backend_pid" 2>/dev/null || true
 	fi
 	rm -rf "$work_dir"
@@ -54,6 +66,9 @@ func main() {
 	if len(os.Args) != 2 {
 		panic("missing listen address")
 	}
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	http.HandleFunc("/api/v1/enterprise/keys", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
@@ -89,14 +104,34 @@ until curl --fail --silent "http://127.0.0.1:$backend_port/api/v1/enterprise/key
 	sleep 0.1
 done
 
-cat > "$work_dir/Caddyfile" <<EOF
-http://127.0.0.1:$proxy_port {
-	reverse_proxy 127.0.0.1:$backend_port
-}
-EOF
+test_caddyfile="$work_dir/Caddyfile"
+sed \
+	-e "s|^api\.sub2api\.com {|http://127.0.0.1:$proxy_port {|" \
+	-e "s|^\([[:space:]]*\)reverse_proxy localhost:8080 {|\1reverse_proxy 127.0.0.1:$backend_port {|" \
+	"$caddyfile" | awk '
+	/^[[:space:]]*(tls|log)[[:space:]]*\{/ {
+		skip = 1
+		depth = 0
+	}
+	skip {
+		for (field = 1; field <= NF; field++) {
+			if ($field == "{") depth++
+			if ($field == "}") depth--
+		}
+		if (depth == 0) skip = 0
+		next
+	}
+	{ print }
+' > "$test_caddyfile"
+
+if ! grep -Fq "http://127.0.0.1:$proxy_port {" "$test_caddyfile" \
+	|| ! grep -Fq "reverse_proxy 127.0.0.1:$backend_port {" "$test_caddyfile"; then
+	echo "failed to derive the test Caddyfile from the deployment proxy route" >&2
+	exit 1
+fi
 
 if [ "$caddy_mode" = local ]; then
-	caddy run --config "$work_dir/Caddyfile" --adapter caddyfile >"$work_dir/caddy.log" 2>&1 &
+	caddy run --config "$test_caddyfile" --adapter caddyfile >"$work_dir/caddy.log" 2>&1 &
 else
 	docker run --rm --network host --mount "type=bind,src=$work_dir,dst=/work,readonly" caddy:2 \
 		caddy run --config /work/Caddyfile --adapter caddyfile >"$work_dir/caddy.log" 2>&1 &
