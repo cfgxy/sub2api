@@ -50,6 +50,19 @@ if ! printf '%s\n' "$normalized_config" | grep -Eq '^reverse_proxy localhost:808
 	exit 1
 fi
 
+if ! printf '%s\n' "$normalized_config" | grep -Fxq 'Access-Control-Allow-Headers Content-Type, Authorization, X-Requested-With, Idempotency-Key'; then
+	echo "Caddyfile must allow Idempotency-Key for browser preflight requests" >&2
+	exit 1
+fi
+
+if ! printf '%s\n' "$normalized_config" | grep -Fxq '@cors_preflight {' \
+	|| ! printf '%s\n' "$normalized_config" | grep -Fxq 'method OPTIONS' \
+	|| ! printf '%s\n' "$normalized_config" | grep -Fxq 'handle @cors_preflight {' \
+	|| ! printf '%s\n' "$normalized_config" | grep -Fxq 'respond 204'; then
+	echo "Caddyfile must short-circuit CORS OPTIONS preflight requests" >&2
+	exit 1
+fi
+
 if printf '%s\n' "$normalized_config" | grep -Eq '^import([[:space:]]|$)'; then
 	echo "Caddyfile must not import configuration outside this canonical policy check" >&2
 	exit 1
