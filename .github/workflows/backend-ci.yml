@@ -36,6 +36,8 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.27.2'
+      - name: Check Caddy proxy CORS delegation
+        run: /bin/sh deploy/test-caddyfile-cors.sh
       - name: Unit tests
         working-directory: backend
         run: make test-unit

@@ -4,12 +4,21 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 caddyfile="$repo_root/deploy/Caddyfile"
 
-for command in caddy go curl; do
+for command in go curl; do
 	if ! command -v "$command" >/dev/null 2>&1; then
 		echo "test-caddyfile-cors.sh requires $command" >&2
 		exit 1
 	fi
 done
+
+if command -v caddy >/dev/null 2>&1; then
+	caddy_mode=local
+elif command -v docker >/dev/null 2>&1; then
+	caddy_mode=docker
+else
+	echo "test-caddyfile-cors.sh requires caddy or docker" >&2
+	exit 1
+fi
 
 work_dir=$(mktemp -d)
 backend_port=$((20000 + ($$ % 10000)))
@@ -86,7 +95,12 @@ http://127.0.0.1:$proxy_port {
 }
 EOF
 
-caddy run --config "$work_dir/Caddyfile" --adapter caddyfile >"$work_dir/caddy.log" 2>&1 &
+if [ "$caddy_mode" = local ]; then
+	caddy run --config "$work_dir/Caddyfile" --adapter caddyfile >"$work_dir/caddy.log" 2>&1 &
+else
+	docker run --rm --network host --mount "type=bind,src=$work_dir,dst=/work,readonly" caddy:2 \
+		caddy run --config /work/Caddyfile --adapter caddyfile >"$work_dir/caddy.log" 2>&1 &
+fi
 caddy_pid=$!
 
 attempt=0
@@ -96,7 +110,7 @@ until curl --fail --silent "http://127.0.0.1:$proxy_port/api/v1/enterprise/keys"
 		cat "$work_dir/caddy.log" >&2
 		exit 1
 	fi
-	if [ "$attempt" -ge 50 ]; then
+	if [ "$attempt" -ge 300 ]; then
 		echo "Caddy proxy did not become ready" >&2
 		cat "$work_dir/caddy.log" >&2
 		exit 1
@@ -145,7 +159,7 @@ if [ "$post_status" != 201 ]; then
 fi
 assert_single_origin "$post_headers"
 
-if grep -Eiq '^Access-Control-(Allow|Expose|Max-Age)' "$caddyfile"; then
+if grep -Eiq '^[[:space:]]*[+?>-]*Access-Control-(Allow|Expose|Max-Age)' "$caddyfile"; then
 	echo "deployment Caddyfile must delegate CORS responses to the application" >&2
 	exit 1
 fi

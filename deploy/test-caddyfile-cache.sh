@@ -50,7 +50,7 @@ if ! printf '%s\n' "$normalized_config" | grep -Eq '^reverse_proxy localhost:808
 	exit 1
 fi
 
-if printf '%s\n' "$normalized_config" | grep -Eiq '^Access-Control-(Allow|Expose|Max-Age)'; then
+if printf '%s\n' "$normalized_config" | grep -Eiq '^[+?>-]*Access-Control-(Allow|Expose|Max-Age)'; then
 	echo "Caddyfile must not add CORS response headers; the application owns the CORS contract" >&2
 	exit 1
 fi
