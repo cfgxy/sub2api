@@ -50,16 +50,13 @@ if ! printf '%s\n' "$normalized_config" | grep -Eq '^reverse_proxy localhost:808
 	exit 1
 fi
 
-if ! printf '%s\n' "$normalized_config" | grep -Fxq 'Access-Control-Allow-Headers Content-Type, Authorization, X-Requested-With, Idempotency-Key'; then
-	echo "Caddyfile must allow Idempotency-Key for browser preflight requests" >&2
+if printf '%s\n' "$normalized_config" | grep -Eiq '^Access-Control-(Allow|Expose|Max-Age)'; then
+	echo "Caddyfile must not add CORS response headers; the application owns the CORS contract" >&2
 	exit 1
 fi
 
-if ! printf '%s\n' "$normalized_config" | grep -Fxq '@cors_preflight {' \
-	|| ! printf '%s\n' "$normalized_config" | grep -Fxq 'method OPTIONS' \
-	|| ! printf '%s\n' "$normalized_config" | grep -Fxq 'handle @cors_preflight {' \
-	|| ! printf '%s\n' "$normalized_config" | grep -Fxq 'respond 204'; then
-	echo "Caddyfile must short-circuit CORS OPTIONS preflight requests" >&2
+if printf '%s\n' "$normalized_config" | grep -Eiq '^@cors_preflight([[:space:]]|$)|^handle[[:space:]]+@cors_preflight([[:space:]]|$)|^method[[:space:]]+OPTIONS$|^respond[[:space:]]+204$'; then
+	echo "Caddyfile must not short-circuit CORS OPTIONS requests; the application owns preflight handling" >&2
 	exit 1
 fi
 
@@ -95,4 +92,4 @@ if [ "$actual_encode_block" != "$expected_encode_block" ]; then
 	exit 1
 fi
 
-echo "Caddyfile preserves backend cache policy, SSE streaming, and non-SSE compression"
+echo "Caddyfile preserves application-owned CORS, cache policy, SSE streaming, and non-SSE compression"

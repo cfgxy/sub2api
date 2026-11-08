@@ -25,23 +25,6 @@ api.sub2api.com {
 	}
 
 	# =========================================================================
-	# CORS 预检
-	# =========================================================================
-	header {
-		Access-Control-Allow-Origin *
-		Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
-		Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Idempotency-Key"
-		Access-Control-Max-Age 86400
-	}
-
-	@cors_preflight {
-		method OPTIONS
-	}
-	handle @cors_preflight {
-		respond 204
-	}
-
-	# =========================================================================
 	# 反向代理配置
 	# =========================================================================
 	handle {
