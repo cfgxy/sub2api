@@ -152,6 +152,28 @@ func TestCORS_PreflightAllowedOrigin_ReturnsNoContent(t *testing.T) {
 		"允许的 origin 的 preflight 请求应返回 204")
 }
 
+func TestCORS_PreflightAllowsIdempotencyKey(t *testing.T) {
+	cfg := config.CORSConfig{
+		AllowedOrigins:   []string{"https://qiye.v2.huayuebridge.com"},
+		AllowCredentials: true,
+	}
+	middleware := CORS(cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodOptions, "/api/v1/enterprise/keys", nil)
+	c.Request.Header.Set("Origin", "https://qiye.v2.huayuebridge.com")
+	c.Request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	c.Request.Header.Set("Access-Control-Request-Headers", "Idempotency-Key")
+
+	middleware(c)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, "https://qiye.v2.huayuebridge.com", w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Contains(t, w.Header().Get("Access-Control-Allow-Methods"), http.MethodPost)
+	assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "Idempotency-Key")
+}
+
 func TestCORS_WildcardOrigin_AllowsAny(t *testing.T) {
 	cfg := config.CORSConfig{
 		AllowedOrigins:   []string{"*"},
