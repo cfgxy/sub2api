@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -137,7 +138,7 @@ func TestEnterpriseEmployeeUnknownCostReservationSerializesAndSettlesActualCost(
 			requestID := fmt.Sprintf("reservation-unknown-cost-%d-%d", time.Now().UnixNano(), index)
 			<-start
 			result, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
-				fixture, requestID, strings.Repeat(string(value), 64), 4,
+				fixture, requestID, strings.Repeat(string(value), 64), 6,
 			))
 			attempts <- attempt{requestID: requestID, result: result, err: err}
 		}(i, fingerprintByte)
@@ -181,7 +182,7 @@ func TestEnterpriseEmployeeUnknownCostReservationBlocksKnownCostUntilSettled(t *
 
 	unknownRequestID := fmt.Sprintf("reservation-unknown-before-known-%d", time.Now().UnixNano())
 	_, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
-		fixture, unknownRequestID, strings.Repeat("a", 64), 4,
+		fixture, unknownRequestID, strings.Repeat("a", 64), 6,
 	))
 	require.NoError(t, err)
 
@@ -261,6 +262,103 @@ func TestEnterpriseEmployeeUsageReservationIdempotentLifecycleAndConflicts(t *te
 	var usage float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
 	require.InDelta(t, 4, usage, 0.000000001)
+}
+
+func TestEnterpriseEmployeeCoreBillingRejectsSettlementAboveReservation(t *testing.T) {
+	ctx := context.Background()
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 0)
+	repo := NewUsageBillingRepository(nil, integrationDB).(*usageBillingRepository)
+	requestID := fmt.Sprintf("reservation-core-overage-%d", time.Now().UnixNano())
+
+	_, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
+		fixture, requestID, strings.Repeat("a", 64), 5,
+	))
+	require.NoError(t, err)
+
+	_, err = repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID: requestID, APIKeyID: fixture.apiKeyID,
+		APIKeyRateLimitCost: 6, EnterpriseEmployeeReservation: true,
+		EnterpriseEmployeeActualUSD: 6,
+	})
+	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeSettlementExceedsReservation)
+
+	var status string
+	var actual *float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status, actual_usd
+		FROM enterprise_employee_usage_reservations
+		WHERE request_id = $1 AND source_api_key_id = $2`, requestID, fixture.apiKeyID).Scan(&status, &actual))
+	require.Equal(t, "reserved", status)
+	require.Nil(t, actual)
+
+	var usage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
+	require.Zero(t, usage, "超额核心结算必须回滚 API Key 用量")
+
+	_, err = repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID: requestID, APIKeyID: fixture.apiKeyID,
+		APIKeyRateLimitCost: 5, EnterpriseEmployeeReservation: true,
+		EnterpriseEmployeeActualUSD: 5,
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.RecoverEnterpriseEmployeeUsage(ctx, fixture.apiKeyID))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
+	require.InDelta(t, 5, usage, 0.000000001)
+}
+
+func TestEnterpriseEmployeeDirectSettlementRejectsOverageAndRemainsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 0)
+	repo := NewUsageBillingRepository(nil, integrationDB).(*usageBillingRepository)
+	requestID := fmt.Sprintf("reservation-direct-overage-%d", time.Now().UnixNano())
+
+	_, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
+		fixture, requestID, strings.Repeat("b", 64), 5,
+	))
+	require.NoError(t, err)
+
+	for name, invalidAmount := range map[string]float64{
+		"negative":          -1,
+		"nan":               math.NaN(),
+		"positive infinity": math.Inf(1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := repo.SettleEnterpriseEmployeeUsage(ctx, &service.EnterpriseEmployeeUsageSettlementCommand{
+				RequestID: requestID, SourceAPIKeyID: fixture.apiKeyID, ActualUSD: invalidAmount,
+			})
+			require.ErrorIs(t, err, service.ErrEnterpriseEmployeeReservationStateConflict)
+		})
+	}
+
+	_, err = repo.SettleEnterpriseEmployeeUsage(ctx, &service.EnterpriseEmployeeUsageSettlementCommand{
+		RequestID: requestID, SourceAPIKeyID: fixture.apiKeyID, ActualUSD: 6,
+	})
+	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeSettlementExceedsReservation)
+
+	var status string
+	var actual *float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT status, actual_usd
+		FROM enterprise_employee_usage_reservations
+		WHERE request_id = $1 AND source_api_key_id = $2`, requestID, fixture.apiKeyID).Scan(&status, &actual))
+	require.Equal(t, "reserved", status)
+	require.Nil(t, actual)
+
+	settled, err := repo.SettleEnterpriseEmployeeUsage(ctx, &service.EnterpriseEmployeeUsageSettlementCommand{
+		RequestID: requestID, SourceAPIKeyID: fixture.apiKeyID, ActualUSD: 5,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "settled", settled.Status)
+
+	replayed, err := repo.SettleEnterpriseEmployeeUsage(ctx, &service.EnterpriseEmployeeUsageSettlementCommand{
+		RequestID: requestID, SourceAPIKeyID: fixture.apiKeyID, ActualUSD: 5,
+	})
+	require.NoError(t, err)
+	require.Equal(t, settled.ReservationID, replayed.ReservationID)
+
+	var usage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
+	require.InDelta(t, 5, usage, 0.000000001, "重复 direct settlement 不能重复增加 API Key 用量")
 }
 
 func TestEnterpriseEmployeeUsageReservationReleaseIsIdempotentAndBlockedAfterBillingCommit(t *testing.T) {
@@ -434,8 +532,8 @@ func TestEnterpriseEmployeeDelayedSettlementPreservesActualCostAndBlocksSubseque
 	require.NoError(t, err)
 	_, err = repo.Apply(ctx, &service.UsageBillingCommand{
 		RequestID: requestID, APIKeyID: fixture.apiKeyID,
-		APIKeyRateLimitCost: 6, EnterpriseEmployeeReservation: true,
-		EnterpriseEmployeeActualUSD: 6,
+		APIKeyRateLimitCost: 5, EnterpriseEmployeeReservation: true,
+		EnterpriseEmployeeActualUSD: 5,
 	})
 	require.NoError(t, err)
 
@@ -448,7 +546,7 @@ func TestEnterpriseEmployeeDelayedSettlementPreservesActualCostAndBlocksSubseque
 
 	var usage float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
-	require.InDelta(t, 6, usage, 0.000000001)
+	require.InDelta(t, 5, usage, 0.000000001)
 
 	_, err = repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
 		fixture, requestID+"-after-settlement", strings.Repeat("d", 64), 1,
@@ -463,7 +561,7 @@ func TestEnterpriseEmployeeDelayedSettlementPreservesActualCostAndBlocksSubseque
 		WHERE request_id = $1 AND source_api_key_id = $2`, requestID, fixture.apiKeyID).Scan(&status, &actual))
 	require.Equal(t, "settled", status)
 	require.NotNil(t, actual)
-	require.InDelta(t, 6, *actual, 0.000000001)
+	require.InDelta(t, 5, *actual, 0.000000001)
 }
 
 func TestEnterpriseEmployeeUsageSettlementFollowsSuccessorAndDoesNotPolluteAdvancedWindow(t *testing.T) {
