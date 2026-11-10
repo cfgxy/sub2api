@@ -392,6 +392,13 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	var poolExhausted sql.NullBool
 	var poolAnchor sql.NullTime
 	var subscriptionID sql.NullInt64
+	poolJoin := `enterprise_subscription.enterprise_id = enterprise.id AND enterprise_subscription.status = 'active'`
+	poolArgs := []any{enterpriseID}
+	if currentWeek != nil {
+		// 订阅轮换期间，池额度必须与 usage 和返回给分配控件的订阅保持一致。
+		poolJoin += ` AND enterprise_subscription.id = $2`
+		poolArgs = append(poolArgs, currentWeek.SubscriptionID)
+	}
 	if err := h.owner.service.db.QueryRowContext(ctx, `
 		SELECT enterprise_subscription.id,
 		       CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL
@@ -407,13 +414,13 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		       upstream_subscription.weekly_window_start
 		FROM enterprises AS enterprise
 		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
-		  ON enterprise_subscription.enterprise_id = enterprise.id AND enterprise_subscription.status = 'active'
+			  ON `+poolJoin+`
 		LEFT JOIN user_subscriptions AS upstream_subscription
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
 		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
 		 AND upstream_subscription.deleted_at IS NULL
 		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
-		WHERE enterprise.id = $1`, enterpriseID).Scan(
+			WHERE enterprise.id = $1`, poolArgs...).Scan(
 		&subscriptionID, &poolStatus, &plan, &subscriptionStatus, &poolLimit, &poolUsed, &poolRemaining, &poolExhausted, &poolAnchor); err != nil {
 		return nil, err
 	}
@@ -439,14 +446,18 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		anchor := poolAnchor.Time
 		result.PoolWindowAnchor = &anchor
 	}
-	if subscriptionID.Valid {
+	observedSubscriptionID := subscriptionID
+	if currentWeek != nil {
+		observedSubscriptionID = sql.NullInt64{Int64: currentWeek.SubscriptionID, Valid: true}
+	}
+	if observedSubscriptionID.Valid {
 		var observedAt sql.NullTime
 		if err := h.owner.service.db.QueryRowContext(ctx, `
 			SELECT observed_at
 			FROM enterprise_subscription_windows
 			WHERE enterprise_id = $1 AND subscription_id = $2
 			ORDER BY observed_weekly_window_start DESC, observed_at DESC
-			LIMIT 1`, enterpriseID, subscriptionID.Int64).Scan(&observedAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				LIMIT 1`, enterpriseID, observedSubscriptionID.Int64).Scan(&observedAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
 		if observedAt.Valid {

@@ -754,12 +754,14 @@ function handlePromoCodeInput(): void {
 }
 
 async function validatePromoCodeDebounced(code: string): Promise<void> {
-  if (!code.trim()) return
+  const normalizedCode = code.trim()
+  if (!normalizedCode) return
 
   promoValidating.value = true
 
   try {
-    const result = await validatePromoCode(code)
+    const result = await validatePromoCode(normalizedCode)
+    if (formData.promo_code.trim() !== normalizedCode) return
 
     if (result.valid) {
       promoValidation.valid = true
@@ -775,11 +777,14 @@ async function validatePromoCodeDebounced(code: string): Promise<void> {
     }
   } catch (error) {
     console.error('Failed to validate promo code:', error)
+    if (formData.promo_code.trim() !== normalizedCode) return
     promoValidation.valid = false
     promoValidation.invalid = true
     promoValidation.message = t('auth.promoCodeInvalid')
   } finally {
-    promoValidating.value = false
+    if (formData.promo_code.trim() === normalizedCode) {
+      promoValidating.value = false
+    }
   }
 }
 
@@ -826,10 +831,14 @@ function handleInvitationCodeInput(): void {
 }
 
 async function validateInvitationCodeDebounced(code: string): Promise<void> {
+  const normalizedCode = code.trim()
+  if (!normalizedCode) return
+
   invitationValidating.value = true
 
   try {
-    const result = await validateInvitationCode(code)
+    const result = await validateInvitationCode(normalizedCode)
+    if (formData.invitation_code.trim() !== normalizedCode) return
 
     if (result.valid) {
       invitationValidation.valid = true
@@ -841,11 +850,14 @@ async function validateInvitationCodeDebounced(code: string): Promise<void> {
       invitationValidation.message = getInvitationErrorMessage(result.error_code)
     }
   } catch {
+    if (formData.invitation_code.trim() !== normalizedCode) return
     invitationValidation.valid = false
     invitationValidation.invalid = true
     invitationValidation.message = t('auth.invitationCodeInvalid')
   } finally {
-    invitationValidating.value = false
+    if (formData.invitation_code.trim() === normalizedCode) {
+      invitationValidating.value = false
+    }
   }
 }
 
