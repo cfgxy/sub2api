@@ -599,34 +599,36 @@ type PublicSettingsInjectionPayload struct {
 	AliyunCaptchaPrefix                 string                   `json:"aliyun_captcha_prefix"`
 	AliyunCaptchaRegion                 string                   `json:"aliyun_captcha_region"`
 	SiteName                            string                   `json:"site_name"`
-	SiteLogo                            string                   `json:"site_logo"`
+	SiteLogo                            string                   `json:"site_logo,omitempty"`
 	SiteSubtitle                        string                   `json:"site_subtitle"`
 	APIBaseURL                          string                   `json:"api_base_url"`
 	ContactInfo                         string                   `json:"contact_info"`
 	DocURL                              string                   `json:"doc_url"`
-	HomeContent                         string                   `json:"home_content"`
-	CompactHomeEnabled                  bool                     `json:"compact_home_enabled"`
-	HideCcsImportButton                 bool                     `json:"hide_ccs_import_button"`
-	PurchaseSubscriptionEnabled         bool                     `json:"purchase_subscription_enabled"`
-	PurchaseSubscriptionURL             string                   `json:"purchase_subscription_url"`
-	TableDefaultPageSize                int                      `json:"table_default_page_size"`
-	TablePageSizeOptions                []int                    `json:"table_page_size_options"`
-	CustomMenuItems                     json.RawMessage          `json:"custom_menu_items"`
-	CustomEndpoints                     json.RawMessage          `json:"custom_endpoints"`
-	LinuxDoOAuthEnabled                 bool                     `json:"linuxdo_oauth_enabled"`
-	DingTalkOAuthEnabled                bool                     `json:"dingtalk_oauth_enabled"`
-	WeChatOAuthEnabled                  bool                     `json:"wechat_oauth_enabled"`
-	WeChatOAuthOpenEnabled              bool                     `json:"wechat_oauth_open_enabled"`
-	WeChatOAuthMPEnabled                bool                     `json:"wechat_oauth_mp_enabled"`
-	WeChatOAuthMobileEnabled            bool                     `json:"wechat_oauth_mobile_enabled"`
-	OIDCOAuthEnabled                    bool                     `json:"oidc_oauth_enabled"`
-	OIDCOAuthProviderName               string                   `json:"oidc_oauth_provider_name"`
-	GitHubOAuthEnabled                  bool                     `json:"github_oauth_enabled"`
-	GoogleOAuthEnabled                  bool                     `json:"google_oauth_enabled"`
-	BackendModeEnabled                  bool                     `json:"backend_mode_enabled"`
-	PaymentEnabled                      bool                     `json:"payment_enabled"`
-	PaymentBalanceDisabled              bool                     `json:"payment_balance_disabled"`
-	Version                             string                   `json:"version"`
+	// HomeContent 可能包含大型自定义 HTML，应用挂载后再拉取，避免增加所有匿名 HTML 响应体积。
+	HomeContent                 string          `json:"home_content,omitempty"`
+	DeferredPublicSettingsFetch bool            `json:"deferred_public_settings_fetch,omitempty"`
+	CompactHomeEnabled          bool            `json:"compact_home_enabled"`
+	HideCcsImportButton         bool            `json:"hide_ccs_import_button"`
+	PurchaseSubscriptionEnabled bool            `json:"purchase_subscription_enabled"`
+	PurchaseSubscriptionURL     string          `json:"purchase_subscription_url"`
+	TableDefaultPageSize        int             `json:"table_default_page_size"`
+	TablePageSizeOptions        []int           `json:"table_page_size_options"`
+	CustomMenuItems             json.RawMessage `json:"custom_menu_items"`
+	CustomEndpoints             json.RawMessage `json:"custom_endpoints"`
+	LinuxDoOAuthEnabled         bool            `json:"linuxdo_oauth_enabled"`
+	DingTalkOAuthEnabled        bool            `json:"dingtalk_oauth_enabled"`
+	WeChatOAuthEnabled          bool            `json:"wechat_oauth_enabled"`
+	WeChatOAuthOpenEnabled      bool            `json:"wechat_oauth_open_enabled"`
+	WeChatOAuthMPEnabled        bool            `json:"wechat_oauth_mp_enabled"`
+	WeChatOAuthMobileEnabled    bool            `json:"wechat_oauth_mobile_enabled"`
+	OIDCOAuthEnabled            bool            `json:"oidc_oauth_enabled"`
+	OIDCOAuthProviderName       string          `json:"oidc_oauth_provider_name"`
+	GitHubOAuthEnabled          bool            `json:"github_oauth_enabled"`
+	GoogleOAuthEnabled          bool            `json:"google_oauth_enabled"`
+	BackendModeEnabled          bool            `json:"backend_mode_enabled"`
+	PaymentEnabled              bool            `json:"payment_enabled"`
+	PaymentBalanceDisabled      bool            `json:"payment_balance_disabled"`
+	Version                     string          `json:"version"`
 	// 服务器全局时区（IANA 名称与当前 UTC 偏移），高峰时段等服务端本地时间窗口的展示标注用
 	ServerTimezone              string  `json:"server_timezone"`
 	ServerUTCOffset             string  `json:"server_utc_offset"`
@@ -694,12 +696,12 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AliyunCaptchaPrefix:                 settings.AliyunCaptchaPrefix,
 		AliyunCaptchaRegion:                 settings.AliyunCaptchaRegion,
 		SiteName:                            settings.SiteName,
-		SiteLogo:                            settings.SiteLogo,
+		SiteLogo:                            startupSiteLogo(settings.SiteLogo),
 		SiteSubtitle:                        settings.SiteSubtitle,
 		APIBaseURL:                          settings.APIBaseURL,
 		ContactInfo:                         settings.ContactInfo,
 		DocURL:                              settings.DocURL,
-		HomeContent:                         settings.HomeContent,
+		DeferredPublicSettingsFetch:         hasDeferredPublicSettings(settings),
 		CompactHomeEnabled:                  settings.CompactHomeEnabled,
 		HideCcsImportButton:                 settings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:         settings.PurchaseSubscriptionEnabled,
@@ -745,6 +747,23 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
 	}, nil
+}
+
+// startupSiteLogo 保留普通 URL 品牌在前端挂载前可用。data URL 延后加载，避免同一图片同时出现在
+// HTML 配置和 favicon 中而放大匿名入口负载。
+func startupSiteLogo(siteLogo string) string {
+	if isDataImageURL(siteLogo) {
+		return ""
+	}
+	return siteLogo
+}
+
+func hasDeferredPublicSettings(settings *PublicSettings) bool {
+	return settings.HomeContent != "" || isDataImageURL(settings.SiteLogo)
+}
+
+func isDataImageURL(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "data:image/")
 }
 
 // filterUserVisibleMenuItems filters out admin-only menu items from a raw JSON

@@ -114,10 +114,10 @@ func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
 			AddRow(int64(22), "employee-zero@example.com", int64(3), int64(3), "200.00000000", "50.00000000", "150.00000000", "0.00000000").
 			AddRow(int64(23), "employee-over@example.com", int64(3), int64(2), "100.00000000", "150.00000000", "0", "50.0000000000"))
-	mock.ExpectQuery(`SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL`).
-		WithArgs(int64(7)).
+	mock.ExpectQuery(`(?s)SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL.*enterprise_subscription\.id = \$2`).
+		WithArgs(int64(7), int64(55)).
 		WillReturnRows(sqlmock.NewRows([]string{"subscription_id", "source_status", "plan", "subscription_status", "pool_limit", "pool_used", "pool_remaining", "pool_exhausted", "pool_anchor"}).
-			AddRow(int64(55), "available", "Business", "active", "550.00000000", "220.00000000", "330.00000000", false, time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)))
+			AddRow(int64(66), "available", "Business", "active", "550.00000000", "220.00000000", "330.00000000", false, time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)))
 	mock.ExpectQuery(`(?s)SELECT observed_at\s+FROM enterprise_subscription_windows`).
 		WithArgs(int64(7), int64(55)).
 		WillReturnRows(sqlmock.NewRows([]string{"observed_at"}))
@@ -156,10 +156,10 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
 			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75", "9.75", "0"))
-	mock.ExpectQuery(`SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL`).
-		WithArgs(int64(7)).
+	mock.ExpectQuery(`(?s)SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL.*enterprise_subscription\.id = \$2`).
+		WithArgs(int64(7), int64(55)).
 		WillReturnRows(sqlmock.NewRows([]string{"subscription_id", "source_status", "plan", "subscription_status", "pool_limit", "pool_used", "pool_remaining", "pool_exhausted", "pool_anchor"}).
-			AddRow(int64(55), "available", "Business", "active", "100", "2.75", "97.25", false, time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)))
+			AddRow(int64(55), "available", "Business", "active", "100", "2.75", "97.25", false, time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)))
 	mock.ExpectQuery(`(?s)SELECT observed_at\s+FROM enterprise_subscription_windows`).
 		WithArgs(int64(7), int64(55)).
 		WillReturnRows(sqlmock.NewRows([]string{"observed_at"}).AddRow(time.Date(2026, 9, 8, 10, 32, 0, 0, time.UTC)))
@@ -184,6 +184,9 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	require.Equal(t, "available", result.PoolSourceStatus)
 	require.NotNil(t, result.SubscriptionID)
 	require.Equal(t, int64(55), *result.SubscriptionID)
+	require.NotNil(t, result.PoolWindowAnchor)
+	require.Equal(t, anchor, *result.PoolWindowAnchor,
+		"无筛选摘要必须返回规范当前周，而非随后总池查询中可能变化的窗口")
 	require.NotNil(t, result.PoolObservedAt)
 	require.Equal(t, time.Date(2026, 9, 8, 10, 32, 0, 0, time.UTC), *result.PoolObservedAt)
 	require.Empty(t, result.ScheduledSubscriptionPlan)

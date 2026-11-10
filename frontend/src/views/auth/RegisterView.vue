@@ -542,6 +542,13 @@ const registrationActionDisabled = computed(
   () => isLoading.value || !settingsLoaded.value || agreementGateActive.value
 )
 
+// 服务端在首个 HTML 响应中注入认证所需的设置。首页正文可以延后加载，
+// 但认证控件必须立即使用同一份同源配置，避免异步刷新期间长期不可操作。
+if (typeof window !== 'undefined' && window.__APP_CONFIG__) {
+  applyPublicSettings(window.__APP_CONFIG__)
+  settingsLoaded.value = true
+}
+
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {
     appStore.showError(value)
@@ -563,32 +570,7 @@ onMounted(async () => {
 
   try {
     const settings = await getPublicSettings()
-    registrationEnabled.value = settings.registration_enabled
-    emailVerifyEnabled.value = settings.email_verify_enabled
-    promoCodeEnabled.value = settings.promo_code_enabled
-    invitationCodeEnabled.value = settings.invitation_code_enabled
-    affiliateEnabled.value = settings.affiliate_enabled
-    turnstileEnabled.value = settings.turnstile_enabled
-    turnstileSiteKey.value = settings.turnstile_site_key || ''
-    tencentCaptchaEnabled.value = settings.tencent_captcha_enabled === true
-    tencentCaptchaAppId.value = settings.tencent_captcha_app_id || ''
-    tencentCaptchaRegion.value = settings.tencent_captcha_region || 'cn'
-    aliyunCaptchaEnabled.value = settings.aliyun_captcha_enabled === true
-    aliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
-    aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
-    aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
-    siteName.value = settings.site_name || 'Sub2API'
-    linuxdoOAuthEnabled.value = settings.linuxdo_oauth_enabled
-    wechatOAuthEnabled.value = isWeChatWebOAuthEnabled(settings)
-    oidcOAuthEnabled.value = settings.oidc_oauth_enabled
-    oidcOAuthProviderName.value = settings.oidc_oauth_provider_name || 'OIDC'
-    githubOAuthEnabled.value = settings.github_oauth_enabled
-    googleOAuthEnabled.value = settings.google_oauth_enabled
-    registrationEmailSuffixWhitelist.value = normalizeRegistrationEmailSuffixWhitelist(
-      settings.registration_email_suffix_whitelist || []
-    )
-    emailDomainQuotaEnabled.value = settings.registration_email_domain_quota_enabled === true
-    applyLoginAgreementSettings(settings)
+    applyPublicSettings(settings)
 
     // Read promo code from URL parameter only if promo code is enabled
     if (promoCodeEnabled.value) {
@@ -626,6 +608,64 @@ onUnmounted(() => {
 })
 
 // ==================== Login Agreement ====================
+
+function applyPublicSettings(settings: {
+  registration_enabled?: boolean
+  email_verify_enabled?: boolean
+  promo_code_enabled?: boolean
+  invitation_code_enabled?: boolean
+  affiliate_enabled?: boolean
+  turnstile_enabled?: boolean
+  turnstile_site_key?: string
+  tencent_captcha_enabled?: boolean
+  tencent_captcha_app_id?: string
+  tencent_captcha_region?: string
+  aliyun_captcha_enabled?: boolean
+  aliyun_captcha_scene_id?: string
+  aliyun_captcha_prefix?: string
+  aliyun_captcha_region?: string
+  site_name?: string
+  linuxdo_oauth_enabled?: boolean
+  wechat_oauth_enabled?: boolean
+  oidc_oauth_enabled?: boolean
+  oidc_oauth_provider_name?: string
+  github_oauth_enabled?: boolean
+  google_oauth_enabled?: boolean
+  registration_email_suffix_whitelist?: string[]
+  registration_email_domain_quota_enabled?: boolean
+  login_agreement_enabled?: boolean
+  login_agreement_mode?: string
+  login_agreement_updated_at?: string
+  login_agreement_revision?: string
+  login_agreement_documents?: LoginAgreementDocument[]
+}): void {
+  registrationEnabled.value = settings.registration_enabled === true
+  emailVerifyEnabled.value = settings.email_verify_enabled === true
+  promoCodeEnabled.value = settings.promo_code_enabled === true
+  invitationCodeEnabled.value = settings.invitation_code_enabled === true
+  affiliateEnabled.value = settings.affiliate_enabled === true
+  turnstileEnabled.value = settings.turnstile_enabled === true
+  turnstileSiteKey.value = settings.turnstile_site_key || ''
+  tencentCaptchaEnabled.value = settings.tencent_captcha_enabled === true
+  tencentCaptchaAppId.value = settings.tencent_captcha_app_id || ''
+  tencentCaptchaRegion.value = settings.tencent_captcha_region || 'cn'
+  aliyunCaptchaEnabled.value = settings.aliyun_captcha_enabled === true
+  aliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
+  aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
+  aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
+  siteName.value = settings.site_name || 'Sub2API'
+  linuxdoOAuthEnabled.value = settings.linuxdo_oauth_enabled === true
+  wechatOAuthEnabled.value = isWeChatWebOAuthEnabled(settings)
+  oidcOAuthEnabled.value = settings.oidc_oauth_enabled === true
+  oidcOAuthProviderName.value = settings.oidc_oauth_provider_name || 'OIDC'
+  githubOAuthEnabled.value = settings.github_oauth_enabled === true
+  googleOAuthEnabled.value = settings.google_oauth_enabled === true
+  registrationEmailSuffixWhitelist.value = normalizeRegistrationEmailSuffixWhitelist(
+    settings.registration_email_suffix_whitelist || []
+  )
+  emailDomainQuotaEnabled.value = settings.registration_email_domain_quota_enabled === true
+  applyLoginAgreementSettings(settings)
+}
 
 function applyLoginAgreementSettings(settings: {
   login_agreement_enabled?: boolean
@@ -714,12 +754,14 @@ function handlePromoCodeInput(): void {
 }
 
 async function validatePromoCodeDebounced(code: string): Promise<void> {
-  if (!code.trim()) return
+  const normalizedCode = code.trim()
+  if (!normalizedCode) return
 
   promoValidating.value = true
 
   try {
-    const result = await validatePromoCode(code)
+    const result = await validatePromoCode(normalizedCode)
+    if (formData.promo_code.trim() !== normalizedCode) return
 
     if (result.valid) {
       promoValidation.valid = true
@@ -735,11 +777,14 @@ async function validatePromoCodeDebounced(code: string): Promise<void> {
     }
   } catch (error) {
     console.error('Failed to validate promo code:', error)
+    if (formData.promo_code.trim() !== normalizedCode) return
     promoValidation.valid = false
     promoValidation.invalid = true
     promoValidation.message = t('auth.promoCodeInvalid')
   } finally {
-    promoValidating.value = false
+    if (formData.promo_code.trim() === normalizedCode) {
+      promoValidating.value = false
+    }
   }
 }
 
@@ -786,10 +831,14 @@ function handleInvitationCodeInput(): void {
 }
 
 async function validateInvitationCodeDebounced(code: string): Promise<void> {
+  const normalizedCode = code.trim()
+  if (!normalizedCode) return
+
   invitationValidating.value = true
 
   try {
-    const result = await validateInvitationCode(code)
+    const result = await validateInvitationCode(normalizedCode)
+    if (formData.invitation_code.trim() !== normalizedCode) return
 
     if (result.valid) {
       invitationValidation.valid = true
@@ -801,11 +850,14 @@ async function validateInvitationCodeDebounced(code: string): Promise<void> {
       invitationValidation.message = getInvitationErrorMessage(result.error_code)
     }
   } catch {
+    if (formData.invitation_code.trim() !== normalizedCode) return
     invitationValidation.valid = false
     invitationValidation.invalid = true
     invitationValidation.message = t('auth.invitationCodeInvalid')
   } finally {
-    invitationValidating.value = false
+    if (formData.invitation_code.trim() === normalizedCode) {
+      invitationValidating.value = false
+    }
   }
 }
 

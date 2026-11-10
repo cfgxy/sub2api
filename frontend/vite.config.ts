@@ -46,6 +46,28 @@ function injectBranding(html: string, config: { site_name?: string; site_logo?: 
   return brandedHtml
 }
 
+type StartupConfig = Record<string, unknown> & {
+  site_name?: string
+  site_logo?: string
+}
+
+function createStartupConfig(config: StartupConfig): StartupConfig {
+  const startupConfig = { ...config }
+  const homeContent = typeof startupConfig.home_content === 'string' ? startupConfig.home_content : ''
+  const siteLogo = typeof startupConfig.site_logo === 'string' ? startupConfig.site_logo : ''
+
+  // Keep development startup behavior aligned with the embedded production HTML.
+  delete startupConfig.home_content
+  if (/^data:image\//i.test(siteLogo.trim())) {
+    delete startupConfig.site_logo
+  }
+  if (homeContent || /^data:image\//i.test(siteLogo.trim())) {
+    startupConfig.deferred_public_settings_fetch = true
+  }
+
+  return startupConfig
+}
+
 /**
  * Vite 插件：开发模式下注入公开配置到 index.html
  * 与生产模式的后端注入行为保持一致，消除闪烁
@@ -64,8 +86,9 @@ function injectPublicSettings(backendUrl: string): Plugin {
           if (response.ok) {
             const data = await response.json()
             if (data.code === 0 && data.data) {
-              const script = `<script>window.__APP_CONFIG__=${JSON.stringify(data.data)};</script>`
-              return injectBranding(html, data.data).replace('</head>', `${script}\n</head>`)
+	              const startupConfig = createStartupConfig(data.data)
+	              const script = `<script>window.__APP_CONFIG__=${JSON.stringify(startupConfig)};</script>`
+	              return injectBranding(html, startupConfig).replace('</head>', `${script}\n</head>`)
             }
           }
         } catch (e) {

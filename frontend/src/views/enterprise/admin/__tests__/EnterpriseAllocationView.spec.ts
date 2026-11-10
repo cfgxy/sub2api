@@ -150,6 +150,25 @@ describe('EnterpriseAllocationView', () => {
     wrapper.unmount()
   })
 
+  it('blocks allocation adjustments when the authoritative subscription window is missing', async () => {
+    getWorkbenchSummary.mockResolvedValueOnce({
+      total_usage_credit: '0', total_requests: 0, employee_count: 2, active_employee_count: 2,
+      subscription_id: 9, subscription_status: 'active', subscription_plan: 'Business',
+      enterprise_pool_limit: '2400', enterprise_pool_used: '1980', enterprise_pool_remaining: '420', enterprise_pool_exhausted: false,
+      pool_source_status: 'available', pool_source: 'upstream subscription', pool_window_type: 'week',
+      employee_summaries: [], usage_trend: [],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    const adjustmentButton = wrapper.findAll('button').find((item) => item.text() === '调整员工额度')
+    expect(adjustmentButton).toBeDefined()
+    expect(adjustmentButton!.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('订阅周期尚未就绪')
+    expect(listSubscriptionAllocations).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('marks the source unavailable when the summary request fails', async () => {
     getWorkbenchSummary.mockRejectedValueOnce(new Error('source unavailable'))
     const wrapper = mountView()

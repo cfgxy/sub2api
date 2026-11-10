@@ -352,6 +352,13 @@ const authActionDisabled = computed(
   () => isLoading.value || passkeyLoading.value || !publicSettingsLoaded.value || agreementGateActive.value
 )
 
+// 服务端在首个 HTML 响应中注入认证所需的设置。首页正文可以延后加载，
+// 但认证控件必须立即使用同一份同源配置，避免异步刷新期间长期不可操作。
+if (typeof window !== 'undefined' && window.__APP_CONFIG__) {
+  applyPublicSettings(window.__APP_CONFIG__)
+  publicSettingsLoaded.value = true
+}
+
 // 平台管理主体登录职责单一：不继承普通用户入口的 Passkey/OAuth/注册，
 // 会话失效重登也一律回到本入口，不带入通用产品的认证扩展面。
 const isPlatformEntry = computed(() => route.name === 'AdminLogin')
@@ -391,28 +398,7 @@ onMounted(async () => {
 
   try {
     const settings = await getPublicSettings()
-    registrationEnabled.value = settings.registration_enabled === true
-    turnstileEnabled.value = settings.turnstile_enabled
-    turnstileSiteKey.value = settings.turnstile_site_key || ''
-    tencentCaptchaEnabled.value = settings.tencent_captcha_enabled === true
-    tencentCaptchaAppId.value = settings.tencent_captcha_app_id || ''
-    tencentCaptchaRegion.value = settings.tencent_captcha_region || 'cn'
-    aliyunCaptchaEnabled.value = settings.aliyun_captcha_enabled === true
-    aliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
-    aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
-    aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
-    linuxdoOAuthEnabled.value = settings.linuxdo_oauth_enabled
-    dingtalkOAuthEnabled.value = settings.dingtalk_oauth_enabled ?? false
-    wechatOAuthEnabled.value = isWeChatWebOAuthEnabled(settings)
-    backendModeEnabled.value = settings.backend_mode_enabled
-    oidcOAuthEnabled.value = settings.oidc_oauth_enabled
-    oidcOAuthProviderName.value = settings.oidc_oauth_provider_name || 'OIDC'
-    githubOAuthEnabled.value = settings.github_oauth_enabled
-    googleOAuthEnabled.value = settings.google_oauth_enabled
-    backendModeEnabled.value = settings.backend_mode_enabled
-    passwordResetEnabled.value = settings.password_reset_enabled
-    passkeyEnabled.value = settings.passkey_enabled === true
-    applyLoginAgreementSettings(settings)
+    applyPublicSettings(settings)
   } catch (error) {
     console.error('Failed to load public settings:', error)
     loginAgreementEnabled.value = false
@@ -423,6 +409,56 @@ onMounted(async () => {
 })
 
 // ==================== Login Agreement ====================
+
+function applyPublicSettings(settings: {
+  registration_enabled?: boolean
+  turnstile_enabled?: boolean
+  turnstile_site_key?: string
+  tencent_captcha_enabled?: boolean
+  tencent_captcha_app_id?: string
+  tencent_captcha_region?: string
+  aliyun_captcha_enabled?: boolean
+  aliyun_captcha_scene_id?: string
+  aliyun_captcha_prefix?: string
+  aliyun_captcha_region?: string
+  linuxdo_oauth_enabled?: boolean
+  dingtalk_oauth_enabled?: boolean
+  wechat_oauth_enabled?: boolean
+  backend_mode_enabled?: boolean
+  oidc_oauth_enabled?: boolean
+  oidc_oauth_provider_name?: string
+  github_oauth_enabled?: boolean
+  google_oauth_enabled?: boolean
+  password_reset_enabled?: boolean
+  passkey_enabled?: boolean
+  login_agreement_enabled?: boolean
+  login_agreement_mode?: string
+  login_agreement_updated_at?: string
+  login_agreement_revision?: string
+  login_agreement_documents?: LoginAgreementDocument[]
+}): void {
+  registrationEnabled.value = settings.registration_enabled === true
+  turnstileEnabled.value = settings.turnstile_enabled === true
+  turnstileSiteKey.value = settings.turnstile_site_key || ''
+  tencentCaptchaEnabled.value = settings.tencent_captcha_enabled === true
+  tencentCaptchaAppId.value = settings.tencent_captcha_app_id || ''
+  tencentCaptchaRegion.value = settings.tencent_captcha_region || 'cn'
+  aliyunCaptchaEnabled.value = settings.aliyun_captcha_enabled === true
+  aliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
+  aliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
+  aliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
+  linuxdoOAuthEnabled.value = settings.linuxdo_oauth_enabled === true
+  dingtalkOAuthEnabled.value = settings.dingtalk_oauth_enabled === true
+  wechatOAuthEnabled.value = isWeChatWebOAuthEnabled(settings)
+  backendModeEnabled.value = settings.backend_mode_enabled === true
+  oidcOAuthEnabled.value = settings.oidc_oauth_enabled === true
+  oidcOAuthProviderName.value = settings.oidc_oauth_provider_name || 'OIDC'
+  githubOAuthEnabled.value = settings.github_oauth_enabled === true
+  googleOAuthEnabled.value = settings.google_oauth_enabled === true
+  passwordResetEnabled.value = settings.password_reset_enabled === true
+  passkeyEnabled.value = settings.passkey_enabled === true
+  applyLoginAgreementSettings(settings)
+}
 
 function applyLoginAgreementSettings(settings: {
   login_agreement_enabled?: boolean

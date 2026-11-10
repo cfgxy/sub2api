@@ -5,6 +5,8 @@ import RegisterView from '@/views/auth/RegisterView.vue'
 const {
   getPublicSettingsMock,
   registerMock,
+  validatePromoCodeMock,
+  validateInvitationCodeMock,
   showErrorMock,
   pushMock,
   verifyActionMock,
@@ -12,6 +14,8 @@ const {
 } = vi.hoisted(() => ({
   getPublicSettingsMock: vi.fn(),
   registerMock: vi.fn(),
+  validatePromoCodeMock: vi.fn(),
+  validateInvitationCodeMock: vi.fn(),
   showErrorMock: vi.fn(),
   pushMock: vi.fn(),
   verifyActionMock: vi.fn(),
@@ -69,7 +73,9 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
-    getPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args)
+    getPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args),
+    validatePromoCode: (...args: unknown[]) => validatePromoCodeMock(...args),
+    validateInvitationCode: (...args: unknown[]) => validateInvitationCodeMock(...args)
   }
 })
 
@@ -99,10 +105,13 @@ describe('RegisterView', () => {
   beforeEach(() => {
     getPublicSettingsMock.mockReset()
     registerMock.mockReset()
+    validatePromoCodeMock.mockReset()
+    validateInvitationCodeMock.mockReset()
     showErrorMock.mockReset()
     pushMock.mockReset()
     verifyActionMock.mockReset()
     appStoreMock.cachedPublicSettings = null
+    delete window.__APP_CONFIG__
     sessionStorage.removeItem('register_data')
     verifyActionMock.mockResolvedValue({ token: 'ticket', randstr: 'randstr' })
     getPublicSettingsMock.mockResolvedValue(publicSettings)
@@ -134,6 +143,93 @@ describe('RegisterView', () => {
     const wrapper = mountRegister()
 
     expect(wrapper.find('#promo_code').exists()).toBe(true)
+  })
+
+  it('uses injected settings to enable registration controls while the refresh request is pending', () => {
+    window.__APP_CONFIG__ = {
+      ...publicSettings,
+      turnstile_enabled: false,
+      login_agreement_enabled: false,
+      login_agreement_documents: []
+    } as typeof window.__APP_CONFIG__
+    getPublicSettingsMock.mockReturnValueOnce(new Promise(() => {}))
+
+    const wrapper = mountRegister()
+
+    expect(wrapper.get('#email').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('#password').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('#confirmPassword').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('ignores a stale promo-code validation response after the input changes', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: false,
+      promo_code_enabled: true
+    })
+    let resolveOld!: (result: { valid: boolean; error_code?: string }) => void
+    let resolveNew!: (result: { valid: boolean; bonus_amount?: number }) => void
+    validatePromoCodeMock.mockImplementation((code: string) =>
+      code === 'OLD'
+        ? new Promise<{ valid: boolean; error_code?: string }>((resolve) => { resolveOld = resolve })
+        : new Promise<{ valid: boolean; bonus_amount?: number }>((resolve) => { resolveNew = resolve })
+    )
+
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountRegister()
+      await flushPromises()
+      await wrapper.get('#promo_code').setValue('OLD')
+      await vi.advanceTimersByTimeAsync(500)
+      await wrapper.get('#promo_code').setValue('NEW')
+      await vi.advanceTimersByTimeAsync(500)
+
+      resolveNew({ valid: true, bonus_amount: 1 })
+      await flushPromises()
+      expect(wrapper.get('#promo_code').classes()).toContain('border-green-500')
+
+      resolveOld({ valid: false, error_code: 'PROMO_CODE_NOT_FOUND' })
+      await flushPromises()
+      expect(wrapper.get('#promo_code').classes()).toContain('border-green-500')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores a stale invitation-code validation response after the input changes', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: false,
+      invitation_code_enabled: true
+    })
+    let resolveOld!: (result: { valid: boolean }) => void
+    let resolveNew!: (result: { valid: boolean }) => void
+    validateInvitationCodeMock.mockImplementation((code: string) =>
+      code === 'OLD'
+        ? new Promise<{ valid: boolean }>((resolve) => { resolveOld = resolve })
+        : new Promise<{ valid: boolean }>((resolve) => { resolveNew = resolve })
+    )
+
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountRegister()
+      await flushPromises()
+      await wrapper.get('#invitation_code').setValue('OLD')
+      await vi.advanceTimersByTimeAsync(500)
+      await wrapper.get('#invitation_code').setValue('NEW')
+      await vi.advanceTimersByTimeAsync(500)
+
+      resolveNew({ valid: true })
+      await flushPromises()
+      expect(wrapper.get('#invitation_code').classes()).toContain('border-green-500')
+
+      resolveOld({ valid: false })
+      await flushPromises()
+      expect(wrapper.get('#invitation_code').classes()).toContain('border-green-500')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([
