@@ -30,7 +30,8 @@
     </template>
 
     <template #table>
-      <div class="space-y-5 pb-4">
+      <div class="enterprise-usage-scroll">
+        <div class="space-y-5 pb-4">
         <section v-if="sourceStates.summary === 'unavailable'" class="p-6">
           <EmptyState icon="exclamationTriangle" title="汇总与趋势数据源不可用" action-text="重试" @action="load" />
         </section>
@@ -72,6 +73,7 @@
             <template #empty><EmptyState title="当前筛选条件暂无明细" /></template>
           </DataTable>
         </section>
+        </div>
       </div>
     </template>
 
@@ -164,3 +166,16 @@ function onPage(page: number) { usagePage.value = page; void loadUsage() }
 function onPageSize(size: number) { pageSize.value = size; usagePage.value = 1; void loadUsage() }
 onMounted(load)
 </script>
+
+<style scoped>
+/* 企业用量由多个面板组成，需要独立纵向滚动层承载整个表格插槽。 */
+.enterprise-usage-scroll {
+  @apply min-h-0 flex-1 overflow-y-auto;
+}
+
+@media (max-width: 1023px) {
+  .enterprise-usage-scroll {
+    @apply flex-none min-h-fit overflow-visible;
+  }
+}
+</style>
