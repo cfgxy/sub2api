@@ -50,7 +50,7 @@ type OAuthService struct {
 	refreshGate  *OAuthRefreshGate
 }
 
-// NewOAuthService creates a new OAuth service.
+// NewOAuthService creates a new OAuth service
 func NewOAuthService(proxyRepo ProxyRepository, oauthClient ClaudeOAuthClient, refreshGates ...*OAuthRefreshGate) *OAuthService {
 	var refreshGate *OAuthRefreshGate
 	if len(refreshGates) > 0 {
