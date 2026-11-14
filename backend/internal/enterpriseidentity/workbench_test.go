@@ -229,10 +229,10 @@ func TestListAuditEventsSurvivesEmployeeTerminationAndScopesByEnterprise(t *test
 	employeeID := int64(10)
 	terminatedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*payload->>'employee_id' = \$2::text`).
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND payload->>'employee_id' = \$2::text`).
 		WithArgs(int64(1), employeeID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
-	mock.ExpectQuery(`WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*payload->>'employee_id' = \$2::text\s+ORDER BY created_at DESC, id DESC`).
+	mock.ExpectQuery(`WHERE enterprise_id = \$1 AND payload->>'employee_id' = \$2::text\s+ORDER BY created_at DESC, id DESC`).
 		WithArgs(int64(1), employeeID, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "event_type", "entity_type", "entity_id", "result", "reason", "payload", "actor_ref", "created_at"}).
 			AddRow(int64(99), "employee.terminated", "employee", employeeID, "success", "", []byte(`{"employee_id":10}`), "enterprise_admin:1", terminatedAt))
@@ -246,10 +246,10 @@ func TestListAuditEventsSurvivesEmployeeTerminationAndScopesByEnterprise(t *test
 
 	// The second enterprise's admin queries the same employee_id and must
 	// see nothing: the enterprise_id predicate isolates the two tenants.
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*payload->>'employee_id' = \$2::text`).
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND payload->>'employee_id' = \$2::text`).
 		WithArgs(int64(2), employeeID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
-	mock.ExpectQuery(`WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*payload->>'employee_id' = \$2::text\s+ORDER BY created_at DESC, id DESC`).
+	mock.ExpectQuery(`WHERE enterprise_id = \$1 AND payload->>'employee_id' = \$2::text\s+ORDER BY created_at DESC, id DESC`).
 		WithArgs(int64(2), employeeID, 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "event_type", "entity_type", "entity_id", "result", "reason", "payload", "actor_ref", "created_at"}))
 
@@ -313,19 +313,21 @@ func TestListAuditEventsDefaultsToBusinessSuccessAndAllowsExplicitSecuritySearch
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
 	query := workbenchQuery{Page: 1, PageSize: 20}
 
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*event_type IN`).
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*event_type IN.*employee\.password_reset_by_admin`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
-	mock.ExpectQuery(`(?s)SELECT id, event_type, entity_type, entity_id,.*WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*event_type IN.*ORDER BY created_at DESC`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
+	mock.ExpectQuery(`(?s)SELECT id, event_type, entity_type, entity_id,.*WHERE enterprise_id = \$1 AND COALESCE\(payload->>'result', payload->>'status', 'success'\) = 'success'.*event_type IN.*employee\.password_reset_by_admin.*ORDER BY created_at DESC`).
 		WithArgs(int64(7), 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "event_type", "entity_type", "entity_id", "result", "reason", "payload", "actor_ref", "created_at"}).
-			AddRow(int64(1), "employee.updated", "employee", int64(9), "success", "", []byte(`{"result":"success"}`), "enterprise_admin", time.Now()))
+			AddRow(int64(1), "employee.updated", "employee", int64(9), "success", "", []byte(`{"result":"success"}`), "enterprise_admin", time.Now()).
+			AddRow(int64(2), "employee.password_reset_by_admin", "employee", int64(9), "success", "", []byte(`{"result":"success"}`), "enterprise_admin", time.Now()))
 
 	items, total, err := handler.listAuditEvents(context.Background(), 7, query, "", "", "", "", "", "")
 	require.NoError(t, err)
-	require.Equal(t, int64(1), total)
-	require.Len(t, items, 1)
+	require.Equal(t, int64(2), total)
+	require.Len(t, items, 2)
 	require.Equal(t, "employee.updated", items[0].EventType)
+	require.Equal(t, "employee.password_reset_by_admin", items[1].EventType)
 
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND event_type = \$2`).
 		WithArgs(int64(7), "session.revoke").
@@ -340,5 +342,28 @@ func TestListAuditEventsDefaultsToBusinessSuccessAndAllowsExplicitSecuritySearch
 	require.Equal(t, int64(1), total)
 	require.Len(t, items, 1)
 	require.Equal(t, "session.revoke", items[0].EventType)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListAuditEventsTimeRangeEnablesExplicitSearch(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	startAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	query := workbenchQuery{Page: 1, PageSize: 20, StartAt: &startAt}
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_audit_events WHERE enterprise_id = \$1 AND created_at >= \$2`).
+		WithArgs(int64(7), startAt).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`(?s)SELECT id, event_type, entity_type, entity_id,.*WHERE enterprise_id = \$1 AND created_at >= \$2\s+ORDER BY created_at DESC, id DESC`).
+		WithArgs(int64(7), startAt, 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "event_type", "entity_type", "entity_id", "result", "reason", "payload", "actor_ref", "created_at"}).
+			AddRow(int64(3), "session.revoke", "session", nil, "failure", "concurrent_conflict", []byte(`{"result":"failure"}`), "enterprise_actor", startAt))
+
+	items, total, err := handler.listAuditEvents(context.Background(), 7, query, "", "", "", "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, items, 1)
+	require.Equal(t, "session.revoke", items[0].EventType)
+	require.Equal(t, "failure", items[0].Result)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
