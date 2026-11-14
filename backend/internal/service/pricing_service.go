@@ -142,6 +142,14 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
+	// Fable/Mythos 5.2 share the official price card, including both cache TTLs:
+	// https://platform.claude.com/docs/en/about-claude/pricing
+	claude52FallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken: 8e-6, OutputCostPerToken: 40e-6,
+		CacheCreationInputTokenCost: 10e-6, CacheCreationInputTokenCostAbove1hr: 16e-6,
+		CacheReadInputTokenCost: 0.2e-6,
+		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
+	}
 	claudeOpus55FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6,
 		CacheCreationInputTokenCost: 5e-6, CacheCreationInputTokenCostAbove1hr: 8e-6,
@@ -153,7 +161,7 @@ var (
 	claudeSonnet55FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
 		CacheCreationInputTokenCost: 2.5e-6, CacheCreationInputTokenCostAbove1hr: 4e-6,
-		CacheReadInputTokenCost: 0.2e-6,
+		CacheReadInputTokenCost: 0.1e-6,
 		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
 	}
 	claudeHaiku55FallbackPricing = &LiteLLMModelPricing{
@@ -229,8 +237,10 @@ var (
 type LiteLLMModelPricing struct {
 	CacheCreationInputTokenCostExplicit bool    `json:"-"`
 	InputCostPerToken                   float64 `json:"input_cost_per_token"`
+	InputCostPerAudioToken              float64 `json:"input_cost_per_audio_token"`
 	InputCostPerTokenPriority           float64 `json:"input_cost_per_token_priority"`
 	OutputCostPerToken                  float64 `json:"output_cost_per_token"`
+	OutputCostPerAudioToken             float64 `json:"output_cost_per_audio_token"`
 	OutputCostPerTokenPriority          float64 `json:"output_cost_per_token_priority"`
 	CacheCreationInputTokenCost         float64 `json:"cache_creation_input_token_cost"`
 	CacheCreationInputTokenCostPriority float64 `json:"cache_creation_input_token_cost_priority"`
@@ -267,8 +277,10 @@ type PricingRemoteClient interface {
 // LiteLLMRawEntry 用于解析原始JSON数据
 type LiteLLMRawEntry struct {
 	InputCostPerToken                   *float64 `json:"input_cost_per_token"`
+	InputCostPerAudioToken              *float64 `json:"input_cost_per_audio_token"`
 	InputCostPerTokenPriority           *float64 `json:"input_cost_per_token_priority"`
 	OutputCostPerToken                  *float64 `json:"output_cost_per_token"`
+	OutputCostPerAudioToken             *float64 `json:"output_cost_per_audio_token"`
 	OutputCostPerTokenPriority          *float64 `json:"output_cost_per_token_priority"`
 	CacheCreationInputTokenCost         *float64 `json:"cache_creation_input_token_cost"`
 	CacheCreationInputTokenCostPriority *float64 `json:"cache_creation_input_token_cost_priority"`
@@ -647,10 +659,10 @@ func (s *PricingService) downloadPricingData() error {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save file: %v", err)
 	}
 
-	// 使用远程哈希作为同步锚点，防止重复下载
-	// 当远程哈希不可用时，回退到数据本身的哈希
+	// 只有远程哈希与下载正文一致时才将其作为同步锚点。
+	// 不匹配时保留正文哈希，让下一轮同步重试，避免旧数据被误标为最新。
 	syncHash := dataHashStr
-	if remoteHash != "" {
+	if strings.EqualFold(remoteHash, dataHashStr) {
 		syncHash = remoteHash
 	}
 	hashFile := s.getHashFilePath()
@@ -713,11 +725,17 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		if entry.InputCostPerToken != nil {
 			pricing.InputCostPerToken = *entry.InputCostPerToken
 		}
+		if entry.InputCostPerAudioToken != nil {
+			pricing.InputCostPerAudioToken = *entry.InputCostPerAudioToken
+		}
 		if entry.InputCostPerTokenPriority != nil {
 			pricing.InputCostPerTokenPriority = *entry.InputCostPerTokenPriority
 		}
 		if entry.OutputCostPerToken != nil {
 			pricing.OutputCostPerToken = *entry.OutputCostPerToken
+		}
+		if entry.OutputCostPerAudioToken != nil {
+			pricing.OutputCostPerAudioToken = *entry.OutputCostPerAudioToken
 		}
 		if entry.OutputCostPerTokenPriority != nil {
 			pricing.OutputCostPerTokenPriority = *entry.OutputCostPerTokenPriority
@@ -1451,6 +1469,19 @@ func (s *PricingService) extractBaseName(model string) string {
 // matchByModelFamily 基于模型系列匹配
 func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 	model = normalizeAntigravityClaudeTierAlias(model)
+	var claude52Model string
+	switch {
+	case claude.IsFable52(model):
+		claude52Model = "claude-fable-5-2"
+	case claude.IsMythos52(model):
+		claude52Model = "claude-mythos-5-2"
+	}
+	if claude52Model != "" {
+		if pricing, ok := s.pricingData[claude52Model]; ok {
+			return pricing
+		}
+		return claude52FallbackPricing
+	}
 	if claude.IsOpus55(model) {
 		if pricing, ok := s.pricingData["claude-opus-5-5"]; ok {
 			return pricing

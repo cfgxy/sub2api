@@ -137,6 +137,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
+		SetAllowRealtime(groupIn.AllowRealtime).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
@@ -322,6 +323,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
+		SetAllowRealtime(groupIn.AllowRealtime).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).

@@ -97,6 +97,9 @@ const (
 	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
 	OpenAIEndpointCapabilityAlphaSearch     OpenAIEndpointCapability = "alpha_search"
 	OpenAIEndpointCapabilityLive            OpenAIEndpointCapability = "live"
+	// OpenAIEndpointCapabilityRealtime is the public OpenAI Platform Realtime API.
+	// It is deliberately separate from Live, which targets ChatGPT's private API.
+	OpenAIEndpointCapabilityRealtime OpenAIEndpointCapability = "realtime"
 	// OpenAIEndpointCapabilityGrokMediaGeneration keeps image/video generation
 	// away from Grok accounts that are explicitly disabled or whose billing
 	// entitlement probe was forbidden. Video status lookups intentionally do not
@@ -1945,6 +1948,12 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	switch capability {
 	case OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityRealtime:
+		// Realtime must never select ChatGPT OAuth, PAT, agent identity, or an
+		// OpenAI-compatible provider. The Platform API key stays server-side.
+		if a.Platform != PlatformOpenAI || a.Type != AccountTypeAPIKey || !a.IsOpenAIApiKey() {
+			return false
+		}
 	case OpenAIEndpointCapabilityLive:
 		return a.Platform == PlatformOpenAI &&
 			a.Type == AccountTypeOAuth &&

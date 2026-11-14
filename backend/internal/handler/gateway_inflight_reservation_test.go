@@ -43,7 +43,7 @@ func newInflightTestGinContext() *gin.Context {
 	return c
 }
 
-func TestReserveInflightBalance_SkipsWhenDisabledOrSubscription(t *testing.T) {
+func TestReserveInflightBalance_SkipsWhenDisabledAndEstimatesSubscription(t *testing.T) {
 	cfg := &config.Config{}
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
@@ -60,7 +60,7 @@ func TestReserveInflightBalance_SkipsWhenDisabledOrSubscription(t *testing.T) {
 	done, err = reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, &service.UserSubscription{}, tokenInflightEstimate("m", []byte(`{}`)))
 	require.NoError(t, err)
 	done()
-	require.Equal(t, 0, est.calls, "subscription mode must be unaffected")
+	require.Equal(t, 1, est.calls, "subscription mode must establish its own inflight reservation")
 }
 
 func TestReserveInflightBalance_UnpricedFailOpenByDefaultFailClosedOptIn(t *testing.T) {

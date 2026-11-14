@@ -96,6 +96,34 @@ func TestCalculateCost_RateMultiplier(t *testing.T) {
 	require.InDelta(t, cost1x.ActualCost*2, cost2x.ActualCost, 1e-10)
 }
 
+func TestComputeTokenBreakdown_SeparatesAudioCostsAndAppliesLongContextPricing(t *testing.T) {
+	svc := &BillingService{}
+	pricing := &ModelPricing{
+		InputPricePerToken:          0.001,
+		OutputPricePerToken:         0.002,
+		AudioInputPricePerToken:     0.004,
+		AudioOutputPricePerToken:    0.006,
+		LongContextInputThreshold:   99,
+		LongContextInputMultiplier:  2,
+		LongContextOutputMultiplier: 3,
+	}
+
+	cost := svc.computeTokenBreakdown(pricing, UsageTokens{
+		InputTokens:           10,
+		AudioInputTokens:      90,
+		OutputTokens:          5,
+		AudioOutputTokens:     20,
+		TokenBucketsSeparated: true,
+	}, 1, "", true)
+
+	require.InDelta(t, 0.02, cost.InputCost, 1e-12)
+	require.InDelta(t, 0.72, cost.AudioInputCost, 1e-12)
+	require.InDelta(t, 0.03, cost.OutputCost, 1e-12)
+	require.InDelta(t, 0.36, cost.AudioOutputCost, 1e-12)
+	require.InDelta(t, 1.13, cost.TotalCost, 1e-12)
+	require.True(t, cost.LongContextBillingApplied)
+}
+
 func TestGetModelPricing_FallbackMatchesByFamily(t *testing.T) {
 	svc := newTestBillingService()
 
@@ -2104,7 +2132,8 @@ func TestNewModelPricingCatalogFallbackAndContext(t *testing.T) {
 				require.NoError(t, err)
 				require.InDelta(t, 100_000*2e-6, cost.InputCost, 1e-10)
 				require.InDelta(t, 400*2.5e-6+600*4e-6, cost.CacheCreationCost, 1e-10)
-				require.InDelta(t, 1000*0.2e-6, cost.CacheReadCost, 1e-10)
+				// Sonnet 5.5 cache hits cost 5% of the $2/MTok input price (#8378).
+				require.InDelta(t, 1000*0.1e-6, cost.CacheReadCost, 1e-10)
 				require.InDelta(t, 500*10e-6, cost.OutputCost, 1e-10)
 				require.False(t, cost.LongContextBillingApplied)
 			})

@@ -22160,6 +22160,7 @@ type GroupMutation struct {
 	addsort_order                           *int
 	allow_messages_dispatch                 *bool
 	allow_live                              *bool
+	allow_realtime                          *bool
 	force_openai_fast                       *bool
 	free_openai_fast                        *bool
 	require_oauth_only                      *bool
@@ -25022,6 +25023,42 @@ func (m *GroupMutation) ResetAllowLive() {
 	m.allow_live = nil
 }
 
+// SetAllowRealtime sets the "allow_realtime" field.
+func (m *GroupMutation) SetAllowRealtime(b bool) {
+	m.allow_realtime = &b
+}
+
+// AllowRealtime returns the value of the "allow_realtime" field in the mutation.
+func (m *GroupMutation) AllowRealtime() (r bool, exists bool) {
+	v := m.allow_realtime
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAllowRealtime returns the old "allow_realtime" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldAllowRealtime(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAllowRealtime is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAllowRealtime requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAllowRealtime: %w", err)
+	}
+	return oldValue.AllowRealtime, nil
+}
+
+// ResetAllowRealtime resets all changes to the "allow_realtime" field.
+func (m *GroupMutation) ResetAllowRealtime() {
+	m.allow_realtime = nil
+}
+
 // SetForceOpenaiFast sets the "force_openai_fast" field.
 func (m *GroupMutation) SetForceOpenaiFast(b bool) {
 	m.force_openai_fast = &b
@@ -25995,7 +26032,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 68)
+	fields := make([]string, 0, 69)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26154,6 +26191,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.allow_live != nil {
 		fields = append(fields, group.FieldAllowLive)
+	}
+	if m.allow_realtime != nil {
+		fields = append(fields, group.FieldAllowRealtime)
 	}
 	if m.force_openai_fast != nil {
 		fields = append(fields, group.FieldForceOpenaiFast)
@@ -26314,6 +26354,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.AllowMessagesDispatch()
 	case group.FieldAllowLive:
 		return m.AllowLive()
+	case group.FieldAllowRealtime:
+		return m.AllowRealtime()
 	case group.FieldForceOpenaiFast:
 		return m.ForceOpenaiFast()
 	case group.FieldFreeOpenaiFast:
@@ -26459,6 +26501,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldAllowMessagesDispatch(ctx)
 	case group.FieldAllowLive:
 		return m.OldAllowLive(ctx)
+	case group.FieldAllowRealtime:
+		return m.OldAllowRealtime(ctx)
 	case group.FieldForceOpenaiFast:
 		return m.OldForceOpenaiFast(ctx)
 	case group.FieldFreeOpenaiFast:
@@ -26868,6 +26912,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAllowLive(v)
+		return nil
+	case group.FieldAllowRealtime:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAllowRealtime(v)
 		return nil
 	case group.FieldForceOpenaiFast:
 		v, ok := value.(bool)
@@ -27643,6 +27694,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldAllowLive:
 		m.ResetAllowLive()
+		return nil
+	case group.FieldAllowRealtime:
+		m.ResetAllowRealtime()
 		return nil
 	case group.FieldForceOpenaiFast:
 		m.ResetForceOpenaiFast()
@@ -44752,6 +44806,10 @@ type UsageLogMutation struct {
 	addcache_creation_30m_tokens *int
 	cache_creation_12h_tokens    *int
 	addcache_creation_12h_tokens *int
+	audio_input_tokens           *int
+	addaudio_input_tokens        *int
+	audio_output_tokens          *int
+	addaudio_output_tokens       *int
 	input_cost                   *float64
 	addinput_cost                *float64
 	output_cost                  *float64
@@ -44760,6 +44818,10 @@ type UsageLogMutation struct {
 	addcache_creation_cost       *float64
 	cache_read_cost              *float64
 	addcache_read_cost           *float64
+	audio_input_cost             *float64
+	addaudio_input_cost          *float64
+	audio_output_cost            *float64
+	addaudio_output_cost         *float64
 	total_cost                   *float64
 	addtotal_cost                *float64
 	actual_cost                  *float64
@@ -46045,6 +46107,118 @@ func (m *UsageLogMutation) ResetCacheCreation12hTokens() {
 	m.addcache_creation_12h_tokens = nil
 }
 
+// SetAudioInputTokens sets the "audio_input_tokens" field.
+func (m *UsageLogMutation) SetAudioInputTokens(i int) {
+	m.audio_input_tokens = &i
+	m.addaudio_input_tokens = nil
+}
+
+// AudioInputTokens returns the value of the "audio_input_tokens" field in the mutation.
+func (m *UsageLogMutation) AudioInputTokens() (r int, exists bool) {
+	v := m.audio_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAudioInputTokens returns the old "audio_input_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAudioInputTokens(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAudioInputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAudioInputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAudioInputTokens: %w", err)
+	}
+	return oldValue.AudioInputTokens, nil
+}
+
+// AddAudioInputTokens adds i to the "audio_input_tokens" field.
+func (m *UsageLogMutation) AddAudioInputTokens(i int) {
+	if m.addaudio_input_tokens != nil {
+		*m.addaudio_input_tokens += i
+	} else {
+		m.addaudio_input_tokens = &i
+	}
+}
+
+// AddedAudioInputTokens returns the value that was added to the "audio_input_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedAudioInputTokens() (r int, exists bool) {
+	v := m.addaudio_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAudioInputTokens resets all changes to the "audio_input_tokens" field.
+func (m *UsageLogMutation) ResetAudioInputTokens() {
+	m.audio_input_tokens = nil
+	m.addaudio_input_tokens = nil
+}
+
+// SetAudioOutputTokens sets the "audio_output_tokens" field.
+func (m *UsageLogMutation) SetAudioOutputTokens(i int) {
+	m.audio_output_tokens = &i
+	m.addaudio_output_tokens = nil
+}
+
+// AudioOutputTokens returns the value of the "audio_output_tokens" field in the mutation.
+func (m *UsageLogMutation) AudioOutputTokens() (r int, exists bool) {
+	v := m.audio_output_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAudioOutputTokens returns the old "audio_output_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAudioOutputTokens(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAudioOutputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAudioOutputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAudioOutputTokens: %w", err)
+	}
+	return oldValue.AudioOutputTokens, nil
+}
+
+// AddAudioOutputTokens adds i to the "audio_output_tokens" field.
+func (m *UsageLogMutation) AddAudioOutputTokens(i int) {
+	if m.addaudio_output_tokens != nil {
+		*m.addaudio_output_tokens += i
+	} else {
+		m.addaudio_output_tokens = &i
+	}
+}
+
+// AddedAudioOutputTokens returns the value that was added to the "audio_output_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedAudioOutputTokens() (r int, exists bool) {
+	v := m.addaudio_output_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAudioOutputTokens resets all changes to the "audio_output_tokens" field.
+func (m *UsageLogMutation) ResetAudioOutputTokens() {
+	m.audio_output_tokens = nil
+	m.addaudio_output_tokens = nil
+}
+
 // SetInputCost sets the "input_cost" field.
 func (m *UsageLogMutation) SetInputCost(f float64) {
 	m.input_cost = &f
@@ -46267,6 +46441,118 @@ func (m *UsageLogMutation) AddedCacheReadCost() (r float64, exists bool) {
 func (m *UsageLogMutation) ResetCacheReadCost() {
 	m.cache_read_cost = nil
 	m.addcache_read_cost = nil
+}
+
+// SetAudioInputCost sets the "audio_input_cost" field.
+func (m *UsageLogMutation) SetAudioInputCost(f float64) {
+	m.audio_input_cost = &f
+	m.addaudio_input_cost = nil
+}
+
+// AudioInputCost returns the value of the "audio_input_cost" field in the mutation.
+func (m *UsageLogMutation) AudioInputCost() (r float64, exists bool) {
+	v := m.audio_input_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAudioInputCost returns the old "audio_input_cost" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAudioInputCost(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAudioInputCost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAudioInputCost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAudioInputCost: %w", err)
+	}
+	return oldValue.AudioInputCost, nil
+}
+
+// AddAudioInputCost adds f to the "audio_input_cost" field.
+func (m *UsageLogMutation) AddAudioInputCost(f float64) {
+	if m.addaudio_input_cost != nil {
+		*m.addaudio_input_cost += f
+	} else {
+		m.addaudio_input_cost = &f
+	}
+}
+
+// AddedAudioInputCost returns the value that was added to the "audio_input_cost" field in this mutation.
+func (m *UsageLogMutation) AddedAudioInputCost() (r float64, exists bool) {
+	v := m.addaudio_input_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAudioInputCost resets all changes to the "audio_input_cost" field.
+func (m *UsageLogMutation) ResetAudioInputCost() {
+	m.audio_input_cost = nil
+	m.addaudio_input_cost = nil
+}
+
+// SetAudioOutputCost sets the "audio_output_cost" field.
+func (m *UsageLogMutation) SetAudioOutputCost(f float64) {
+	m.audio_output_cost = &f
+	m.addaudio_output_cost = nil
+}
+
+// AudioOutputCost returns the value of the "audio_output_cost" field in the mutation.
+func (m *UsageLogMutation) AudioOutputCost() (r float64, exists bool) {
+	v := m.audio_output_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAudioOutputCost returns the old "audio_output_cost" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAudioOutputCost(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAudioOutputCost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAudioOutputCost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAudioOutputCost: %w", err)
+	}
+	return oldValue.AudioOutputCost, nil
+}
+
+// AddAudioOutputCost adds f to the "audio_output_cost" field.
+func (m *UsageLogMutation) AddAudioOutputCost(f float64) {
+	if m.addaudio_output_cost != nil {
+		*m.addaudio_output_cost += f
+	} else {
+		m.addaudio_output_cost = &f
+	}
+}
+
+// AddedAudioOutputCost returns the value that was added to the "audio_output_cost" field in this mutation.
+func (m *UsageLogMutation) AddedAudioOutputCost() (r float64, exists bool) {
+	v := m.addaudio_output_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAudioOutputCost resets all changes to the "audio_output_cost" field.
+func (m *UsageLogMutation) ResetAudioOutputCost() {
+	m.audio_output_cost = nil
+	m.addaudio_output_cost = nil
 }
 
 // SetTotalCost sets the "total_cost" field.
@@ -47590,7 +47876,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 49)
+	fields := make([]string, 0, 53)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47660,6 +47946,12 @@ func (m *UsageLogMutation) Fields() []string {
 	if m.cache_creation_12h_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation12hTokens)
 	}
+	if m.audio_input_tokens != nil {
+		fields = append(fields, usagelog.FieldAudioInputTokens)
+	}
+	if m.audio_output_tokens != nil {
+		fields = append(fields, usagelog.FieldAudioOutputTokens)
+	}
 	if m.input_cost != nil {
 		fields = append(fields, usagelog.FieldInputCost)
 	}
@@ -47671,6 +47963,12 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.cache_read_cost != nil {
 		fields = append(fields, usagelog.FieldCacheReadCost)
+	}
+	if m.audio_input_cost != nil {
+		fields = append(fields, usagelog.FieldAudioInputCost)
+	}
+	if m.audio_output_cost != nil {
+		fields = append(fields, usagelog.FieldAudioOutputCost)
 	}
 	if m.total_cost != nil {
 		fields = append(fields, usagelog.FieldTotalCost)
@@ -47792,6 +48090,10 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheCreation30mTokens()
 	case usagelog.FieldCacheCreation12hTokens:
 		return m.CacheCreation12hTokens()
+	case usagelog.FieldAudioInputTokens:
+		return m.AudioInputTokens()
+	case usagelog.FieldAudioOutputTokens:
+		return m.AudioOutputTokens()
 	case usagelog.FieldInputCost:
 		return m.InputCost()
 	case usagelog.FieldOutputCost:
@@ -47800,6 +48102,10 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheCreationCost()
 	case usagelog.FieldCacheReadCost:
 		return m.CacheReadCost()
+	case usagelog.FieldAudioInputCost:
+		return m.AudioInputCost()
+	case usagelog.FieldAudioOutputCost:
+		return m.AudioOutputCost()
 	case usagelog.FieldTotalCost:
 		return m.TotalCost()
 	case usagelog.FieldActualCost:
@@ -47899,6 +48205,10 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCacheCreation30mTokens(ctx)
 	case usagelog.FieldCacheCreation12hTokens:
 		return m.OldCacheCreation12hTokens(ctx)
+	case usagelog.FieldAudioInputTokens:
+		return m.OldAudioInputTokens(ctx)
+	case usagelog.FieldAudioOutputTokens:
+		return m.OldAudioOutputTokens(ctx)
 	case usagelog.FieldInputCost:
 		return m.OldInputCost(ctx)
 	case usagelog.FieldOutputCost:
@@ -47907,6 +48217,10 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCacheCreationCost(ctx)
 	case usagelog.FieldCacheReadCost:
 		return m.OldCacheReadCost(ctx)
+	case usagelog.FieldAudioInputCost:
+		return m.OldAudioInputCost(ctx)
+	case usagelog.FieldAudioOutputCost:
+		return m.OldAudioOutputCost(ctx)
 	case usagelog.FieldTotalCost:
 		return m.OldTotalCost(ctx)
 	case usagelog.FieldActualCost:
@@ -48121,6 +48435,20 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCacheCreation12hTokens(v)
 		return nil
+	case usagelog.FieldAudioInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAudioInputTokens(v)
+		return nil
+	case usagelog.FieldAudioOutputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAudioOutputTokens(v)
+		return nil
 	case usagelog.FieldInputCost:
 		v, ok := value.(float64)
 		if !ok {
@@ -48148,6 +48476,20 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCacheReadCost(v)
+		return nil
+	case usagelog.FieldAudioInputCost:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAudioInputCost(v)
+		return nil
+	case usagelog.FieldAudioOutputCost:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAudioOutputCost(v)
 		return nil
 	case usagelog.FieldTotalCost:
 		v, ok := value.(float64)
@@ -48338,6 +48680,12 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addcache_creation_12h_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation12hTokens)
 	}
+	if m.addaudio_input_tokens != nil {
+		fields = append(fields, usagelog.FieldAudioInputTokens)
+	}
+	if m.addaudio_output_tokens != nil {
+		fields = append(fields, usagelog.FieldAudioOutputTokens)
+	}
 	if m.addinput_cost != nil {
 		fields = append(fields, usagelog.FieldInputCost)
 	}
@@ -48349,6 +48697,12 @@ func (m *UsageLogMutation) AddedFields() []string {
 	}
 	if m.addcache_read_cost != nil {
 		fields = append(fields, usagelog.FieldCacheReadCost)
+	}
+	if m.addaudio_input_cost != nil {
+		fields = append(fields, usagelog.FieldAudioInputCost)
+	}
+	if m.addaudio_output_cost != nil {
+		fields = append(fields, usagelog.FieldAudioOutputCost)
 	}
 	if m.addtotal_cost != nil {
 		fields = append(fields, usagelog.FieldTotalCost)
@@ -48406,6 +48760,10 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedCacheCreation30mTokens()
 	case usagelog.FieldCacheCreation12hTokens:
 		return m.AddedCacheCreation12hTokens()
+	case usagelog.FieldAudioInputTokens:
+		return m.AddedAudioInputTokens()
+	case usagelog.FieldAudioOutputTokens:
+		return m.AddedAudioOutputTokens()
 	case usagelog.FieldInputCost:
 		return m.AddedInputCost()
 	case usagelog.FieldOutputCost:
@@ -48414,6 +48772,10 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedCacheCreationCost()
 	case usagelog.FieldCacheReadCost:
 		return m.AddedCacheReadCost()
+	case usagelog.FieldAudioInputCost:
+		return m.AddedAudioInputCost()
+	case usagelog.FieldAudioOutputCost:
+		return m.AddedAudioOutputCost()
 	case usagelog.FieldTotalCost:
 		return m.AddedTotalCost()
 	case usagelog.FieldActualCost:
@@ -48506,6 +48868,20 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddCacheCreation12hTokens(v)
 		return nil
+	case usagelog.FieldAudioInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAudioInputTokens(v)
+		return nil
+	case usagelog.FieldAudioOutputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAudioOutputTokens(v)
+		return nil
 	case usagelog.FieldInputCost:
 		v, ok := value.(float64)
 		if !ok {
@@ -48533,6 +48909,20 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddCacheReadCost(v)
+		return nil
+	case usagelog.FieldAudioInputCost:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAudioInputCost(v)
+		return nil
+	case usagelog.FieldAudioOutputCost:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAudioOutputCost(v)
 		return nil
 	case usagelog.FieldTotalCost:
 		v, ok := value.(float64)
@@ -48835,6 +49225,12 @@ func (m *UsageLogMutation) ResetField(name string) error {
 	case usagelog.FieldCacheCreation12hTokens:
 		m.ResetCacheCreation12hTokens()
 		return nil
+	case usagelog.FieldAudioInputTokens:
+		m.ResetAudioInputTokens()
+		return nil
+	case usagelog.FieldAudioOutputTokens:
+		m.ResetAudioOutputTokens()
+		return nil
 	case usagelog.FieldInputCost:
 		m.ResetInputCost()
 		return nil
@@ -48846,6 +49242,12 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldCacheReadCost:
 		m.ResetCacheReadCost()
+		return nil
+	case usagelog.FieldAudioInputCost:
+		m.ResetAudioInputCost()
+		return nil
+	case usagelog.FieldAudioOutputCost:
+		m.ResetAudioOutputCost()
 		return nil
 	case usagelog.FieldTotalCost:
 		m.ResetTotalCost()

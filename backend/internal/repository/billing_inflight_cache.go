@@ -100,6 +100,31 @@ var (
 		return 1
 	`)
 
+	// 恢复路径与准入路径刻意分离。Realtime call 在持久账本写入前已通过额度检查；
+	// 重启恢复必须以原 request ID 重建成员，不能二次参与并发准入。
+	restoreInflightReservationScript = redis.NewScript(`
+		redis.call('ZADD', KEYS[1], tonumber(ARGV[1]), ARGV[2])
+		redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
+		redis.call('PEXPIRE', KEYS[1], ARGV[4])
+		redis.call('PEXPIRE', KEYS[2], ARGV[4])
+		return 1
+	`)
+
+	renewInflightScopeScript = redis.NewScript(`
+			local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+			if not score then return 0 end
+			if tonumber(score) <= tonumber(ARGV[4]) then
+				redis.call('ZREM', KEYS[1], ARGV[1])
+				redis.call('HDEL', KEYS[2], ARGV[1])
+				return 0
+			end
+			redis.call('ZADD', KEYS[1], 'XX', tonumber(ARGV[2]), ARGV[1])
+			local ttl = tonumber(ARGV[3])
+			if redis.call('PTTL', KEYS[1]) < ttl then redis.call('PEXPIRE', KEYS[1], ttl) end
+			if redis.call('PTTL', KEYS[2]) < ttl then redis.call('PEXPIRE', KEYS[2], ttl) end
+			return 1
+		`)
+
 	// KEYS: [1]=zset [2]=hash
 	// ARGV: [1]=now_ms [2]=expire_at_ms [3]=member [4]=amount [5]=key_ttl_ms
 	// 先清理已过期成员，再登记本次预留；返回登记前其他在途预留的合计（string），是否放行由调用方按权威用量判定。
@@ -174,6 +199,15 @@ func (c *billingCache) RenewInflightBalance(ctx context.Context, userID int64, r
 	return n == 1, nil
 }
 
+func (c *billingCache) RestoreInflightBalance(ctx context.Context, userID int64, requestID string, amount float64, ttl time.Duration) error {
+	zkey, hkey := billingInflightKeys(userID)
+	ttlMs := ttl.Milliseconds()
+	if ttlMs <= 0 {
+		ttlMs = 1
+	}
+	return restoreInflightReservationScript.Run(ctx, c.rdb, []string{zkey, hkey}, time.Now().UnixMilli()+ttlMs, requestID, strconv.FormatFloat(amount, 'f', -1, 64), ttlMs).Err()
+}
+
 // ReserveInflightScope 实现 service.InflightScopeReservationCache。
 func (c *billingCache) ReserveInflightScope(ctx context.Context, scope, requestID string, amount float64, ttl time.Duration) (float64, error) {
 	zkey, hkey := billingInflightScopeKeys(scope)
@@ -195,14 +229,35 @@ func (c *billingCache) ReserveInflightScope(ctx context.Context, scope, requestI
 	return strconv.ParseFloat(res, 64)
 }
 
+func (c *billingCache) RestoreInflightScope(ctx context.Context, scope, requestID string, amount float64, ttl time.Duration) error {
+	zkey, hkey := billingInflightScopeKeys(scope)
+	ttlMs := ttl.Milliseconds()
+	if ttlMs <= 0 {
+		ttlMs = 1
+	}
+	return restoreInflightReservationScript.Run(ctx, c.rdb, []string{zkey, hkey}, time.Now().UnixMilli()+ttlMs, requestID, strconv.FormatFloat(amount, 'f', -1, 64), ttlMs).Err()
+}
+
 // ReleaseInflightScope 实现 service.InflightScopeReservationCache。
 func (c *billingCache) ReleaseInflightScope(ctx context.Context, scope, requestID string) error {
 	zkey, hkey := billingInflightScopeKeys(scope)
 	return releaseInflightBalanceScript.Run(ctx, c.rdb, []string{zkey, hkey}, requestID).Err()
 }
 
+func (c *billingCache) RenewInflightScope(ctx context.Context, scope, requestID string, ttl time.Duration) (bool, error) {
+	zkey, hkey := billingInflightScopeKeys(scope)
+	ttlMs := ttl.Milliseconds()
+	if ttlMs <= 0 {
+		ttlMs = 1
+	}
+	now := time.Now().UnixMilli()
+	n, err := renewInflightScopeScript.Run(ctx, c.rdb, []string{zkey, hkey}, requestID, now+ttlMs, ttlMs, now).Int64()
+	return n == 1, err
+}
+
 var (
 	_ service.InflightBalanceReservationCache   = (*billingCache)(nil)
 	_ service.InflightBalanceReservationRenewer = (*billingCache)(nil)
 	_ service.InflightScopeReservationCache     = (*billingCache)(nil)
+	_ service.InflightScopeReservationRenewer   = (*billingCache)(nil)
 )

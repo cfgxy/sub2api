@@ -92,6 +92,10 @@ func (UsageLog) Fields() []ent.Field {
 			Default(0),
 		field.Int("cache_creation_12h_tokens").
 			Default(0),
+		field.Int("audio_input_tokens").
+			Default(0),
+		field.Int("audio_output_tokens").
+			Default(0),
 
 		// 成本字段
 		field.Float("input_cost").
@@ -104,6 +108,12 @@ func (UsageLog) Fields() []ent.Field {
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
 		field.Float("cache_read_cost").
+			Default(0).
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		field.Float("audio_input_cost").
+			Default(0).
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		field.Float("audio_output_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
 		field.Float("total_cost").

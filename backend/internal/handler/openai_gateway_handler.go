@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
@@ -40,6 +41,7 @@ type OpenAIGatewayHandler struct {
 	gatewayService             *service.OpenAIGatewayService
 	billingCacheService        *service.BillingCacheService
 	apiKeyService              *service.APIKeyService
+	subscriptionService        *service.SubscriptionService
 	usageRecordWorkerPool      *service.UsageRecordWorkerPool
 	errorPassthroughService    *service.ErrorPassthroughService
 	contentModerationService   *service.ContentModerationService
@@ -50,6 +52,17 @@ type OpenAIGatewayHandler struct {
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	cfg                        *config.Config
+}
+
+// SetSubscriptionService wires the optional lookup used only by server-originated
+// Realtime SIP calls. Normal API-key paths obtain their subscription in middleware.
+func (h *OpenAIGatewayHandler) SetSubscriptionService(s *service.SubscriptionService) {
+	if h != nil {
+		h.subscriptionService = s
+		if h.gatewayService != nil {
+			go h.gatewayService.RecoverOfficialRealtimeCalls()
+		}
+	}
 }
 
 type openAIWSTurnChannelMappingSnapshot struct {
@@ -371,7 +384,7 @@ func NewOpenAIGatewayHandler(
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
 		}
 	}
-	return &OpenAIGatewayHandler{
+	handler := &OpenAIGatewayHandler{
 		gatewayService:           gatewayService,
 		billingCacheService:      billingCacheService,
 		apiKeyService:            apiKeyService,
@@ -384,6 +397,10 @@ func NewOpenAIGatewayHandler(
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
 	}
+	if gatewayService != nil {
+		gatewayService.SetOfficialRealtimeLifecycleCallbacks(handler.observeRecoveredOfficialRealtimeCall, handler.recordConservativeRealtimeUsage)
+	}
+	return handler
 }
 
 // Responses handles OpenAI Responses API endpoint
@@ -437,6 +454,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	// Reject invalid UTF-8 before JSON transformation so malformed bytes do not
+	// become retryable upstream errors.
+	if !utf8.Valid(body) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body must be valid UTF-8 JSON. Send UTF-8 encoded bytes.")
+		return
+	}
+
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
@@ -480,6 +504,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	} else if changed {
 		body = cappedBody
+	}
+	if normalizedBody, changed := normalizeCodexPageContext(body); changed {
+		body = normalizedBody
+		reqLog.Info("openai.codex_page_context_normalized",
+			zap.String("normalization", "call_output_to_user_message"),
+		)
 	}
 	if normalizedBody, changed := normalizeCodexAutomationBootstrap(body); changed {
 		body = normalizedBody
@@ -4570,6 +4600,13 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 // logical WS turn has finished.
 func clearCyberPolicyTurnState(c *gin.Context) {
 	clearCyberPolicyAttemptState(c, true)
+}
+
+func openAIWSCyberPricingAt(turnPricing *openAIWSTurnPricing, turnStart time.Time) time.Time {
+	if turnPricing == nil {
+		return turnStart
+	}
+	return turnPricing.currentOr(turnStart)
 }
 
 func clearCyberPolicyAttemptState(c *gin.Context, resetRecorded bool) {
