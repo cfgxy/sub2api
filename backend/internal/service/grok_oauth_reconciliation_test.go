@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -388,6 +389,34 @@ func TestTokenRefreshService_ReconcileGrokOAuthDefaultsToDryRunAndSanitizedPlan(
 	require.NotContains(t, text, "refresh-secret")
 	require.NotContains(t, text, "api-key-secret")
 	require.NotContains(t, text, `"credentials":`)
+}
+
+func TestTokenRefreshService_ReconcileGrokOAuthDisabledApplyHasNoSideEffects(t *testing.T) {
+	before := grokReconcileFixtures()
+	repo := &grokReconcileRepo{accounts: before}
+	invalidator := &reconcileInvalidator{}
+	refresher := &poolHealthRefresher{newCredentials: map[string]any{
+		"access_token":  "rotated-access-secret",
+		"refresh_token": "rotated-refresh-secret",
+	}}
+	svc := newGrokReconcileService(repo, refresher, invalidator)
+	svc.SetRefreshGate(NewOAuthRefreshGateWithEnabled(false))
+
+	result, err := svc.ReconcileGrokOAuth(context.Background(), GrokOAuthReconcileInput{Apply: true, Limit: 50})
+
+	require.Nil(t, result)
+	require.Equal(t, "OAUTH_TOKEN_REFRESH_DISABLED", infraerrors.Reason(err))
+	require.Equal(t, 503, infraerrors.Code(err))
+	require.Zero(t, refresher.calls.Load())
+	require.Zero(t, invalidator.count())
+	requests, setErrorIDs, updatedIDs, _ := repo.snapshot()
+	require.Empty(t, requests, "关闭 gate 时不得读取 reconciliation 分页")
+	require.Empty(t, setErrorIDs, "关闭 gate 时不得写入账号错误状态")
+	require.Empty(t, updatedIDs, "关闭 gate 时不得写入账号凭据")
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.True(t, reflect.DeepEqual(before, repo.accounts), "关闭 gate 时账号 token 和状态必须保持不变")
 }
 
 func TestGrokTokenRefresher_NeedsRefreshWhenAccessTokenMissingDespiteFarFutureExpiry(t *testing.T) {

@@ -104,6 +104,12 @@ func (s *TokenRefreshService) ReconcileGrokOAuth(ctx context.Context, input Grok
 	if input.Apply && input.DryRun {
 		return nil, ErrGrokOAuthReconcileMode
 	}
+	if input.Apply {
+		// Apply 会执行账号状态或凭据 mutation，必须在分页读取前受统一 gate 保护。
+		if err := s.refreshGate.RequireEnabled(); err != nil {
+			return nil, err
+		}
+	}
 	if input.AfterID < 0 {
 		return nil, ErrGrokOAuthReconcileCursor
 	}

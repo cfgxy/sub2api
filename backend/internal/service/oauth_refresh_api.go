@@ -127,12 +127,13 @@ func snapshotOAuthRefreshAccount(account *Account) *Account {
 type OAuthRefreshAPI struct {
 	accountRepo AccountRepository
 	tokenCache  GeminiTokenCache // 可选，nil = 无分布式锁
+	refreshGate *OAuthRefreshGate
 	lockTTL     time.Duration
 	localLocks  sync.Map // key: cacheKey string -> value: *contextMutex
 }
 
-// NewOAuthRefreshAPI 创建统一刷新 API
-// 可选传入 lockTTL 覆盖默认的 60s 分布式锁 TTL
+// NewOAuthRefreshAPI 创建统一刷新 API。
+// 可选传入 lockTTL 覆盖默认的 60s 分布式锁 TTL。
 func NewOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCache, lockTTL ...time.Duration) *OAuthRefreshAPI {
 	ttl := defaultRefreshLockTTL
 	if len(lockTTL) > 0 && lockTTL[0] > 0 {
@@ -143,6 +144,22 @@ func NewOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCac
 		tokenCache:  tokenCache,
 		lockTTL:     ttl,
 	}
+}
+
+// SetRefreshGate 注入上游 OAuth refresh 的启动时 gate。
+func (api *OAuthRefreshAPI) SetRefreshGate(refreshGate *OAuthRefreshGate) {
+	if api != nil {
+		api.refreshGate = refreshGate
+	}
+}
+
+// RequireEnabled 返回统一 OAuth refresh gate 的当前策略。
+// 未注入 API 或 gate 时保持历史默认行为：允许刷新。
+func (api *OAuthRefreshAPI) RequireEnabled() error {
+	if api == nil {
+		return nil
+	}
+	return api.refreshGate.RequireEnabled()
 }
 
 // getLocalLock 返回指定 cacheKey 的进程内互斥锁
@@ -171,7 +188,14 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 	executor OAuthRefreshExecutor,
 	refreshWindow time.Duration,
 ) (*OAuthRefreshResult, error) {
-	if api == nil || api.accountRepo == nil {
+	if api == nil {
+		return nil, errors.New("oauth refresh API is not configured")
+	}
+	// 必须在锁、DB 重读和任何状态处理之前阻断，关闭时保持账号状态完全不变。
+	if err := api.refreshGate.RequireEnabled(); err != nil {
+		return nil, err
+	}
+	if api.accountRepo == nil {
 		return nil, errors.New("oauth refresh account repository is not configured")
 	}
 	if account == nil {
