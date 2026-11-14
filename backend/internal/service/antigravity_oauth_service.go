@@ -13,12 +13,18 @@ import (
 type AntigravityOAuthService struct {
 	sessionStore *antigravity.SessionStore
 	proxyRepo    ProxyRepository
+	refreshGate  *OAuthRefreshGate
 }
 
-func NewAntigravityOAuthService(proxyRepo ProxyRepository) *AntigravityOAuthService {
+func NewAntigravityOAuthService(proxyRepo ProxyRepository, refreshGates ...*OAuthRefreshGate) *AntigravityOAuthService {
+	var refreshGate *OAuthRefreshGate
+	if len(refreshGates) > 0 {
+		refreshGate = refreshGates[0]
+	}
 	return &AntigravityOAuthService{
 		sessionStore: antigravity.NewSessionStore(),
 		proxyRepo:    proxyRepo,
+		refreshGate:  refreshGate,
 	}
 }
 
@@ -168,6 +174,9 @@ func (s *AntigravityOAuthService) ExchangeCode(ctx context.Context, input *Antig
 
 // RefreshToken 刷新 token
 func (s *AntigravityOAuthService) RefreshToken(ctx context.Context, refreshToken, proxyURL string) (*AntigravityTokenInfo, error) {
+	if err := s.refreshGate.RequireEnabled(); err != nil {
+		return nil, err
+	}
 	var lastErr error
 
 	for attempt := 0; attempt <= 3; attempt++ {

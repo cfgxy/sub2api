@@ -64,6 +64,7 @@ type TokenRefreshService struct {
 	schedulerCache   SchedulerCache   // 用于同步更新调度器缓存，解决 token 刷新后缓存不一致问题
 	tempUnschedCache TempUnschedCache // 用于清除 Redis 中的临时不可调度缓存
 	refreshAPI       *OAuthRefreshAPI // 统一刷新 API
+	refreshGate      *OAuthRefreshGate
 	runtimeBlocker   AccountRuntimeBlocker
 
 	// OpenAI privacy: 刷新成功后检查并设置 training opt-out
@@ -173,6 +174,13 @@ func (s *TokenRefreshService) SetPrivacyDeps(factory PrivacyClientFactory, proxy
 // SetRefreshAPI 注入统一的 OAuth 刷新 API
 func (s *TokenRefreshService) SetRefreshAPI(api *OAuthRefreshAPI) {
 	s.refreshAPI = api
+}
+
+// SetRefreshGate 注入上游 OAuth refresh 的启动时 gate。
+func (s *TokenRefreshService) SetRefreshGate(refreshGate *OAuthRefreshGate) {
+	if s != nil {
+		s.refreshGate = refreshGate
+	}
 }
 
 // SetRefreshPolicy 注入后台刷新调用侧策略（用于显式化平台/场景差异行为）。

@@ -702,6 +702,9 @@ log:
 # Token refresh behavior
 # token 刷新行为控制
 token_refresh:
+  # Whether upstream OAuth refresh_token grants are allowed. This does not affect system user session refresh.
+  # 是否允许上游 OAuth refresh_token grant；不影响系统用户 session refresh。修改后需重启服务。
+  enabled: true
   # Candidate accounts loaded per cursor page (maximum 1000)
   # 每个游标分页加载的候选账号数量（最大 1000）
   candidate_page_size: 200

@@ -20,6 +20,7 @@ type GrokOAuthService struct {
 	proxyRepo    ProxyRepository
 	oauthClient  GrokOAuthClient
 	config       *config.Config
+	refreshGate  *OAuthRefreshGate
 }
 
 func NewGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient, configs ...*config.Config) *GrokOAuthService {
@@ -32,6 +33,13 @@ func NewGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient,
 		service.config = configs[0]
 	}
 	return service
+}
+
+// SetRefreshGate 注入上游 OAuth refresh 的启动时 gate。
+func (s *GrokOAuthService) SetRefreshGate(refreshGate *OAuthRefreshGate) {
+	if s != nil {
+		s.refreshGate = refreshGate
+	}
 }
 
 // WithSessionStore replaces the in-memory OAuth session store (e.g. Redis-backed
@@ -206,6 +214,9 @@ func (s *GrokOAuthService) requireOAuthClient() error {
 }
 
 func (s *GrokOAuthService) RefreshToken(ctx context.Context, refreshToken, proxyURL, clientID string) (*GrokTokenInfo, error) {
+	if err := s.refreshGate.RequireEnabled(); err != nil {
+		return nil, err
+	}
 	refreshToken = strings.TrimSpace(refreshToken)
 	if refreshToken == "" {
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_NO_REFRESH_TOKEN", "refresh_token is required")

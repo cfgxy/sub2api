@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/google/wire"
@@ -18,8 +19,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient, cfg *config.Config, redisClient *redis.Client) *GrokOAuthService {
+func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient, cfg *config.Config, redisClient *redis.Client, refreshGate *OAuthRefreshGate) *GrokOAuthService {
 	svc := NewGrokOAuthService(proxyRepo, oauthClient, cfg)
+	svc.SetRefreshGate(refreshGate)
 	// wire.go is depguard-exempt for redis; construct the Redis session store here.
 	if redisClient != nil {
 		svc = svc.WithSessionStore(xai.NewRedisSessionStore(redisClient))
@@ -99,9 +101,35 @@ func ProvideAuthService(
 	return svc
 }
 
+// ProvideOAuthRefreshGate creates the single startup snapshot used by every upstream OAuth refresh boundary.
+func ProvideOAuthRefreshGate(cfg *config.Config) *OAuthRefreshGate {
+	return NewOAuthRefreshGate(cfg)
+}
+
 // ProvideOAuthRefreshAPI creates OAuthRefreshAPI with the default lock TTL.
-func ProvideOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCache) *OAuthRefreshAPI {
-	return NewOAuthRefreshAPI(accountRepo, tokenCache)
+func ProvideOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCache, refreshGate *OAuthRefreshGate) *OAuthRefreshAPI {
+	api := NewOAuthRefreshAPI(accountRepo, tokenCache)
+	api.SetRefreshGate(refreshGate)
+	return api
+}
+
+func ProvideOAuthService(proxyRepo ProxyRepository, oauthClient ClaudeOAuthClient, refreshGate *OAuthRefreshGate) *OAuthService {
+	return NewOAuthService(proxyRepo, oauthClient, refreshGate)
+}
+
+func ProvideGeminiOAuthService(
+	proxyRepo ProxyRepository,
+	oauthClient GeminiOAuthClient,
+	codeAssist GeminiCliCodeAssistClient,
+	driveClient geminicli.DriveClient,
+	cfg *config.Config,
+	refreshGate *OAuthRefreshGate,
+) *GeminiOAuthService {
+	return NewGeminiOAuthService(proxyRepo, oauthClient, codeAssist, driveClient, cfg, refreshGate)
+}
+
+func ProvideAntigravityOAuthService(proxyRepo ProxyRepository, refreshGate *OAuthRefreshGate) *AntigravityOAuthService {
+	return NewAntigravityOAuthService(proxyRepo, refreshGate)
 }
 
 func ProvideBatchImageModelPricingResolver(resolver *ModelPricingResolver) *BatchImageModelPricingResolver {
@@ -119,8 +147,9 @@ func ProvideOpenAIOAuthService(
 	proxyRepo ProxyRepository,
 	oauthClient OpenAIOAuthClient,
 	privacyClientFactory PrivacyClientFactory,
+	refreshGate *OAuthRefreshGate,
 ) *OpenAIOAuthService {
-	svc := NewOpenAIOAuthService(proxyRepo, oauthClient)
+	svc := NewOpenAIOAuthService(proxyRepo, oauthClient, refreshGate)
 	svc.SetPrivacyClientFactory(privacyClientFactory)
 	return svc
 }
@@ -136,6 +165,7 @@ func ProvideTokenRefreshService(
 	cacheInvalidator TokenCacheInvalidator,
 	schedulerCache SchedulerCache,
 	cfg *config.Config,
+	refreshGate *OAuthRefreshGate,
 	tempUnschedCache TempUnschedCache,
 	privacyClientFactory PrivacyClientFactory,
 	proxyRepo ProxyRepository,
@@ -147,6 +177,8 @@ func ProvideTokenRefreshService(
 	svc.SetPrivacyDeps(privacyClientFactory, proxyRepo)
 	// 注入统一 OAuth 刷新 API（消除 TokenRefreshService 与 TokenProvider 之间的竞争条件）
 	svc.SetRefreshAPI(refreshAPI)
+	// 注入与各 provider 共用的上游 OAuth refresh gate。
+	svc.SetRefreshGate(refreshGate)
 	// 调用侧显式注入后台刷新策略，避免策略漂移
 	svc.SetRefreshPolicy(DefaultBackgroundRefreshPolicy())
 	svc.SetAccountRuntimeBlocker(runtimeBlocker)
@@ -895,17 +927,18 @@ var ProviderSet = wire.NewSet(
 	ProvideBatchImageCleanupService,
 	ProvideBatchImageWorkerRuntime,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
-	NewOAuthService,
+	ProvideOAuthService,
 	ProvideClaudeResetCreditService,
 	ProvideOpenAIOAuthService,
 	ProvideGrokOAuthService,
 	wire.Bind(new(GrokOAuthTokenService), new(*GrokOAuthService)),
-	NewGeminiOAuthService,
+	ProvideGeminiOAuthService,
 	ProvideGeminiCachedContentService,
 	NewGeminiQuotaService,
 	NewCompositeTokenCacheInvalidator,
 	wire.Bind(new(TokenCacheInvalidator), new(*CompositeTokenCacheInvalidator)),
-	NewAntigravityOAuthService,
+	ProvideAntigravityOAuthService,
+	ProvideOAuthRefreshGate,
 	ProvideOAuthRefreshAPI,
 	ProvideGeminiTokenProvider,
 	NewGeminiMessagesCompatService,

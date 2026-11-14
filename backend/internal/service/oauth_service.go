@@ -47,14 +47,20 @@ type OAuthService struct {
 	sessionStore *oauth.SessionStore
 	proxyRepo    ProxyRepository
 	oauthClient  ClaudeOAuthClient
+	refreshGate  *OAuthRefreshGate
 }
 
 // NewOAuthService creates a new OAuth service
-func NewOAuthService(proxyRepo ProxyRepository, oauthClient ClaudeOAuthClient) *OAuthService {
+func NewOAuthService(proxyRepo ProxyRepository, oauthClient ClaudeOAuthClient, refreshGates ...*OAuthRefreshGate) *OAuthService {
+	var refreshGate *OAuthRefreshGate
+	if len(refreshGates) > 0 {
+		refreshGate = refreshGates[0]
+	}
 	return &OAuthService{
 		sessionStore: oauth.NewSessionStore(),
 		proxyRepo:    proxyRepo,
 		oauthClient:  oauthClient,
+		refreshGate:  refreshGate,
 	}
 }
 
@@ -287,6 +293,9 @@ func (s *OAuthService) exchangeCodeForToken(ctx context.Context, code, codeVerif
 
 // RefreshToken refreshes an OAuth token
 func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string, proxyURL string) (*TokenInfo, error) {
+	if err := s.refreshGate.RequireEnabled(); err != nil {
+		return nil, err
+	}
 	tokenResp, err := s.oauthClient.RefreshToken(ctx, refreshToken, proxyURL)
 	if err != nil {
 		return nil, err

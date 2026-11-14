@@ -56,6 +56,7 @@ type GeminiOAuthService struct {
 	codeAssist   GeminiCliCodeAssistClient
 	driveClient  geminicli.DriveClient
 	cfg          *config.Config
+	refreshGate  *OAuthRefreshGate
 }
 
 type GeminiOAuthCapabilities struct {
@@ -69,7 +70,12 @@ func NewGeminiOAuthService(
 	codeAssist GeminiCliCodeAssistClient,
 	driveClient geminicli.DriveClient,
 	cfg *config.Config,
+	refreshGates ...*OAuthRefreshGate,
 ) *GeminiOAuthService {
+	var refreshGate *OAuthRefreshGate
+	if len(refreshGates) > 0 {
+		refreshGate = refreshGates[0]
+	}
 	return &GeminiOAuthService{
 		sessionStore: geminicli.NewSessionStore(),
 		proxyRepo:    proxyRepo,
@@ -77,6 +83,7 @@ func NewGeminiOAuthService(
 		codeAssist:   codeAssist,
 		driveClient:  driveClient,
 		cfg:          cfg,
+		refreshGate:  refreshGate,
 	}
 }
 
@@ -673,6 +680,9 @@ func (s *GeminiOAuthService) ExchangeCode(ctx context.Context, input *GeminiExch
 }
 
 func (s *GeminiOAuthService) RefreshToken(ctx context.Context, oauthType, refreshToken, proxyURL string) (*GeminiTokenInfo, error) {
+	if err := s.refreshGate.RequireEnabled(); err != nil {
+		return nil, err
+	}
 	var lastErr error
 
 	for attempt := 0; attempt <= 3; attempt++ {

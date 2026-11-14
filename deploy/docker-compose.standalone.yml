@@ -39,6 +39,8 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - SERVER_MODE=${SERVER_MODE:-release}
+      # 仅控制上游 OAuth refresh_token grant，不影响系统用户 session refresh。
+      - TOKEN_REFRESH_ENABLED=${TOKEN_REFRESH_ENABLED:-true}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
       - RUN_MODE=${RUN_MODE:-standard}
