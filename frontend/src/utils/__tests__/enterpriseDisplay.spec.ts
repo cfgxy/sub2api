@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import zh from '@/i18n/locales/zh'
 import en from '@/i18n/locales/en'
-import { enterpriseStatusLabel, subscriptionStatusLabel, employeeStatusLabel, keyStatusLabel, sourceStatusLabel, allocationStatusLabel, auditEventLabel, auditReasonLabel, auditActorLabel, windowTypeLabel } from '../enterpriseDisplay'
+import { enterpriseStatusLabel, subscriptionStatusLabel, employeeStatusLabel, keyStatusLabel, sourceStatusLabel, allocationStatusLabel, auditEventLabel, auditEntityLabel, auditReasonLabel, auditActorLabel, windowTypeLabel } from '../enterpriseDisplay'
 
 function translate(messages: Record<string, any>, key: string): string {
   return key.split('.').reduce((value, part) => value[part], messages) as string
@@ -38,9 +38,19 @@ describe('企业公共枚举展示映射', () => {
   it('审计事件、原因、操作者、窗口在中英文下都不裸露机器码（SHAN-392 返工）', () => {
     for (const messages of [zh, en]) {
       const t = (key: string) => translate(messages, key)
-      for (const event of ['key.employee_create', 'key.employee_disable', 'key.employee_rotate']) {
+      for (const event of [
+        'enterprise.created', 'enterprise.disabled', 'enterprise.enabled', 'enterprise.host_updated',
+        'key.employee_create', 'key.employee_disable', 'key.employee_rotate',
+        'brand.updated', 'brand.background_updated', 'brand.update', 'brand.background.upload',
+        'password.reset_requested', 'password.reset',
+        'session.revoke', 'session.revoke_all',
+      ]) {
         expect(auditEventLabel(event, t)).not.toBe(t('admin.enterprise.audit.event.unknown'))
         expect(auditEventLabel(event, t)).not.toBe(event)
+      }
+      for (const entity of ['enterprise_branding', 'session']) {
+        expect(auditEntityLabel(entity, t)).not.toBe(t('admin.enterprise.audit.entity.unknown'))
+        expect(auditEntityLabel(entity, t)).not.toBe(entity)
       }
       for (const reason of ['rejected', 'invalid_request', 'invalid_token', 'not_found', 'weak_password', 'version_conflict']) {
         expect(auditReasonLabel(reason, t)).not.toBe(reason)

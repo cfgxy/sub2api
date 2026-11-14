@@ -27,6 +27,10 @@ const auditEvents: Record<string, string> = {
   'allocation.update': 'allocationUpdate',
   'allocation.credit_changed': 'allocationCreditChanged',
   'allocation.version_conflict': 'allocationVersionConflict',
+  'enterprise.created': 'enterpriseCreated',
+  'enterprise.disabled': 'enterpriseDisabled',
+  'enterprise.enabled': 'enterpriseEnabled',
+  'enterprise.host_updated': 'enterpriseHostUpdated',
   'employee.created': 'employeeCreated',
   'employee.updated': 'employeeUpdated',
   'employee.terminated': 'employeeTerminated',
@@ -45,13 +49,21 @@ const auditEvents: Record<string, string> = {
   'key.employee_create': 'keyEmployeeCreate',
   'key.employee_disable': 'keyEmployeeDisable',
   'key.employee_rotate': 'keyEmployeeRotate',
-  'subscription.activated': 'subscriptionActivated'
+  'subscription.activated': 'subscriptionActivated',
+  'brand.updated': 'brandUpdated',
+  'brand.background_updated': 'brandBackgroundUpdated',
+  'brand.update': 'brandUpdate',
+  'brand.background.upload': 'brandBackgroundUpload',
+  'password.reset_requested': 'passwordResetRequested',
+  'password.reset': 'passwordReset',
+  'session.revoke': 'sessionRevoke',
+  'session.revoke_all': 'sessionRevokeAll'
 }
 
 const auditEntities: Record<string, string> = {
   employee: 'employee', department: 'department', api_key: 'apiKey',
   enterprise_allocation: 'allocation', enterprise_subscription: 'subscription',
-  enterprise: 'enterprise'
+  enterprise: 'enterprise', enterprise_branding: 'enterpriseBranding', session: 'session'
 }
 
 export const auditEventLabel = (value: string, t: Translate) =>
