@@ -20,11 +20,12 @@ const (
 	RequestTypeWSV2         RequestType = 3
 	RequestTypeCyberBlocked RequestType = 4 // cyber_policy 命中（透传但被上游安全策略拒绝）
 	RequestTypeLive         RequestType = 5
+	RequestTypeRealtime     RequestType = 6
 )
 
 func (t RequestType) IsValid() bool {
 	switch t {
-	case RequestTypeUnknown, RequestTypeSync, RequestTypeStream, RequestTypeWSV2, RequestTypeCyberBlocked, RequestTypeLive:
+	case RequestTypeUnknown, RequestTypeSync, RequestTypeStream, RequestTypeWSV2, RequestTypeCyberBlocked, RequestTypeLive, RequestTypeRealtime:
 		return true
 	default:
 		return false
@@ -50,6 +51,8 @@ func (t RequestType) String() string {
 		return "cyber"
 	case RequestTypeLive:
 		return "live"
+	case RequestTypeRealtime:
+		return "realtime"
 	default:
 		return "unknown"
 	}
@@ -73,8 +76,10 @@ func ParseUsageRequestType(value string) (RequestType, error) {
 		return RequestTypeCyberBlocked, nil
 	case "live":
 		return RequestTypeLive, nil
+	case "realtime":
+		return RequestTypeRealtime, nil
 	default:
-		return RequestTypeUnknown, fmt.Errorf("invalid request_type, allowed values: unknown, sync, stream, ws_v2, cyber, live")
+		return RequestTypeUnknown, fmt.Errorf("invalid request_type, allowed values: unknown, sync, stream, ws_v2, cyber, live, realtime")
 	}
 }
 
@@ -161,6 +166,10 @@ type UsageLog struct {
 	ImageInputCost    float64
 	ImageOutputTokens int
 	ImageOutputCost   float64
+	AudioInputTokens  int
+	AudioInputCost    float64
+	AudioOutputTokens int
+	AudioOutputCost   float64
 
 	InputCost                 float64
 	OutputCost                float64
@@ -220,7 +229,9 @@ type UsageLog struct {
 }
 
 func (u *UsageLog) TotalTokens() int {
-	return u.InputTokens + u.OutputTokens + u.CacheCreationTokens + u.CacheReadTokens
+	return u.InputTokens + u.ImageInputTokens + u.AudioInputTokens +
+		u.OutputTokens + u.ImageOutputTokens + u.AudioOutputTokens +
+		u.CacheCreationTokens + u.CacheReadTokens
 }
 
 func (u *UsageLog) EffectiveRequestType() RequestType {

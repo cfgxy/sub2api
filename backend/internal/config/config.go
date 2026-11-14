@@ -1124,6 +1124,8 @@ type GatewayConfig struct {
 	OpenAIWS GatewayOpenAIWSConfig `mapstructure:"openai_ws"`
 	// Live: ChatGPT Frameless Live 会话配置。
 	Live GatewayLiveConfig `mapstructure:"live"`
+	// Realtime: OpenAI Platform Realtime 会话配置。
+	Realtime GatewayRealtimeConfig `mapstructure:"realtime"`
 	// OpenAIScheduler: OpenAI 高级调度器粘性逃逸配置
 	OpenAIScheduler GatewayOpenAISchedulerConfig `mapstructure:"openai_scheduler"`
 	// OpenAIHTTP2: OpenAI HTTP 上游协议策略（默认启用 HTTP/2，可按代理能力回退 HTTP/1.1）
@@ -1267,6 +1269,23 @@ type GatewayCNProvidersConfig struct {
 type GatewayLiveConfig struct {
 	// MaxSessionDurationSeconds 是 Live 会话的硬上限。
 	MaxSessionDurationSeconds int `mapstructure:"max_session_duration_seconds"`
+}
+
+type GatewayRealtimeConfig struct {
+	// MaxSessionDurationSeconds 是官方 Realtime Call 的硬上限。
+	MaxSessionDurationSeconds int `mapstructure:"max_session_duration_seconds"`
+	// SIP 配置 OpenAI Platform Realtime 入呼 webhook。未提供完整绑定时该入口 fail closed。
+	SIP GatewayRealtimeSIPConfig `mapstructure:"sip"`
+}
+
+// GatewayRealtimeSIPConfig 将一个受 OpenAI 签名保护的 SIP 入呼绑定到网关中
+// 明确指定的调用方身份与官方账号。绝不从 SIP header 推导租户或计费归属。
+type GatewayRealtimeSIPConfig struct {
+	WebhookSecret        string `mapstructure:"webhook_secret"`
+	WebhookMaxAgeSeconds int    `mapstructure:"webhook_max_age_seconds"`
+	APIKeyID             int64  `mapstructure:"api_key_id"`
+	AccountID            int64  `mapstructure:"account_id"`
+	Model                string `mapstructure:"model"`
 }
 
 // GatewayOpenAIHTTP2Config OpenAI HTTP 上游协议配置。
@@ -2133,6 +2152,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.min_output_tokens", 128)
 	viper.SetDefault("simple_mode.auto_create_default_groups", true)
 	viper.SetDefault("simple_mode_key_rate_limit_enabled", false)
+	viper.SetDefault("gateway.realtime.max_session_duration_seconds", 3600)
 
 	// Server
 	viper.SetDefault("server.host", "0.0.0.0")

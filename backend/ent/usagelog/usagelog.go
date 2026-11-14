@@ -60,6 +60,10 @@ const (
 	FieldCacheCreation30mTokens = "cache_creation_30m_tokens"
 	// FieldCacheCreation12hTokens holds the string denoting the cache_creation_12h_tokens field in the database.
 	FieldCacheCreation12hTokens = "cache_creation_12h_tokens"
+	// FieldAudioInputTokens holds the string denoting the audio_input_tokens field in the database.
+	FieldAudioInputTokens = "audio_input_tokens"
+	// FieldAudioOutputTokens holds the string denoting the audio_output_tokens field in the database.
+	FieldAudioOutputTokens = "audio_output_tokens"
 	// FieldInputCost holds the string denoting the input_cost field in the database.
 	FieldInputCost = "input_cost"
 	// FieldOutputCost holds the string denoting the output_cost field in the database.
@@ -68,6 +72,10 @@ const (
 	FieldCacheCreationCost = "cache_creation_cost"
 	// FieldCacheReadCost holds the string denoting the cache_read_cost field in the database.
 	FieldCacheReadCost = "cache_read_cost"
+	// FieldAudioInputCost holds the string denoting the audio_input_cost field in the database.
+	FieldAudioInputCost = "audio_input_cost"
+	// FieldAudioOutputCost holds the string denoting the audio_output_cost field in the database.
+	FieldAudioOutputCost = "audio_output_cost"
 	// FieldTotalCost holds the string denoting the total_cost field in the database.
 	FieldTotalCost = "total_cost"
 	// FieldActualCost holds the string denoting the actual_cost field in the database.
@@ -187,10 +195,14 @@ var Columns = []string{
 	FieldCacheCreation1hTokens,
 	FieldCacheCreation30mTokens,
 	FieldCacheCreation12hTokens,
+	FieldAudioInputTokens,
+	FieldAudioOutputTokens,
 	FieldInputCost,
 	FieldOutputCost,
 	FieldCacheCreationCost,
 	FieldCacheReadCost,
+	FieldAudioInputCost,
+	FieldAudioOutputCost,
 	FieldTotalCost,
 	FieldActualCost,
 	FieldRateMultiplier,
@@ -258,6 +270,10 @@ var (
 	DefaultCacheCreation30mTokens int
 	// DefaultCacheCreation12hTokens holds the default value on creation for the "cache_creation_12h_tokens" field.
 	DefaultCacheCreation12hTokens int
+	// DefaultAudioInputTokens holds the default value on creation for the "audio_input_tokens" field.
+	DefaultAudioInputTokens int
+	// DefaultAudioOutputTokens holds the default value on creation for the "audio_output_tokens" field.
+	DefaultAudioOutputTokens int
 	// DefaultInputCost holds the default value on creation for the "input_cost" field.
 	DefaultInputCost float64
 	// DefaultOutputCost holds the default value on creation for the "output_cost" field.
@@ -266,6 +282,10 @@ var (
 	DefaultCacheCreationCost float64
 	// DefaultCacheReadCost holds the default value on creation for the "cache_read_cost" field.
 	DefaultCacheReadCost float64
+	// DefaultAudioInputCost holds the default value on creation for the "audio_input_cost" field.
+	DefaultAudioInputCost float64
+	// DefaultAudioOutputCost holds the default value on creation for the "audio_output_cost" field.
+	DefaultAudioOutputCost float64
 	// DefaultTotalCost holds the default value on creation for the "total_cost" field.
 	DefaultTotalCost float64
 	// DefaultActualCost holds the default value on creation for the "actual_cost" field.
@@ -425,6 +445,16 @@ func ByCacheCreation12hTokens(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCacheCreation12hTokens, opts...).ToFunc()
 }
 
+// ByAudioInputTokens orders the results by the audio_input_tokens field.
+func ByAudioInputTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAudioInputTokens, opts...).ToFunc()
+}
+
+// ByAudioOutputTokens orders the results by the audio_output_tokens field.
+func ByAudioOutputTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAudioOutputTokens, opts...).ToFunc()
+}
+
 // ByInputCost orders the results by the input_cost field.
 func ByInputCost(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldInputCost, opts...).ToFunc()
@@ -443,6 +473,16 @@ func ByCacheCreationCost(opts ...sql.OrderTermOption) OrderOption {
 // ByCacheReadCost orders the results by the cache_read_cost field.
 func ByCacheReadCost(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCacheReadCost, opts...).ToFunc()
+}
+
+// ByAudioInputCost orders the results by the audio_input_cost field.
+func ByAudioInputCost(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAudioInputCost, opts...).ToFunc()
+}
+
+// ByAudioOutputCost orders the results by the audio_output_cost field.
+func ByAudioOutputCost(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAudioOutputCost, opts...).ToFunc()
 }
 
 // ByTotalCost orders the results by the total_cost field.

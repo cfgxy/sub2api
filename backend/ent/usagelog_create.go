@@ -309,6 +309,34 @@ func (_c *UsageLogCreate) SetNillableCacheCreation12hTokens(v *int) *UsageLogCre
 	return _c
 }
 
+// SetAudioInputTokens sets the "audio_input_tokens" field.
+func (_c *UsageLogCreate) SetAudioInputTokens(v int) *UsageLogCreate {
+	_c.mutation.SetAudioInputTokens(v)
+	return _c
+}
+
+// SetNillableAudioInputTokens sets the "audio_input_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAudioInputTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAudioInputTokens(*v)
+	}
+	return _c
+}
+
+// SetAudioOutputTokens sets the "audio_output_tokens" field.
+func (_c *UsageLogCreate) SetAudioOutputTokens(v int) *UsageLogCreate {
+	_c.mutation.SetAudioOutputTokens(v)
+	return _c
+}
+
+// SetNillableAudioOutputTokens sets the "audio_output_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAudioOutputTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAudioOutputTokens(*v)
+	}
+	return _c
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_c *UsageLogCreate) SetInputCost(v float64) *UsageLogCreate {
 	_c.mutation.SetInputCost(v)
@@ -361,6 +389,34 @@ func (_c *UsageLogCreate) SetCacheReadCost(v float64) *UsageLogCreate {
 func (_c *UsageLogCreate) SetNillableCacheReadCost(v *float64) *UsageLogCreate {
 	if v != nil {
 		_c.SetCacheReadCost(*v)
+	}
+	return _c
+}
+
+// SetAudioInputCost sets the "audio_input_cost" field.
+func (_c *UsageLogCreate) SetAudioInputCost(v float64) *UsageLogCreate {
+	_c.mutation.SetAudioInputCost(v)
+	return _c
+}
+
+// SetNillableAudioInputCost sets the "audio_input_cost" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAudioInputCost(v *float64) *UsageLogCreate {
+	if v != nil {
+		_c.SetAudioInputCost(*v)
+	}
+	return _c
+}
+
+// SetAudioOutputCost sets the "audio_output_cost" field.
+func (_c *UsageLogCreate) SetAudioOutputCost(v float64) *UsageLogCreate {
+	_c.mutation.SetAudioOutputCost(v)
+	return _c
+}
+
+// SetNillableAudioOutputCost sets the "audio_output_cost" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAudioOutputCost(v *float64) *UsageLogCreate {
+	if v != nil {
+		_c.SetAudioOutputCost(*v)
 	}
 	return _c
 }
@@ -757,6 +813,14 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultCacheCreation12hTokens
 		_c.mutation.SetCacheCreation12hTokens(v)
 	}
+	if _, ok := _c.mutation.AudioInputTokens(); !ok {
+		v := usagelog.DefaultAudioInputTokens
+		_c.mutation.SetAudioInputTokens(v)
+	}
+	if _, ok := _c.mutation.AudioOutputTokens(); !ok {
+		v := usagelog.DefaultAudioOutputTokens
+		_c.mutation.SetAudioOutputTokens(v)
+	}
 	if _, ok := _c.mutation.InputCost(); !ok {
 		v := usagelog.DefaultInputCost
 		_c.mutation.SetInputCost(v)
@@ -772,6 +836,14 @@ func (_c *UsageLogCreate) defaults() {
 	if _, ok := _c.mutation.CacheReadCost(); !ok {
 		v := usagelog.DefaultCacheReadCost
 		_c.mutation.SetCacheReadCost(v)
+	}
+	if _, ok := _c.mutation.AudioInputCost(); !ok {
+		v := usagelog.DefaultAudioInputCost
+		_c.mutation.SetAudioInputCost(v)
+	}
+	if _, ok := _c.mutation.AudioOutputCost(); !ok {
+		v := usagelog.DefaultAudioOutputCost
+		_c.mutation.SetAudioOutputCost(v)
 	}
 	if _, ok := _c.mutation.TotalCost(); !ok {
 		v := usagelog.DefaultTotalCost
@@ -896,6 +968,12 @@ func (_c *UsageLogCreate) check() error {
 	if _, ok := _c.mutation.CacheCreation12hTokens(); !ok {
 		return &ValidationError{Name: "cache_creation_12h_tokens", err: errors.New(`ent: missing required field "UsageLog.cache_creation_12h_tokens"`)}
 	}
+	if _, ok := _c.mutation.AudioInputTokens(); !ok {
+		return &ValidationError{Name: "audio_input_tokens", err: errors.New(`ent: missing required field "UsageLog.audio_input_tokens"`)}
+	}
+	if _, ok := _c.mutation.AudioOutputTokens(); !ok {
+		return &ValidationError{Name: "audio_output_tokens", err: errors.New(`ent: missing required field "UsageLog.audio_output_tokens"`)}
+	}
 	if _, ok := _c.mutation.InputCost(); !ok {
 		return &ValidationError{Name: "input_cost", err: errors.New(`ent: missing required field "UsageLog.input_cost"`)}
 	}
@@ -907,6 +985,12 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.CacheReadCost(); !ok {
 		return &ValidationError{Name: "cache_read_cost", err: errors.New(`ent: missing required field "UsageLog.cache_read_cost"`)}
+	}
+	if _, ok := _c.mutation.AudioInputCost(); !ok {
+		return &ValidationError{Name: "audio_input_cost", err: errors.New(`ent: missing required field "UsageLog.audio_input_cost"`)}
+	}
+	if _, ok := _c.mutation.AudioOutputCost(); !ok {
+		return &ValidationError{Name: "audio_output_cost", err: errors.New(`ent: missing required field "UsageLog.audio_output_cost"`)}
 	}
 	if _, ok := _c.mutation.TotalCost(); !ok {
 		return &ValidationError{Name: "total_cost", err: errors.New(`ent: missing required field "UsageLog.total_cost"`)}
@@ -1081,6 +1165,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
 		_node.CacheCreation12hTokens = value
 	}
+	if value, ok := _c.mutation.AudioInputTokens(); ok {
+		_spec.SetField(usagelog.FieldAudioInputTokens, field.TypeInt, value)
+		_node.AudioInputTokens = value
+	}
+	if value, ok := _c.mutation.AudioOutputTokens(); ok {
+		_spec.SetField(usagelog.FieldAudioOutputTokens, field.TypeInt, value)
+		_node.AudioOutputTokens = value
+	}
 	if value, ok := _c.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
 		_node.InputCost = value
@@ -1096,6 +1188,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CacheReadCost(); ok {
 		_spec.SetField(usagelog.FieldCacheReadCost, field.TypeFloat64, value)
 		_node.CacheReadCost = value
+	}
+	if value, ok := _c.mutation.AudioInputCost(); ok {
+		_spec.SetField(usagelog.FieldAudioInputCost, field.TypeFloat64, value)
+		_node.AudioInputCost = value
+	}
+	if value, ok := _c.mutation.AudioOutputCost(); ok {
+		_spec.SetField(usagelog.FieldAudioOutputCost, field.TypeFloat64, value)
+		_node.AudioOutputCost = value
 	}
 	if value, ok := _c.mutation.TotalCost(); ok {
 		_spec.SetField(usagelog.FieldTotalCost, field.TypeFloat64, value)
@@ -1712,6 +1812,42 @@ func (u *UsageLogUpsert) AddCacheCreation12hTokens(v int) *UsageLogUpsert {
 	return u
 }
 
+// SetAudioInputTokens sets the "audio_input_tokens" field.
+func (u *UsageLogUpsert) SetAudioInputTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAudioInputTokens, v)
+	return u
+}
+
+// UpdateAudioInputTokens sets the "audio_input_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAudioInputTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAudioInputTokens)
+	return u
+}
+
+// AddAudioInputTokens adds v to the "audio_input_tokens" field.
+func (u *UsageLogUpsert) AddAudioInputTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAudioInputTokens, v)
+	return u
+}
+
+// SetAudioOutputTokens sets the "audio_output_tokens" field.
+func (u *UsageLogUpsert) SetAudioOutputTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAudioOutputTokens, v)
+	return u
+}
+
+// UpdateAudioOutputTokens sets the "audio_output_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAudioOutputTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAudioOutputTokens)
+	return u
+}
+
+// AddAudioOutputTokens adds v to the "audio_output_tokens" field.
+func (u *UsageLogUpsert) AddAudioOutputTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAudioOutputTokens, v)
+	return u
+}
+
 // SetInputCost sets the "input_cost" field.
 func (u *UsageLogUpsert) SetInputCost(v float64) *UsageLogUpsert {
 	u.Set(usagelog.FieldInputCost, v)
@@ -1781,6 +1917,42 @@ func (u *UsageLogUpsert) UpdateCacheReadCost() *UsageLogUpsert {
 // AddCacheReadCost adds v to the "cache_read_cost" field.
 func (u *UsageLogUpsert) AddCacheReadCost(v float64) *UsageLogUpsert {
 	u.Add(usagelog.FieldCacheReadCost, v)
+	return u
+}
+
+// SetAudioInputCost sets the "audio_input_cost" field.
+func (u *UsageLogUpsert) SetAudioInputCost(v float64) *UsageLogUpsert {
+	u.Set(usagelog.FieldAudioInputCost, v)
+	return u
+}
+
+// UpdateAudioInputCost sets the "audio_input_cost" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAudioInputCost() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAudioInputCost)
+	return u
+}
+
+// AddAudioInputCost adds v to the "audio_input_cost" field.
+func (u *UsageLogUpsert) AddAudioInputCost(v float64) *UsageLogUpsert {
+	u.Add(usagelog.FieldAudioInputCost, v)
+	return u
+}
+
+// SetAudioOutputCost sets the "audio_output_cost" field.
+func (u *UsageLogUpsert) SetAudioOutputCost(v float64) *UsageLogUpsert {
+	u.Set(usagelog.FieldAudioOutputCost, v)
+	return u
+}
+
+// UpdateAudioOutputCost sets the "audio_output_cost" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAudioOutputCost() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAudioOutputCost)
+	return u
+}
+
+// AddAudioOutputCost adds v to the "audio_output_cost" field.
+func (u *UsageLogUpsert) AddAudioOutputCost(v float64) *UsageLogUpsert {
+	u.Add(usagelog.FieldAudioOutputCost, v)
 	return u
 }
 
@@ -2668,6 +2840,48 @@ func (u *UsageLogUpsertOne) UpdateCacheCreation12hTokens() *UsageLogUpsertOne {
 	})
 }
 
+// SetAudioInputTokens sets the "audio_input_tokens" field.
+func (u *UsageLogUpsertOne) SetAudioInputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioInputTokens(v)
+	})
+}
+
+// AddAudioInputTokens adds v to the "audio_input_tokens" field.
+func (u *UsageLogUpsertOne) AddAudioInputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioInputTokens(v)
+	})
+}
+
+// UpdateAudioInputTokens sets the "audio_input_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAudioInputTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioInputTokens()
+	})
+}
+
+// SetAudioOutputTokens sets the "audio_output_tokens" field.
+func (u *UsageLogUpsertOne) SetAudioOutputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioOutputTokens(v)
+	})
+}
+
+// AddAudioOutputTokens adds v to the "audio_output_tokens" field.
+func (u *UsageLogUpsertOne) AddAudioOutputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioOutputTokens(v)
+	})
+}
+
+// UpdateAudioOutputTokens sets the "audio_output_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAudioOutputTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioOutputTokens()
+	})
+}
+
 // SetInputCost sets the "input_cost" field.
 func (u *UsageLogUpsertOne) SetInputCost(v float64) *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -2749,6 +2963,48 @@ func (u *UsageLogUpsertOne) AddCacheReadCost(v float64) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateCacheReadCost() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheReadCost()
+	})
+}
+
+// SetAudioInputCost sets the "audio_input_cost" field.
+func (u *UsageLogUpsertOne) SetAudioInputCost(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioInputCost(v)
+	})
+}
+
+// AddAudioInputCost adds v to the "audio_input_cost" field.
+func (u *UsageLogUpsertOne) AddAudioInputCost(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioInputCost(v)
+	})
+}
+
+// UpdateAudioInputCost sets the "audio_input_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAudioInputCost() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioInputCost()
+	})
+}
+
+// SetAudioOutputCost sets the "audio_output_cost" field.
+func (u *UsageLogUpsertOne) SetAudioOutputCost(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioOutputCost(v)
+	})
+}
+
+// AddAudioOutputCost adds v to the "audio_output_cost" field.
+func (u *UsageLogUpsertOne) AddAudioOutputCost(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioOutputCost(v)
+	})
+}
+
+// UpdateAudioOutputCost sets the "audio_output_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAudioOutputCost() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioOutputCost()
 	})
 }
 
@@ -3866,6 +4122,48 @@ func (u *UsageLogUpsertBulk) UpdateCacheCreation12hTokens() *UsageLogUpsertBulk 
 	})
 }
 
+// SetAudioInputTokens sets the "audio_input_tokens" field.
+func (u *UsageLogUpsertBulk) SetAudioInputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioInputTokens(v)
+	})
+}
+
+// AddAudioInputTokens adds v to the "audio_input_tokens" field.
+func (u *UsageLogUpsertBulk) AddAudioInputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioInputTokens(v)
+	})
+}
+
+// UpdateAudioInputTokens sets the "audio_input_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAudioInputTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioInputTokens()
+	})
+}
+
+// SetAudioOutputTokens sets the "audio_output_tokens" field.
+func (u *UsageLogUpsertBulk) SetAudioOutputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioOutputTokens(v)
+	})
+}
+
+// AddAudioOutputTokens adds v to the "audio_output_tokens" field.
+func (u *UsageLogUpsertBulk) AddAudioOutputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioOutputTokens(v)
+	})
+}
+
+// UpdateAudioOutputTokens sets the "audio_output_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAudioOutputTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioOutputTokens()
+	})
+}
+
 // SetInputCost sets the "input_cost" field.
 func (u *UsageLogUpsertBulk) SetInputCost(v float64) *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -3947,6 +4245,48 @@ func (u *UsageLogUpsertBulk) AddCacheReadCost(v float64) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateCacheReadCost() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheReadCost()
+	})
+}
+
+// SetAudioInputCost sets the "audio_input_cost" field.
+func (u *UsageLogUpsertBulk) SetAudioInputCost(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioInputCost(v)
+	})
+}
+
+// AddAudioInputCost adds v to the "audio_input_cost" field.
+func (u *UsageLogUpsertBulk) AddAudioInputCost(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioInputCost(v)
+	})
+}
+
+// UpdateAudioInputCost sets the "audio_input_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAudioInputCost() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioInputCost()
+	})
+}
+
+// SetAudioOutputCost sets the "audio_output_cost" field.
+func (u *UsageLogUpsertBulk) SetAudioOutputCost(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAudioOutputCost(v)
+	})
+}
+
+// AddAudioOutputCost adds v to the "audio_output_cost" field.
+func (u *UsageLogUpsertBulk) AddAudioOutputCost(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAudioOutputCost(v)
+	})
+}
+
+// UpdateAudioOutputCost sets the "audio_output_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAudioOutputCost() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAudioOutputCost()
 	})
 }
 

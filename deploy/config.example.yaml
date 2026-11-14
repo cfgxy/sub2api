@@ -360,6 +360,16 @@ gateway:
   # ChatGPT Frameless Live 单会话硬上限（秒）。
   live:
     max_session_duration_seconds: 3600
+  # OpenAI Platform Realtime WebRTC/SIP 单会话硬上限（秒）。
+  realtime:
+    max_session_duration_seconds: 3600
+    # OpenAI Platform SIP 入呼 webhook。必须通过受控配置提供 secret；缺失任一绑定时 fail closed。
+    sip:
+      webhook_secret: ""
+      webhook_max_age_seconds: 300
+      api_key_id: 0
+      account_id: 0
+      model: ""
   # OpenAI Responses WebSocket 配置（默认开启，可按需回滚到 HTTP）
   openai_ws:
     # 新版 WS mode 路由（默认关闭）。关闭时忽略账号级 WS mode（包括 http_bridge），保持 legacy ctx_pool 行为。

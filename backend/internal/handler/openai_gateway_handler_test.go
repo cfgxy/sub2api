@@ -19,15 +19,51 @@ import (
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/alicebob/miniredis/v2"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+func TestSetSubscriptionServiceStartsOfficialRealtimeRecoveryAfterInjection(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	cache := repository.NewGatewayCache(redis.NewClient(&redis.Options{Addr: redisServer.Addr()}))
+	cfg := &config.Config{}
+	gateway := service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, cache, cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	store, ok := cache.(service.RealtimeCallStore)
+	require.True(t, ok)
+	record := &service.RealtimeCallRecord{
+		CallID: "call-recovery-order", CallHash: "call-recovery-order-hash", AccountID: 1, APIKeyID: 2, UserID: 3,
+		Model: "gpt-realtime", PricingAt: time.Now(), CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour), Controller: service.RealtimeControllerPending,
+	}
+	require.NoError(t, store.SaveRealtimeCall(context.Background(), record, time.Hour))
+
+	handler := NewOpenAIGatewayHandler(gateway, nil, nil, nil, nil, nil, nil, nil, cfg)
+	recovered := make(chan *service.RealtimeCallRecord, 1)
+	gateway.SetOfficialRealtimeLifecycleCallbacks(func(got *service.RealtimeCallRecord) { recovered <- got }, nil)
+	select {
+	case <-recovered:
+		t.Fatal("callback registration must not start recovery before subscription injection")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	handler.SetSubscriptionService(&service.SubscriptionService{})
+	require.Eventually(t, func() bool {
+		select {
+		case got := <-recovered:
+			return got.CallHash == record.CallHash
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+}
 
 func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 	tests := []struct {

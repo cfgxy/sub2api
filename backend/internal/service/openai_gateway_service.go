@@ -224,13 +224,19 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 type OpenAIUsage struct {
 	InputTokens                 int `json:"input_tokens"`
 	ImageInputTokens            int `json:"image_input_tokens,omitempty"`
+	AudioInputTokens            int `json:"audio_input_tokens,omitempty"`
 	ImageCacheReadTokens        int `json:"image_cache_read_tokens,omitempty"`
+	AudioCacheReadTokens        int `json:"audio_cache_read_tokens,omitempty"`
 	OutputTokens                int `json:"output_tokens"`
 	CacheCreationInputTokens    int `json:"cache_creation_input_tokens,omitempty"`
 	CacheCreation30mInputTokens int `json:"cache_creation_30m_input_tokens,omitempty"`
 	CacheCreation12hInputTokens int `json:"cache_creation_12h_input_tokens,omitempty"`
 	CacheReadInputTokens        int `json:"cache_read_input_tokens,omitempty"`
 	ImageOutputTokens           int `json:"image_output_tokens,omitempty"`
+	AudioOutputTokens           int `json:"audio_output_tokens,omitempty"`
+	// TokenBucketsSeparated 表示 input/output 已是纯文本桶；图片、音频和缓存
+	// 均为互斥计数。Realtime GA 使用该表示，HTTP 兼容路径仍保留聚合 token。
+	TokenBucketsSeparated bool `json:"-"`
 }
 
 // OpenAIForwardResult represents the result of forwarding
@@ -272,6 +278,9 @@ type OpenAIForwardResult struct {
 	RequestedReasoningEffort *string
 	Stream                   bool
 	OpenAIWSMode             bool
+	// OpenAIRealtime marks usage produced by the public OpenAI Platform
+	// Realtime protocol. It must not be reported as private ChatGPT Live.
+	OpenAIRealtime bool
 	// UpstreamTerminalEvent is the normalized terminal event observed on an
 	// upstream Responses WebSocket turn. Empty preserves legacy/non-WS success.
 	UpstreamTerminalEvent string
@@ -513,6 +522,19 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
+	// realtimeFinalizers 仅保存本进程的会话预留释放函数。进程退出后由 Redis
+	// 预留 TTL 兜底，不能把它误认为跨进程持久资源。
+	realtimeFinalizers sync.Map // key: string(call hash), value: func()
+	// realtimeCallbacks 由 handler 注入，以冻结账本记录重建 observer 和终态保守计费。
+	realtimeCallbacks atomic.Value // *realtimeLifecycleCallbacks
+	// realtimeFinalizationRetries 为每个持久化 finalizing 账本保留至多一个重试器。
+	realtimeFinalizationRetries sync.Map // key: string(call hash), value: struct{}
+	// realtimeReservationRestoreRetries 为每个需要恢复的会话保留至多一个重试器。
+	realtimeReservationRestoreRetries sync.Map // key: string(call hash), value: struct{}
+	// realtimeUsageCommitRetries 保留已完成业务计费但尚未提交 Redis 幂等标记的 claim。
+	realtimeUsageCommitRetries sync.Map // key: string(call hash + response id), value: struct{}
+	// realtimeCleanupMarkRetries 仅重试已释放资源后的 cleanup 完成标记。
+	realtimeCleanupMarkRetries sync.Map // key: string(call hash), value: struct{}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

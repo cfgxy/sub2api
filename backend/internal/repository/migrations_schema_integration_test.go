@@ -133,6 +133,14 @@ WHERE ns.nspname = 'public'
 	requireIndex(t, tx, "usage_billing_dedup", "idx_usage_billing_dedup_request_api_key")
 	requireIndex(t, tx, "usage_billing_dedup", "idx_usage_billing_dedup_created_at_brin")
 
+	// realtime_billing_outcomes: Realtime 实际扣费与会话终态的事务内关联。
+	var realtimeBillingOutcomesRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.realtime_billing_outcomes')").Scan(&realtimeBillingOutcomesRegclass))
+	require.True(t, realtimeBillingOutcomesRegclass.Valid, "expected realtime_billing_outcomes table to exist")
+	requireColumn(t, tx, "realtime_billing_outcomes", "call_hash", "character varying", 64, false)
+	requireIndex(t, tx, "realtime_billing_outcomes", "realtime_billing_outcomes_pkey")
+	requireIndex(t, tx, "realtime_billing_outcomes", "idx_realtime_billing_outcomes_created_at")
+
 	var usageBillingDedupArchiveRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup_archive')").Scan(&usageBillingDedupArchiveRegclass))
 	require.True(t, usageBillingDedupArchiveRegclass.Valid, "expected usage_billing_dedup_archive table to exist")
