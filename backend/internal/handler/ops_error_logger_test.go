@@ -95,6 +95,31 @@ func TestEstimateOpsErrorLogJobBytesIncludesVariablePayloads(t *testing.T) {
 	}
 }
 
+func TestIsOpsLocalBusinessLimitError_EnterpriseEmployeeWeeklyAllocation(t *testing.T) {
+	require.True(t, isOpsLocalBusinessLimitError(
+		"ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED",
+		"enterprise employee weekly allocation exhausted",
+	))
+	require.True(t, isOpsLocalBusinessLimitError(
+		"",
+		"enterprise employee weekly allocation exhausted",
+	))
+	require.False(t, classifyOpsIsBusinessLimited(
+		"rate_limit_error",
+		"upstream",
+		"",
+		http.StatusTooManyRequests,
+		"upstream rate limit exceeded",
+	))
+	require.False(t, classifyOpsIsBusinessLimited(
+		"api_error",
+		"internal",
+		"",
+		http.StatusInternalServerError,
+		"database connection failed",
+	))
+}
+
 func resetOpsErrorLoggerStateForTest(t *testing.T) {
 	t.Helper()
 
