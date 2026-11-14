@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +11,11 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
+
+const usageViewSource = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../EnterpriseAdminUsageView.vue'),
+  'utf8'
+)
 
 const { getWorkbenchSummary, listWorkbenchUsage, listDepartments, listEmployees } = vi.hoisted(() => ({
   getWorkbenchSummary: vi.fn(), listWorkbenchUsage: vi.fn(), listDepartments: vi.fn(), listEmployees: vi.fn(),
@@ -30,6 +39,24 @@ describe('EnterpriseAdminUsageView', () => {
     listWorkbenchUsage.mockResolvedValue(page())
     listDepartments.mockResolvedValue([{ id: 3, name: '研发部' }])
     listEmployees.mockResolvedValue([{ id: 22, email: 'employee@example.com' }])
+  })
+
+  it('keeps the multi-section table slot in a scrollable desktop container', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('.enterprise-usage-scroll').exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'DataTable' }).exists()).toBe(true)
+    expect(usageViewSource).toMatch(
+      /<template #table>\s*<div class="enterprise-usage-scroll">[\s\S]*<DataTable/
+    )
+    expect(usageViewSource).toMatch(
+      /\.enterprise-usage-scroll\s*\{[\s\S]*@apply min-h-0 flex-1 overflow-y-auto/
+    )
+    expect(usageViewSource).toMatch(
+      /@media \(max-width: 1023px\)[\s\S]*@apply flex-none min-h-fit overflow-visible/
+    )
+    wrapper.unmount()
   })
 
   it('preserves filter controls, backend-compatible week value and model query', async () => {
