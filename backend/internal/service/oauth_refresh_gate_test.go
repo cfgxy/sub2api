@@ -4,12 +4,14 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -253,4 +255,68 @@ func TestGrokCredentialFailureDisabledRefreshDoesNotMutateAccount(t *testing.T) 
 	require.False(t, class.permanent)
 	require.False(t, class.transient)
 	require.Equal(t, GrokCredentialReasonProviderDown, class.reason)
+}
+
+func TestOAuthRefreshGateProductionProvidersUseLoadedConfig(t *testing.T) {
+	load := func(t *testing.T, enabled string) *config.Config {
+		t.Helper()
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		t.Setenv("CONFIG_FILE", "")
+		t.Setenv("DATA_DIR", "")
+		t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
+		t.Setenv("TOKEN_REFRESH_ENABLED", enabled)
+
+		cfg, err := config.LoadForBootstrap()
+		require.NoError(t, err)
+		return cfg
+	}
+
+	t.Run("disabled config reaches every production provider", func(t *testing.T) {
+		cfg := load(t, "false")
+		gate := ProvideOAuthRefreshGate(cfg)
+		claude := ProvideOAuthService(nil, nil, gate)
+		openai := ProvideOpenAIOAuthService(nil, nil, nil, gate)
+		gemini := ProvideGeminiOAuthService(nil, nil, nil, nil, cfg, gate)
+		antigravity := ProvideAntigravityOAuthService(nil, gate)
+		grok := ProvideGrokOAuthService(nil, nil, cfg, nil, gate)
+		api := ProvideOAuthRefreshAPI(nil, nil, gate)
+		background := ProvideTokenRefreshService(
+			nil,
+			claude,
+			openai,
+			gemini,
+			antigravity,
+			grok,
+			nil,
+			nil,
+			cfg,
+			gate,
+			nil,
+			nil,
+			nil,
+			api,
+			nil,
+		)
+		t.Cleanup(background.Stop)
+
+		require.False(t, cfg.TokenRefresh.Enabled)
+		require.False(t, gate.Enabled())
+		require.Same(t, gate, claude.refreshGate)
+		require.Same(t, gate, openai.refreshGate)
+		require.Same(t, gate, gemini.refreshGate)
+		require.Same(t, gate, antigravity.refreshGate)
+		require.Same(t, gate, grok.refreshGate)
+		require.Same(t, gate, api.refreshGate)
+		require.Same(t, gate, background.refreshGate)
+		require.False(t, background.cfg.Enabled)
+	})
+
+	t.Run("enabled config preserves the refresh policy", func(t *testing.T) {
+		cfg := load(t, "true")
+		gate := ProvideOAuthRefreshGate(cfg)
+		require.True(t, cfg.TokenRefresh.Enabled)
+		require.True(t, gate.Enabled())
+		require.NoError(t, gate.RequireEnabled())
+	})
 }
