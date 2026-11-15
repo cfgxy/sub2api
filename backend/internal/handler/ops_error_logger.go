@@ -45,20 +45,21 @@ const (
 	opsErrInsufficientQuota          = "insufficient_quota"
 
 	// 上游错误码常量 — 错误分类 (normalizeOpsErrorType / classifyOpsPhase / classifyOpsIsBusinessLimited)
-	opsCodeInsufficientBalance   = "INSUFFICIENT_BALANCE"
-	opsCodeUsageLimitExceeded    = "USAGE_LIMIT_EXCEEDED"
-	opsCodeSubscriptionNotFound  = "SUBSCRIPTION_NOT_FOUND"
-	opsCodeSubscriptionInvalid   = "SUBSCRIPTION_INVALID"
-	opsCodeUserInactive          = "USER_INACTIVE"
-	opsCodeInvalidAPIKey         = "INVALID_API_KEY"
-	opsCodeAPIKeyRequired        = "API_KEY_REQUIRED"
-	opsCodeAPIKeyExpired         = "API_KEY_EXPIRED"
-	opsCodeAPIKeyDisabled        = "API_KEY_DISABLED"
-	opsCodeUserNotFound          = "USER_NOT_FOUND"
-	opsCodeAPIKeyQuotaExhausted  = "API_KEY_QUOTA_EXHAUSTED"
-	opsCodeAPIKeyQueryDeprecated = "api_key_in_query_deprecated"
-	opsCodeGroupDeleted          = "GROUP_DELETED"
-	opsCodeGroupDisabled         = "GROUP_DISABLED"
+	opsCodeInsufficientBalance                        = "INSUFFICIENT_BALANCE"
+	opsCodeUsageLimitExceeded                         = "USAGE_LIMIT_EXCEEDED"
+	opsCodeSubscriptionNotFound                       = "SUBSCRIPTION_NOT_FOUND"
+	opsCodeSubscriptionInvalid                        = "SUBSCRIPTION_INVALID"
+	opsCodeUserInactive                               = "USER_INACTIVE"
+	opsCodeInvalidAPIKey                              = "INVALID_API_KEY"
+	opsCodeAPIKeyRequired                             = "API_KEY_REQUIRED"
+	opsCodeAPIKeyExpired                              = "API_KEY_EXPIRED"
+	opsCodeAPIKeyDisabled                             = "API_KEY_DISABLED"
+	opsCodeUserNotFound                               = "USER_NOT_FOUND"
+	opsCodeAPIKeyQuotaExhausted                       = "API_KEY_QUOTA_EXHAUSTED"
+	opsCodeEnterpriseEmployeeWeeklyAllocationExceeded = "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED"
+	opsCodeAPIKeyQueryDeprecated                      = "api_key_in_query_deprecated"
+	opsCodeGroupDeleted                               = "GROUP_DELETED"
+	opsCodeGroupDisabled                              = "GROUP_DISABLED"
 )
 
 const (
@@ -2311,6 +2312,7 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		opsCodeSubscriptionNotFound,
 		opsCodeSubscriptionInvalid,
 		opsCodeAPIKeyQuotaExhausted,
+		opsCodeEnterpriseEmployeeWeeklyAllocationExceeded,
 		opsCodeAPIKeyQueryDeprecated:
 		return true
 	}
@@ -2325,6 +2327,7 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		strings.Contains(msg, "api key 5小时限额已用完") ||
 		strings.Contains(msg, "api key 日限额已用完") ||
 		strings.Contains(msg, "api key 7天限额已用完") ||
+		strings.Contains(msg, "enterprise employee weekly allocation exhausted") ||
 		strings.Contains(msg, "daily usage limit exceeded") ||
 		strings.Contains(msg, "weekly usage limit exceeded") ||
 		strings.Contains(msg, "monthly usage limit exceeded") ||
