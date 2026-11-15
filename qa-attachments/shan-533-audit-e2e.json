@@ -6,16 +6,3577 @@
     {
       "name": "企业管理员正常登录",
       "pass": true,
-      "detail": "https://qiye.v2.huayuebridge.com/enterprise/home"
+      "detail": "https://qiye.v2.huayuebridge.com/enterprise/admin/workbench"
     },
     {
-      "name": "浏览器 E2E 执行完成",
+      "name": "登录后进入管理审计页面",
+      "pass": true,
+      "detail": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit"
+    },
+    {
+      "name": "默认列表真实渲染",
+      "pass": true,
+      "detail": "rows=20"
+    },
+    {
+      "name": "默认列表隐藏安全自助事件（当前页行）",
+      "pass": true,
+      "detail": "key.employee_disable,key.employee_rotate,key.employee_create,key.employee_disable,key.employee_rotate,key.employee_rotate,key.employee_create,key.employee_disable,key.employee_rotate,key.employee_create,employee.terminated,key.employee_disable,key.employee_rotate,key.employee_create,allocation.credit_changed,employee.created,employee.terminated,key.employee_create,allocation.credit_changed,employee.created"
+    },
+    {
+      "name": "默认列表保留企业管理成功变更（当前页行）",
+      "pass": true,
+      "detail": "key.employee_disable,key.employee_rotate,key.employee_create,key.employee_disable,key.employee_rotate,key.employee_rotate,key.employee_create,key.employee_disable,key.employee_rotate,key.employee_create,employee.terminated,key.employee_disable,key.employee_rotate,key.employee_create,allocation.credit_changed,employee.created,employee.terminated,key.employee_create,allocation.credit_changed,employee.created"
+    },
+    {
+      "name": "页面详情入口可用",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "详情读回事件、对象、操作者、结果、原因、时间",
+      "pass": true,
+      "detail": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n"
+    },
+    {
+      "name": "页面筛选控件：动作类型",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "显式事件筛选读回安全自助记录",
+      "pass": true,
+      "detail": "records=8"
+    },
+    {
+      "name": "页面筛选控件：动作类型",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "管理员重置密码事件可显式查询",
+      "pass": true,
+      "detail": "records=0"
+    },
+    {
+      "name": "页面筛选控件：对象类型",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面筛选控件：操作者",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面筛选控件：原因",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面筛选控件：原因",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面筛选控件：原因",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面筛选控件：搜索审计记录",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面存在结果筛选控件",
+      "pass": true,
+      "detail": "custom select"
+    },
+    {
+      "name": "结果筛选选项：失败",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "结果筛选读回：失败",
+      "pass": true,
+      "detail": "records=0"
+    },
+    {
+      "name": "结果筛选选项：被拒绝",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "结果筛选读回：被拒绝",
+      "pass": true,
+      "detail": "records=0"
+    },
+    {
+      "name": "页面存在时间范围筛选控件",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面存在员工筛选控件",
       "pass": false,
-      "detail": "Error: 管理审计路由未到达：{\"url\":\"https://qiye.v2.huayuebridge.com/enterprise/sessions\",\"title\":\"会话管理 - 企业门户\",\"body\":\"S\\nSub2API\\n企业控制台\\n个人功能\\n个人概览\\nAPI Key\\n个人用量\\n个人设置\\n我的会话\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n暗色模式\\n收起侧边栏\\n会话管理\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n会话管理\\n\\n查看当前账号已登录的设备，并撤销不再使用的会话。\\n\\n撤销全部会话\\n设备\\n\\t\\nIP 地址\\n\\t\\n最近活动\\n\\t\\n状态\\n\\t\\n操作\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n10.213.0.10\\n\\t\\n2026年11月15日 12:45\\n\\t\\n当前\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/15"
+      "detail": "未发现 aria-label、name 或 placeholder"
+    },
+    {
+      "name": "页面存在部门筛选控件",
+      "pass": false,
+      "detail": "未发现 aria-label、name 或 placeholder"
+    },
+    {
+      "name": "页面存在API Key筛选控件",
+      "pass": false,
+      "detail": "未发现 aria-label、name 或 placeholder"
+    },
+    {
+      "name": "页面筛选控件：动作类型",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "页面筛选控件：搜索审计记录",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "英文管理审计文案实际渲染",
+      "pass": true,
+      "detail": "S\nSub2API\nEnterprise console\nENTERPRISE MANAGEMENT\nWorkbench\nEnterprise usage\nAdmin audit\nAllocation\nEmployees\nEmployee keys\nDepartments\nBrand\nMy sessions\nS\n[REDACTED_EMAIL]\nEnterprise admin\nDark mode\nCollapse sidebar\nAdmin audit\nS\n[REDACTED_EMAIL]\nEnterprise admin\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:40\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:40\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:40\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:39\t"
     }
   ],
-  "screenshots": [],
-  "states": {},
+  "screenshots": [
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-audit-default-zh.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-detail-first.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-event_password_changed.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-event_admin_password_reset.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-entity_employee.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-actor_admin.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-reason_password.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-reason_validation.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-reason_concurrency.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-search_password.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-result-failure.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-result-rejected.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-time-30d.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-event_session_revoke.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-search_concurrent_conflict.png",
+    "/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-1508cc3fca9b/worktree/qa-attachments/shan-533-audit-default-en.png"
+  ],
+  "states": {
+    "default_zh": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看\n2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看\n2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n\n显示 1 至 20 共 49 条结果\n\n每页:\n20\n1\n2\n3",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "20",
+          "aria": "Select option",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "上一页",
+          "title": null
+        },
+        {
+          "text": "1",
+          "aria": "跳转到第 1 页",
+          "title": null
+        },
+        {
+          "text": "2",
+          "aria": "跳转到第 2 页",
+          "title": null
+        },
+        {
+          "text": "3",
+          "aria": "跳转到第 3 页",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "下一页",
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:56\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:56\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        }
+      ],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"2026年11月8日 20:40 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:29 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:29\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 user:322 变更额度 员工额度 成功 SHAN-506 transient QA allocation 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"user:322\"\n        - cell \"变更额度\"\n        - cell \"员工额度\"\n        - cell \"成功\"\n        - cell \"SHAN-506 transient QA allocation\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 user:322 变更额度 员工额度 成功 SHAN-506 transient QA allocation 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"user:322\"\n        - cell \"变更额度\"\n        - cell \"员工额度\"\n        - cell \"成功\"\n        - cell \"SHAN-506 transient QA allocation\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n  - paragraph: 显示 1 至 20 共 49 条结果\n  - text: \"每页:\"\n  - button \"Select option\":\n    - text: \"20\"\n    - img\n  - navigation \"Pagination\":\n    - button \"上一页\" [disabled]:\n      - img\n    - button \"跳转到第 1 页\": \"1\"\n    - button \"跳转到第 2 页\": \"2\"\n    - button \"跳转到第 3 页\": \"3\"\n    - button \"下一页\":\n      - img",
+      "control_summary": [
+        "搜索审计记录:",
+        "操作者:",
+        "动作类型:",
+        "对象类型:",
+        "原因:",
+        "开始时间:datetime-local",
+        "结束时间:datetime-local"
+      ],
+      "missing_structured_filters": [
+        "员工",
+        "部门",
+        "API Key"
+      ]
+    },
+    "detail_first": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看\n2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看\n2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n\n显示 1 至 20 共 49 条结果\n\n每页:\n20\n1\n2\n3\n审计详情\n时间\n2026年11月8日 20:40\n操作者\n企业员工\n动作\n员工停用 Key\n对象\nAPI Key 341\n结果\n成功\n原因\n未提供\n技术标识\nkey.employee_disable · api_key\n脱敏事件字段\nAPI Key ID\n341\n员工 ID\n30\nKey（掩码）\nsk-[REDACTED]...690a\n配额\n0\n已用配额\n0\n限流 1d\n0\n限流 5h\n0\n限流 7d\n0\n用量 1d\n0\n用量 5h\n0\n用量 7d\n0\n窗口起点 1d\nnull\n窗口起点 5h\nnull\n窗口起点 7d\n2026-11-04T10:11:12.17683+08:00",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "20",
+          "aria": "Select option",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "上一页",
+          "title": null
+        },
+        {
+          "text": "1",
+          "aria": "跳转到第 1 页",
+          "title": null
+        },
+        {
+          "text": "2",
+          "aria": "跳转到第 2 页",
+          "title": null
+        },
+        {
+          "text": "3",
+          "aria": "跳转到第 3 页",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "下一页",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "Close modal",
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:56\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:56\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        }
+      ],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"2026年11月8日 20:40 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:29 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:29\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 user:322 变更额度 员工额度 成功 SHAN-506 transient QA allocation 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"user:322\"\n        - cell \"变更额度\"\n        - cell \"员工额度\"\n        - cell \"成功\"\n        - cell \"SHAN-506 transient QA allocation\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 user:322 变更额度 员工额度 成功 SHAN-506 transient QA allocation 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"user:322\"\n        - cell \"变更额度\"\n        - cell \"员工额度\"\n        - cell \"成功\"\n        - cell \"SHAN-506 transient QA allocation\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n  - paragraph: 显示 1 至 20 共 49 条结果\n  - text: \"每页:\"\n  - button \"Select option\":\n    - text: \"20\"\n    - img\n  - navigation \"Pagination\":\n    - button \"上一页\" [disabled]:\n      - img\n    - button \"跳转到第 1 页\": \"1\"\n    - button \"跳转到第 2 页\": \"2\"\n    - button \"跳转到第 3 页\": \"3\"\n    - button \"下一页\":\n      - img\n- dialog \"审计详情\":\n  - heading \"审计详情\" [level=3]\n  - button \"Close modal\":\n    - img\n  - term: 时间\n  - definition: 2026年11月8日 20:40\n  - term: 操作者\n  - definition: 企业员工\n  - term: 动作\n  - definition: 员工停用 Key\n  - term: 对象\n  - definition: API Key 341\n  - term: 结果\n  - definition: 成功\n  - term: 原因\n  - definition: 未提供\n  - term: 技术标识\n  - definition: key.employee_disable · api_key\n  - heading \"脱敏事件字段\" [level=3]\n  - term: API Key ID\n  - definition: \"341\"\n  - term: 员工 ID\n  - definition: \"30\"\n  - term: Key（掩码）\n  - definition: sk-782...690a\n  - term: 配额\n  - definition: \"0\"\n  - term: 已用配额\n  - definition: \"0\"\n  - term: 限流 1d\n  - definition: \"0\"\n  - term: 限流 5h\n  - definition: \"0\"\n  - term: 限流 7d\n  - definition: \"0\"\n  - term: 用量 1d\n  - definition: \"0\"\n  - term: 用量 5h\n  - definition: \"0\"\n  - term: 用量 7d\n  - definition: \"0\"\n  - term: 窗口起点 1d\n  - definition: \"null\"\n  - term: 窗口起点 5h\n  - definition: \"null\"\n  - term: 窗口起点 7d\n  - definition: 2026-11-04T10:11:12.17683+08:00"
+    },
+    "event_password_changed": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n\n显示 1 至 8 共 8 条结果\n\n每页:\n20\n1",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": "employee.password_changed"
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "20",
+          "aria": "Select option",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "上一页",
+          "title": null
+        },
+        {
+          "text": "1",
+          "aria": "跳转到第 1 页",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "下一页",
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        }
+      ],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\": employee.password_changed\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"2026年11月8日 20:27 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:27\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:54 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:54\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:49 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:49\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年10月17日 23:05 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年10月17日 23:05\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年9月28日 15:44 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年9月28日 15:44\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年9月26日 18:32 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年9月26日 18:32\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n  - paragraph: 显示 1 至 8 共 8 条结果\n  - text: \"每页:\"\n  - button \"Select option\":\n    - text: \"20\"\n    - img\n  - navigation \"Pagination\":\n    - button \"上一页\" [disabled]:\n      - img\n    - button \"跳转到第 1 页\": \"1\"\n    - button \"下一页\" [disabled]:\n      - img"
+    },
+    "event_admin_password_reset": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": "employee.password_reset_by_admin"
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\": employee.password_reset_by_admin\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "entity_employee": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:55\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:54\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:54\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:52\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:49\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年10月28日 15:57\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看\n2026年10月28日 15:53\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看\n2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n\n显示 1 至 20 共 21 条结果\n\n每页:\n20\n1\n2",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": "employee"
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "20",
+          "aria": "Select option",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "上一页",
+          "title": null
+        },
+        {
+          "text": "1",
+          "aria": "跳转到第 1 页",
+          "title": null
+        },
+        {
+          "text": "2",
+          "aria": "跳转到第 2 页",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "下一页",
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:55\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 15:52\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年10月28日 15:57\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月28日 15:53\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:55\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 15:52\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年10月28日 15:57\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月28日 15:53\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        }
+      ],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\": employee\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"2026年11月8日 20:27 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:27\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:55 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:55\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:54 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:54\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:54 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:54\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:54 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:54\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:52 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:52\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:49 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:49\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:49 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:49\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年10月28日 15:57 企业公开入口 提交密码重置请求 员工 成功 request_accepted 查看\":\n        - cell \"2026年10月28日 15:57\"\n        - cell \"企业公开入口\"\n        - cell \"提交密码重置请求\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"request_accepted\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年10月28日 15:53 企业公开入口 提交密码重置请求 员工 成功 request_accepted 查看\":\n        - cell \"2026年10月28日 15:53\"\n        - cell \"企业公开入口\"\n        - cell \"提交密码重置请求\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"request_accepted\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年10月17日 23:05 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年10月17日 23:05\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年9月28日 15:44 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年9月28日 15:44\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年9月26日 18:32 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年9月26日 18:32\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n  - paragraph: 显示 1 至 20 共 21 条结果\n  - text: \"每页:\"\n  - button \"Select option\":\n    - text: \"20\"\n    - img\n  - navigation \"Pagination\":\n    - button \"上一页\" [disabled]:\n      - img\n    - button \"跳转到第 1 页\": \"1\"\n    - button \"跳转到第 2 页\": \"2\"\n    - button \"下一页\":\n      - img"
+    },
+    "actor_admin": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": "admin"
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\": admin\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "reason_password": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": "password"
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\": password\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "reason_validation": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": "invalid_request"
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\": invalid_request\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "reason_concurrency": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": "version_conflict"
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\": version_conflict\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "search_password": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年10月28日 15:57\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看\n2026年10月28日 15:53\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看\n2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n\n显示 1 至 10 共 10 条结果\n\n每页:\n20\n1",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": "password"
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "20",
+          "aria": "Select option",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "上一页",
+          "title": null
+        },
+        {
+          "text": "1",
+          "aria": "跳转到第 1 页",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "下一页",
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年10月28日 15:57\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月28日 15:53\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:54\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 15:49\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年10月28日 15:57\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月28日 15:53\t企业公开入口\t提交密码重置请求\t员工\t\n成功\n\trequest_accepted\t查看",
+          "event_title": "password.reset_requested"
+        },
+        {
+          "text": "2026年10月17日 23:05\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月28日 15:44\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年9月26日 18:32\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        }
+      ],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n    - text: password\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"2026年11月8日 20:27 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:27\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:54 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:54\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 15:49 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 15:49\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年10月28日 15:57 企业公开入口 提交密码重置请求 员工 成功 request_accepted 查看\":\n        - cell \"2026年10月28日 15:57\"\n        - cell \"企业公开入口\"\n        - cell \"提交密码重置请求\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"request_accepted\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年10月28日 15:53 企业公开入口 提交密码重置请求 员工 成功 request_accepted 查看\":\n        - cell \"2026年10月28日 15:53\"\n        - cell \"企业公开入口\"\n        - cell \"提交密码重置请求\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"request_accepted\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年10月17日 23:05 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年10月17日 23:05\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年9月28日 15:44 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年9月28日 15:44\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年9月26日 18:32 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年9月26日 18:32\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n  - paragraph: 显示 1 至 10 共 10 条结果\n  - text: \"每页:\"\n  - button \"Select option\":\n    - text: \"20\"\n    - img\n  - navigation \"Pagination\":\n    - button \"上一页\" [disabled]:\n      - img\n    - button \"跳转到第 1 页\": \"1\"\n    - button \"下一页\" [disabled]:\n      - img"
+    },
+    "result_failure": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n失败\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "失败",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 失败\n    - button \"Clear selection\":\n      - img\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "result_rejected": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n被拒绝\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "被拒绝",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 被拒绝\n    - button \"Clear selection\":\n      - img\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "time_30d": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看\n2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看\n2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看\n\n显示 1 至 20 共 39 条结果\n\n每页:\n20\n1\n2",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": "2026-10-16T13:17"
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": "2026-11-15T13:17"
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "20",
+          "aria": "Select option",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "上一页",
+          "title": null
+        },
+        {
+          "text": "1",
+          "aria": "跳转到第 1 页",
+          "title": null
+        },
+        {
+          "text": "2",
+          "aria": "跳转到第 2 页",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "下一页",
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:27\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工停用 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工轮换 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\t变更额度\t员工额度\t\n成功\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业员工\t员工修改密码\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.password_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\t企业管理员\t创建员工\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业管理员\t标记离职\t员工\t\n成功\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\t企业员工\t员工创建 Key\tAPI Key\t\n成功\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        }
+      ],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\": 2026-10-16T13:17\n  - textbox \"结束时间\": 2026-11-15T13:17\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"2026年11月8日 20:40 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:29 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:29\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:27 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 20:27\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工停用 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工停用 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工轮换 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工轮换 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 user:322 变更额度 员工额度 成功 SHAN-506 transient QA allocation 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"user:322\"\n        - cell \"变更额度\"\n        - cell \"员工额度\"\n        - cell \"成功\"\n        - cell \"SHAN-506 transient QA allocation\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业员工 员工修改密码 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业员工\"\n        - cell \"员工修改密码\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 企业管理员 创建员工 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"企业管理员\"\n        - cell \"创建员工\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业管理员 标记离职 员工 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业管理员\"\n        - cell \"标记离职\"\n        - cell \"员工\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 企业员工 员工创建 Key API Key 成功 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"企业员工\"\n        - cell \"员工创建 Key\"\n        - cell \"API Key\"\n        - cell \"成功\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n  - paragraph: 显示 1 至 20 共 39 条结果\n  - text: \"每页:\"\n  - button \"Select option\":\n    - text: \"20\"\n    - img\n  - navigation \"Pagination\":\n    - button \"上一页\" [disabled]:\n      - img\n    - button \"跳转到第 1 页\": \"1\"\n    - button \"跳转到第 2 页\": \"2\"\n    - button \"下一页\":\n      - img"
+    },
+    "event_session_revoke": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": "session.revoke"
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\": session.revoke\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "search_concurrent_conflict": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\n企业控制台\n企业管理\n工作台\n企业用量\n管理审计\n额度分配\n员工\n员工 Key\n部门\n品牌\n我的会话\nS\n[REDACTED_EMAIL]\n企业管理员\n暗色模式\n收起侧边栏\n管理审计\nS\n[REDACTED_EMAIL]\n企业管理员\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n\n暂无符合条件的审计记录",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": "concurrent_conflict"
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "暗色模式",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "收起侧边栏",
+          "aria": null,
+          "title": "收起侧边栏"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\n企业管理员",
+          "aria": "用户菜单",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "暂无符合条件的审计记录",
+          "event_title": ""
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "zh",
+      "record_rows": [],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API 企业控制台\n  - navigation:\n    - text: 企业管理\n    - link \"工作台\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: 工作台\n    - link \"企业用量\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: 企业用量\n    - link \"管理审计\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: 管理审计\n    - link \"额度分配\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: 额度分配\n    - link \"员工\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: 员工\n    - link \"员工 Key\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: 员工 Key\n    - link \"部门\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: 部门\n    - link \"品牌\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: 品牌\n    - link \"我的会话\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: 我的会话\n  - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n  - button \"暗色模式\":\n    - img\n    - text: 暗色模式\n  - button \"收起侧边栏\":\n    - img\n    - text: 收起侧边栏\n- banner:\n  - heading \"管理审计\" [level=1]\n  - button \"用户菜单\":\n    - text: S shan492.enterprise-admin@qa.invalid 企业管理员\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n    - text: concurrent_conflict\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"暂无符合条件的审计记录\":\n        - cell \"暂无符合条件的审计记录\":\n          - img\n          - heading \"暂无符合条件的审计记录\" [level=3]\n          - paragraph"
+    },
+    "default_en": {
+      "url": "https://qiye.v2.huayuebridge.com/enterprise/admin/audit",
+      "title": "管理审计 - 企业门户",
+      "body": "S\nSub2API\nEnterprise console\nENTERPRISE MANAGEMENT\nWorkbench\nEnterprise usage\nAdmin audit\nAllocation\nEmployees\nEmployee keys\nDepartments\nBrand\nMy sessions\nS\n[REDACTED_EMAIL]\nEnterprise admin\nDark mode\nCollapse sidebar\nAdmin audit\nS\n[REDACTED_EMAIL]\nEnterprise admin\n管理审计\n\n查看企业管理操作及其结果。\n\n刷新\n全部结果\n查询\n时间\n\t\n操作者\n\t\n动作\n\t\n对象\n\t\n结果\n\t\n原因\n\t\n详情\n\n2026年11月8日 20:40\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:40\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:40\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:39\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:39\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:38\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:38\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:37\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:37\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 20:29\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:58\tEnterprise admin\tTerminate employee\tEmployee\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:58\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:58\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:58\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:58\tuser:322\tChange allocation\tEmployee allocation\t\nSuccess\n\tSHAN-506 transient QA allocation\t查看\n2026年11月8日 17:58\tEnterprise admin\tCreate employee\tEmployee\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:56\tEnterprise admin\tTerminate employee\tEmployee\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:56\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看\n2026年11月8日 17:56\tuser:322\tChange allocation\tEmployee allocation\t\nSuccess\n\tSHAN-506 transient QA allocation\t查看\n2026年11月8日 17:56\tEnterprise admin\tCreate employee\tEmployee\t\nSuccess\n\t未提供\t查看\n\nShowing 1 to 20 of 49 results\n\nPer page:\n20\n1\n2\n3",
+      "inputs": [
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "搜索审计记录",
+          "placeholder": "操作、对象或原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "操作者",
+          "placeholder": "操作者",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "动作类型",
+          "placeholder": "动作类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "对象类型",
+          "placeholder": "对象类型",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": null,
+          "aria": "原因",
+          "placeholder": "原因",
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "开始时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        },
+        {
+          "tag": "input",
+          "type": "datetime-local",
+          "aria": "结束时间",
+          "placeholder": null,
+          "name": null,
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "text": "Dark mode",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "Collapse sidebar",
+          "aria": null,
+          "title": "Collapse sidebar"
+        },
+        {
+          "text": "S\nshan492.enterprise-admin@qa.invalid\nEnterprise admin",
+          "aria": "User menu",
+          "title": null
+        },
+        {
+          "text": "刷新",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "全部结果",
+          "aria": "结果",
+          "title": null
+        },
+        {
+          "text": "查询",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "查看",
+          "aria": null,
+          "title": null
+        },
+        {
+          "text": "20",
+          "aria": "Select option",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "Previous",
+          "title": null
+        },
+        {
+          "text": "1",
+          "aria": "Go to page 1",
+          "title": null
+        },
+        {
+          "text": "2",
+          "aria": "Go to page 2",
+          "title": null
+        },
+        {
+          "text": "3",
+          "aria": "Go to page 3",
+          "title": null
+        },
+        {
+          "text": "",
+          "aria": "Next",
+          "title": null
+        }
+      ],
+      "table_count": 1,
+      "rows": [
+        {
+          "text": "2026年11月8日 20:40\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise admin\tTerminate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\tChange allocation\tEmployee allocation\t\nSuccess\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise admin\tCreate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\tEnterprise admin\tTerminate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:56\tuser:322\tChange allocation\tEmployee allocation\t\nSuccess\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\tEnterprise admin\tCreate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.created"
+        }
+      ],
+      "empty_text": [],
+      "html_lang": "en",
+      "record_rows": [
+        {
+          "text": "2026年11月8日 20:40\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:40\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:40\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:39\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:39\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:38\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 20:37\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 20:37\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 20:29\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise admin\tTerminate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise employee\tEmployee disabled key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_disable"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise employee\tEmployee rotated key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_rotate"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:58\tuser:322\tChange allocation\tEmployee allocation\t\nSuccess\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:58\tEnterprise admin\tCreate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.created"
+        },
+        {
+          "text": "2026年11月8日 17:56\tEnterprise admin\tTerminate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.terminated"
+        },
+        {
+          "text": "2026年11月8日 17:56\tEnterprise employee\tEmployee created key\tAPI key\t\nSuccess\n\t未提供\t查看",
+          "event_title": "key.employee_create"
+        },
+        {
+          "text": "2026年11月8日 17:56\tuser:322\tChange allocation\tEmployee allocation\t\nSuccess\n\tSHAN-506 transient QA allocation\t查看",
+          "event_title": "allocation.credit_changed"
+        },
+        {
+          "text": "2026年11月8日 17:56\tEnterprise admin\tCreate employee\tEmployee\t\nSuccess\n\t未提供\t查看",
+          "event_title": "employee.created"
+        }
+      ],
+      "aria_snapshot": "- complementary:\n  - text: S Sub2API Enterprise console\n  - navigation:\n    - text: Enterprise management\n    - link \"Workbench\":\n      - /url: /enterprise/admin/workbench\n      - img\n      - text: Workbench\n    - link \"Enterprise usage\":\n      - /url: /enterprise/admin/usage\n      - img\n      - text: Enterprise usage\n    - link \"Admin audit\":\n      - /url: /enterprise/admin/audit\n      - img\n      - text: Admin audit\n    - link \"Allocation\":\n      - /url: /enterprise/admin/allocation\n      - img\n      - text: Allocation\n    - link \"Employees\":\n      - /url: /enterprise/admin/employees\n      - img\n      - text: Employees\n    - link \"Employee keys\":\n      - /url: /enterprise/admin/keys\n      - img\n      - text: Employee keys\n    - link \"Departments\":\n      - /url: /enterprise/admin/departments\n      - img\n      - text: Departments\n    - link \"Brand\":\n      - /url: /enterprise/admin/brand\n      - img\n      - text: Brand\n    - link \"My sessions\":\n      - /url: /enterprise/admin/sessions\n      - img\n      - text: My sessions\n  - text: S shan492.enterprise-admin@qa.invalid Enterprise admin\n  - button \"Dark mode\":\n    - img\n    - text: Dark mode\n  - button \"Collapse sidebar\":\n    - img\n    - text: Collapse sidebar\n- banner:\n  - heading \"Admin audit\" [level=1]\n  - button \"User menu\":\n    - text: S shan492.enterprise-admin@qa.invalid Enterprise admin\n    - img\n- main:\n  - heading \"管理审计\" [level=2]\n  - paragraph: 查看企业管理操作及其结果。\n  - button \"刷新\":\n    - img\n    - text: 刷新\n  - textbox \"搜索审计记录\":\n    - /placeholder: 操作、对象或原因\n  - textbox \"操作者\"\n  - textbox \"动作类型\"\n  - textbox \"对象类型\"\n  - textbox \"原因\"\n  - button \"结果\":\n    - text: 全部结果\n    - img\n  - textbox \"开始时间\"\n  - textbox \"结束时间\"\n  - button \"查询\":\n    - img\n    - text: 查询\n  - table:\n    - rowgroup:\n      - row \"时间 操作者 动作 对象 结果 原因 详情\":\n        - columnheader \"时间\"\n        - columnheader \"操作者\"\n        - columnheader \"动作\"\n        - columnheader \"对象\"\n        - columnheader \"结果\"\n        - columnheader \"原因\"\n        - columnheader \"详情\"\n    - rowgroup:\n      - row \"2026年11月8日 20:40 Enterprise employee Employee disabled key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee disabled key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 Enterprise employee Employee rotated key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee rotated key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:40 Enterprise employee Employee created key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:40\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee created key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 Enterprise employee Employee disabled key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee disabled key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:39 Enterprise employee Employee rotated key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:39\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee rotated key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 Enterprise employee Employee rotated key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee rotated key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:38 Enterprise employee Employee created key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:38\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee created key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 Enterprise employee Employee disabled key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee disabled key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:37 Enterprise employee Employee rotated key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:37\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee rotated key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 20:29 Enterprise employee Employee created key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 20:29\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee created key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 Enterprise admin Terminate employee Employee Success 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"Enterprise admin\"\n        - cell \"Terminate employee\"\n        - cell \"Employee\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 Enterprise employee Employee disabled key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee disabled key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 Enterprise employee Employee rotated key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee rotated key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 Enterprise employee Employee created key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee created key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 user:322 Change allocation Employee allocation Success SHAN-506 transient QA allocation 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"user:322\"\n        - cell \"Change allocation\"\n        - cell \"Employee allocation\"\n        - cell \"Success\"\n        - cell \"SHAN-506 transient QA allocation\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:58 Enterprise admin Create employee Employee Success 未提供 查看\":\n        - cell \"2026年11月8日 17:58\"\n        - cell \"Enterprise admin\"\n        - cell \"Create employee\"\n        - cell \"Employee\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 Enterprise admin Terminate employee Employee Success 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"Enterprise admin\"\n        - cell \"Terminate employee\"\n        - cell \"Employee\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 Enterprise employee Employee created key API key Success 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"Enterprise employee\"\n        - cell \"Employee created key\"\n        - cell \"API key\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 user:322 Change allocation Employee allocation Success SHAN-506 transient QA allocation 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"user:322\"\n        - cell \"Change allocation\"\n        - cell \"Employee allocation\"\n        - cell \"Success\"\n        - cell \"SHAN-506 transient QA allocation\"\n        - cell \"查看\":\n          - button \"查看\"\n      - row \"2026年11月8日 17:56 Enterprise admin Create employee Employee Success 未提供 查看\":\n        - cell \"2026年11月8日 17:56\"\n        - cell \"Enterprise admin\"\n        - cell \"Create employee\"\n        - cell \"Employee\"\n        - cell \"Success\"\n        - cell \"未提供\"\n        - cell \"查看\":\n          - button \"查看\"\n  - paragraph: Showing 1 to 20 of 49 results\n  - text: \"Per page:\"\n  - button \"Select option\":\n    - text: \"20\"\n    - img\n  - navigation \"Pagination\":\n    - button \"Previous\" [disabled]:\n      - img\n    - button \"Go to page 1\": \"1\"\n    - button \"Go to page 2\": \"2\"\n    - button \"Go to page 3\": \"3\"\n    - button \"Next\":\n      - img"
+    }
+  },
   "network": [
     {
       "method": "GET",
@@ -30,10 +3591,87 @@
     {
       "method": "GET",
       "status": 200,
-      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/sessions"
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&event_type=employee.password_changed"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&event_type=employee.password_reset_by_admin"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&entity_type=employee"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&actor_ref=admin"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&reason=password"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&reason=invalid_request"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&reason=version_conflict"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&search=password"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&result=failure"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&result=rejected"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&start_at=2026-10-16T05:17:00.000Z&end_at=2026-11-15T05:17:00.000Z"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&event_type=session.revoke"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20&search=concurrent_conflict"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/admin/workbench/audit-events?page=1&page_size=20"
     }
   ],
   "console": [],
-  "uncovered": [],
-  "failure": "Error: 管理审计路由未到达：{\"url\":\"https://qiye.v2.huayuebridge.com/enterprise/sessions\",\"title\":\"会话管理 - 企业门户\",\"body\":\"S\\nSub2API\\n企业控制台\\n个人功能\\n个人概览\\nAPI Key\\n个人用量\\n个人设置\\n我的会话\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n暗色模式\\n收起侧边栏\\n会话管理\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n会话管理\\n\\n查看当前账号已登录的设备，并撤销不再使用的会话。\\n\\n撤销全部会话\\n设备\\n\\t\\nIP 地址\\n\\t\\n最近活动\\n\\t\\n状态\\n\\t\\n操作\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n10.213.0.10\\n\\t\\n2026年11月15日 12:45\\n\\t\\n当前\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n10.213.0.10\\n\\t\\n2026年11月15日 12:43\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 19:32\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\ncurl/8.21.0\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 19:23\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\ncurl/8.17.0\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 19:09\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:42\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:42\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:40\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:39\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:29\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\ncurl/8.21.0\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:25\\n\\t\\n有效\\n\\t\\n撤销\"}\n    at waitForAudit (/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-2262b366889c/worktree/.qa-shan533-audit.cjs:114:13)\n    at async /home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-2262b366889c/worktree/.qa-shan533-audit.cjs:155:5"
+  "uncovered": [
+    "当前线上数据未出现未知事件或未知对象行，未知值降级仅有源码/单测证据，本轮未作 UI PASS",
+    "页面未提供员工、部门、API Key 独立筛选控件：员工、部门、API Key"
+  ],
+  "fixture": {
+    "created": false,
+    "before": "未修改线上业务数据",
+    "after": "未修改线上业务数据"
+  }
 }
