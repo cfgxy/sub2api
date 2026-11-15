@@ -1,0 +1,39 @@
+{
+  "candidate_sha": "3cf9d8c2e76d7df2825c692547475c86ebfbf4c1",
+  "origin": "https://qiye.v2.huayuebridge.com",
+  "route": "/enterprise/admin/audit",
+  "steps": [
+    {
+      "name": "企业管理员正常登录",
+      "pass": true,
+      "detail": "https://qiye.v2.huayuebridge.com/enterprise/home"
+    },
+    {
+      "name": "浏览器 E2E 执行完成",
+      "pass": false,
+      "detail": "Error: 管理审计路由未到达：{\"url\":\"https://qiye.v2.huayuebridge.com/enterprise/sessions\",\"title\":\"会话管理 - 企业门户\",\"body\":\"S\\nSub2API\\n企业控制台\\n个人功能\\n个人概览\\nAPI Key\\n个人用量\\n个人设置\\n我的会话\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n暗色模式\\n收起侧边栏\\n会话管理\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n会话管理\\n\\n查看当前账号已登录的设备，并撤销不再使用的会话。\\n\\n撤销全部会话\\n设备\\n\\t\\nIP 地址\\n\\t\\n最近活动\\n\\t\\n状态\\n\\t\\n操作\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n10.213.0.10\\n\\t\\n2026年11月15日 12:45\\n\\t\\n当前\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/15"
+    }
+  ],
+  "screenshots": [],
+  "states": {},
+  "network": [
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/brand"
+    },
+    {
+      "method": "POST",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/auth/login"
+    },
+    {
+      "method": "GET",
+      "status": 200,
+      "url": "https://qiye.v2.huayuebridge.com/api/v1/enterprise/sessions"
+    }
+  ],
+  "console": [],
+  "uncovered": [],
+  "failure": "Error: 管理审计路由未到达：{\"url\":\"https://qiye.v2.huayuebridge.com/enterprise/sessions\",\"title\":\"会话管理 - 企业门户\",\"body\":\"S\\nSub2API\\n企业控制台\\n个人功能\\n个人概览\\nAPI Key\\n个人用量\\n个人设置\\n我的会话\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n暗色模式\\n收起侧边栏\\n会话管理\\nQ\\[REDACTED_EMAIL]\\n企业员工\\n会话管理\\n\\n查看当前账号已登录的设备，并撤销不再使用的会话。\\n\\n撤销全部会话\\n设备\\n\\t\\nIP 地址\\n\\t\\n最近活动\\n\\t\\n状态\\n\\t\\n操作\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n10.213.0.10\\n\\t\\n2026年11月15日 12:45\\n\\t\\n当前\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n10.213.0.10\\n\\t\\n2026年11月15日 12:43\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 19:32\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\ncurl/8.21.0\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 19:23\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\ncurl/8.17.0\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 19:09\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:42\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:42\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:40\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:39\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\nMozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:29\\n\\t\\n有效\\n\\t\\n撤销\\n\\n\\n桌面浏览器\\ncurl/8.21.0\\n\\t\\n172.19.0.1\\n\\t\\n2026年9月29日 16:25\\n\\t\\n有效\\n\\t\\n撤销\"}\n    at waitForAudit (/home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-2262b366889c/worktree/.qa-shan533-audit.cjs:114:13)\n    at async /home/guxy/multica_workspaces/shanghui-4da3341f7ba8/shan-533-2262b366889c/worktree/.qa-shan533-audit.cjs:155:5"
+}
