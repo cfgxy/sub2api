@@ -20,6 +20,9 @@
         <input v-model="filters.entity_type" class="input" placeholder="对象类型" aria-label="对象类型" @keyup.enter="searchAudit" />
         <input v-model="filters.reason" class="input" placeholder="原因" aria-label="原因" @keyup.enter="searchAudit" />
         <Select v-model="filters.result" :options="resultOptions" placeholder="全部结果" aria-label="结果" clearable />
+        <Select v-model="filters.employee_id" :options="employeeOptions" placeholder="员工" aria-label="员工" clearable />
+        <Select v-model="filters.department_id" :options="departmentOptions" placeholder="部门" aria-label="部门" clearable />
+        <Select v-model="filters.api_key_id" :options="apiKeyOptions" placeholder="API Key" aria-label="API Key" clearable />
         <input v-model="startAt" type="datetime-local" class="input" aria-label="开始时间" />
         <input v-model="endAt" type="datetime-local" class="input" aria-label="结束时间" />
         <button type="button" class="btn btn-primary" :disabled="loading" @click="searchAudit">
@@ -92,7 +95,7 @@ import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
 import { auditActorLabel, auditEntityLabel, auditEventLabel, auditReasonLabel, windowTypeLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
-import type { EnterprisePaginated, EnterpriseWorkbenchAuditEvent } from '@/types/enterprise'
+import type { EnterpriseDepartment, EnterpriseEmployee, EnterpriseKeySummary, EnterprisePaginated, EnterpriseWorkbenchAuditEvent } from '@/types/enterprise'
 
 // 详情字段只消费后端允许展示的既有白名单，未知字段不渲染。
 const auditPayloadFieldLabels: Record<string, string> = {
@@ -119,9 +122,25 @@ const columns: Column[] = [
   { key: 'result', label: '结果' }, { key: 'reason', label: '原因' }, { key: 'actions', label: '详情' }
 ]
 const resultOptions = computed(() => ['success', 'failure', 'rejected'].map(value => ({ value, label: t(`admin.enterprise.audit.result.${value}`) })))
+const departments = ref<EnterpriseDepartment[]>([])
+const employees = ref<EnterpriseEmployee[]>([])
+const adminKeys = ref<EnterpriseKeySummary[]>([])
+const departmentOptions = computed(() => departments.value.map(item => ({ value: item.id, label: item.name })))
+const employeeOptions = computed(() => employees.value.map(item => ({ value: item.id, label: item.email })))
+const apiKeyOptions = computed(() => adminKeys.value.map(item => ({ value: item.api_key_id, label: `${item.employee_email} · Key #${item.api_key_id}` })))
 const emptyPage = (): EnterprisePaginated<EnterpriseWorkbenchAuditEvent> => ({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
 const audit = reactive(emptyPage())
-const filters = reactive({ search: '', actor_ref: '', event_type: '', entity_type: '', reason: '', result: '' })
+const filters = reactive<{
+  search: string
+  actor_ref: string
+  event_type: string
+  entity_type: string
+  reason: string
+  result: string
+  employee_id: number | null
+  department_id: number | null
+  api_key_id: number | null
+}>({ search: '', actor_ref: '', event_type: '', entity_type: '', reason: '', result: '', employee_id: null, department_id: null, api_key_id: null })
 const startAt = ref(''), endAt = ref('')
 const loading = ref(false), sourceUnavailable = ref(false), auditPage = ref(1), pageSize = ref(20)
 const selectedAudit = ref<EnterpriseWorkbenchAuditEvent>()
@@ -130,7 +149,7 @@ const auditParams = () => Object.fromEntries(Object.entries({
   page: auditPage.value, page_size: pageSize.value, ...filters,
   start_at: startAt.value ? new Date(startAt.value).toISOString() : undefined,
   end_at: endAt.value ? new Date(endAt.value).toISOString() : undefined
-}).filter(([, value]) => value !== undefined && value !== '')) as Record<string, string | number>
+}).filter(([, value]) => value !== undefined && value !== '' && value !== null)) as Record<string, string | number>
 const formatDate = (value: string | Date) => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 const resultCode = (row: EnterpriseWorkbenchAuditEvent) => row.result || String(row.payload?.result || row.payload?.status || 'success')
 const resultLabel = (row: EnterpriseWorkbenchAuditEvent) => t(`admin.enterprise.audit.result.${['success', 'failure', 'rejected'].includes(resultCode(row)) ? resultCode(row) : 'unknown'}`)
@@ -163,8 +182,24 @@ async function load() {
     loading.value = false
   }
 }
+async function loadDirectories() {
+  const [employeeResult, departmentResult, apiKeyResult] = await Promise.allSettled([
+    enterpriseAPI.listEmployees({ suppressUnavailableRedirect: true }),
+    enterpriseAPI.listDepartments({ suppressUnavailableRedirect: true }),
+    enterpriseAPI.listAdminKeys({ suppressUnavailableRedirect: true }),
+  ])
+  employees.value = employeeResult.status === 'fulfilled' && Array.isArray(employeeResult.value) ? employeeResult.value : []
+  departments.value = departmentResult.status === 'fulfilled' && Array.isArray(departmentResult.value) ? departmentResult.value : []
+  adminKeys.value = apiKeyResult.status === 'fulfilled' && Array.isArray(apiKeyResult.value) ? apiKeyResult.value : []
+  if ([employeeResult, departmentResult, apiKeyResult].some(result => result.status === 'rejected')) {
+    appStore.showError('部分审计筛选选项暂时不可用')
+  }
+}
 function searchAudit() { auditPage.value = 1; void load() }
 function onPage(page: number) { auditPage.value = page; void load() }
 function onPageSize(size: number) { pageSize.value = size; auditPage.value = 1; void load() }
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadDirectories()
+})
 </script>
