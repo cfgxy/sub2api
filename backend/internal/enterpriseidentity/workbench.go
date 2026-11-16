@@ -22,6 +22,18 @@ const (
 	workbenchMaxPageSize     = 100
 )
 
+// defaultAuditEventCondition 让管理列表默认聚焦成功的企业管理变更；安全自助和拒绝记录仍保留在追加审计中，填写审计筛选条件后可查询。
+const defaultAuditEventCondition = `COALESCE(payload->>'result', payload->>'status', 'success') = 'success'
+	AND event_type IN (
+		'enterprise.created', 'enterprise.disabled', 'enterprise.enabled', 'enterprise.host_updated',
+		'subscription.activated',
+		'department.created', 'department.deleted',
+		'employee.created', 'employee.updated', 'employee.terminated', 'employee.password_reset_by_admin',
+		'allocation.credit_changed',
+		'key.employee_create', 'key.employee_disable', 'key.employee_rotate',
+		'brand.updated', 'brand.background_updated'
+	)`
+
 type WorkbenchHandler struct {
 	owner *Handler
 }
@@ -623,9 +635,18 @@ func (h *WorkbenchHandler) listUsage(ctx context.Context, enterpriseID int64, q 
 	return items, total, rows.Err()
 }
 
+func hasAuditFilters(q workbenchQuery, eventType, entityType, actorRef, result, reason, search string) bool {
+	return q.EmployeeID != nil || q.DepartmentID != nil || q.APIKeyID != nil ||
+		q.WindowType != "" || q.WindowAnchor != nil || q.StartAt != nil || q.EndAt != nil ||
+		eventType != "" || entityType != "" || actorRef != "" || result != "" || reason != "" || search != ""
+}
+
 func (h *WorkbenchHandler) listAuditEvents(ctx context.Context, enterpriseID int64, q workbenchQuery, eventType, entityType, actorRef, result, reason, search string) ([]WorkbenchAuditEvent, int64, error) {
 	conditions := []string{"enterprise_id = $1"}
 	args := []any{enterpriseID}
+	if !hasAuditFilters(q, eventType, entityType, actorRef, result, reason, search) {
+		conditions = append(conditions, defaultAuditEventCondition)
+	}
 	add := func(condition string, value any) {
 		args = append(args, value)
 		conditions = append(conditions, fmt.Sprintf(condition, len(args)))

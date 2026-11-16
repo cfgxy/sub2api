@@ -14,16 +14,20 @@ export default {
     audit: {
       event: {
         unknown: '未知事件', allocationUpdate: '调整额度', allocationCreditChanged: '变更额度', allocationVersionConflict: '额度版本冲突',
+        enterpriseCreated: '开通企业', enterpriseDisabled: '停用企业', enterpriseEnabled: '启用企业', enterpriseHostUpdated: '修改企业入口域名',
         employeeCreated: '创建员工', employeeUpdated: '更新员工资料', employeeTerminated: '标记离职', employeeUpdateRejected: '员工更新被拒绝',
         employeePasswordChanged: '员工修改密码', employeePasswordReset: '管理员重置密码', employeeCreate: '创建员工被拒绝',
         employeeUpdate: '更新员工被拒绝', employeeTerminate: '离职操作被拒绝', departmentCreated: '创建部门',
         departmentDeleted: '删除部门', departmentCreate: '创建部门被拒绝', departmentDisable: '停用部门被拒绝',
         keyRevoke: '撤销 Key', keyRotate: '轮换 Key', subscriptionActivated: '激活订阅',
-        keyEmployeeCreate: '员工创建 Key', keyEmployeeDisable: '员工停用 Key', keyEmployeeRotate: '员工轮换 Key'
+        keyEmployeeCreate: '员工创建 Key', keyEmployeeDisable: '员工停用 Key', keyEmployeeRotate: '员工轮换 Key',
+        brandUpdated: '更新品牌配置', brandBackgroundUpdated: '更新品牌背景', brandUpdate: '更新品牌配置被拒绝', brandBackgroundUpload: '品牌背景上传被拒绝',
+        passwordResetRequested: '提交密码重置请求', passwordReset: '重置密码',
+        sessionRevoke: '撤销会话', sessionRevokeAll: '撤销全部会话'
       },
       reason: { rejected: '被拒绝', invalidRequest: '请求无效', invalidToken: '凭证无效', notFound: '对象不存在', weakPassword: '密码强度不足', versionConflict: '版本冲突' },
       actor: { employee: '企业员工', admin: '企业管理员', publicEntry: '企业公开入口', system: '企业操作者' },
-      entity: { unknown: '未知对象', employee: '员工', department: '部门', apiKey: 'API Key', allocation: '员工额度', subscription: '企业订阅', enterprise: '企业' },
+      entity: { unknown: '未知对象', employee: '员工', department: '部门', apiKey: 'API Key', allocation: '员工额度', subscription: '企业订阅', enterprise: '企业', enterpriseBranding: '品牌配置', session: '会话' },
       result: { success: '成功', failure: '失败', rejected: '被拒绝', unknown: '未知结果' }
     },
     terms: { allocation: '额度', weeklyAllocation: '每周额度', weeklyLimit: '周上限', remaining: '剩余额度', overage: '超用量', used: '已用', total: '合计', quota: '配额', actualCost: '实际费用', pool: '企业总池', withinAllocation: '当前额度分配范围内', reviewOverage: '核对个人超用，并按业务需要调整额度分配' },
