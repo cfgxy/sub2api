@@ -73,7 +73,7 @@ export default {
       poolAvailable: '{pool} available',
       poolExhaustedNote: 'Not the same as individual {overage}; resolve the subscription source first',
       poolAvailableNote: 'Enterprise hard {quota} and individual {allocation} are checked separately',
-      employeesWithUsage: '{count} employees with usage',
+      employeesWithUsage: '{count} employees with allocation or usage',
       activeEmployees: '{count} active employees',
       windowWeekly: 'Statistics window: weekly',
       windowAnchor: 'Window anchor {time}',

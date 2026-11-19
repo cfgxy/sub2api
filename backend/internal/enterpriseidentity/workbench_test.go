@@ -105,10 +105,10 @@ func TestGetSummaryMarksOverageRecommendationByNumericSemantics(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
-	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT COUNT\(\*\)`).
 		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(2)))
-	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*`).
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT employee\.id, COALESCE\(employee\.current_email, employee\.email, ''\)`).
 		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
 			AddRow(int64(22), "employee-zero@example.com", int64(3), int64(3), "200.00000000", "50.00000000", "150.00000000", "0.00000000").
@@ -148,10 +148,10 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
-	mock.ExpectQuery(`SELECT COUNT\(DISTINCT attribution\.employee_id\)`).
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT COUNT\(\*\)`).
 		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
-	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*attribution\.window_type = 'week'.*attribution\.subscription_id = \$2.*attribution\.window_anchor = \$3.*window_anchor <= usage\.window_anchor`).
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT employee\.id, COALESCE\(employee\.current_email, employee\.email, ''\)`).
 		WithArgs(int64(7), int64(55), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
 			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75", "9.75", "0"))
@@ -191,6 +191,53 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	require.Empty(t, result.ScheduledSubscriptionPlan)
 	require.Nil(t, result.ScheduledSubscriptionSince)
 	require.Len(t, result.UsageTrend, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestGetSummaryIncludesEmployeeWithAllocationAndNoUsage 锁定回归：员工已配置本周额度但尚无调用时，
+// 员工额度面板与「X 名员工」计数都必须包含该员工。旧实现以 usage_attributions 为基表，
+// 会把「已分配额度、零调用」的企业显示为「0 名员工有用量」，与实际配置不符。
+func TestGetSummaryIncludesEmployeeWithAllocationAndNoUsage(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	anchor := time.Date(2026, 11, 19, 3, 26, 46, 0, time.UTC)
+	expectCurrentEnterpriseWeek(mock, 9, 21, anchor)
+
+	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
+		WithArgs(int64(9), int64(21), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"total_usage_credit", "total_requests"}).AddRow("0.00000000", int64(0)))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
+		WithArgs(int64(9)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	// 计数与列表同一口径：有额度分配但零调用的员工计为 1。
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT COUNT\(\*\)`).
+		WithArgs(int64(9), int64(21), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT employee\.id, COALESCE\(employee\.current_email, employee\.email, ''\).*COALESCE\(allocation\.amount, 0\) > 0 OR COALESCE\(usage\.requests, 0\) > 0.*LIMIT 100`).
+		WithArgs(int64(9), int64(21), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
+			AddRow(int64(8), "wangxinyi1227@gmail.com", int64(4), int64(0), "2.00000000", "0.00000000", "2.00000000", "0.00000000"))
+	mock.ExpectQuery(`(?s)SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL.*enterprise_subscription\.id = \$2`).
+		WithArgs(int64(9), int64(21)).
+		WillReturnRows(sqlmock.NewRows([]string{"subscription_id", "source_status", "plan", "subscription_status", "pool_limit", "pool_used", "pool_remaining", "pool_exhausted", "pool_anchor"}).
+			AddRow(int64(21), "available", "企业后台测试分组（XT）", "active", "10.00000000", "0.00000000", "10.00000000", false, anchor))
+	mock.ExpectQuery(`(?s)SELECT observed_at\s+FROM enterprise_subscription_windows`).
+		WithArgs(int64(9), int64(21)).
+		WillReturnRows(sqlmock.NewRows([]string{"observed_at"}))
+	mock.ExpectQuery(`(?s)FROM enterprise_subscriptions AS enterprise_subscription.*status = 'scheduled'`).
+		WithArgs(int64(9)).
+		WillReturnRows(sqlmock.NewRows([]string{"plan", "created_at"}))
+	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
+		WithArgs(int64(9), int64(21), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "usage_credit"}))
+
+	result, err := handler.getSummary(t.Context(), 9, workbenchQuery{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.EmployeeCount, "零调用的已分配员工必须计入员工数")
+	require.Len(t, result.EmployeeSummaries, 1)
+	require.Equal(t, int64(8), result.EmployeeSummaries[0].EmployeeID)
+	require.Equal(t, int64(0), result.EmployeeSummaries[0].Requests)
+	require.Equal(t, "2.00000000", result.EmployeeSummaries[0].ConfiguredCredit)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -73,7 +73,7 @@ export default {
       poolAvailable: '{pool}可用',
       poolExhaustedNote: '不等同于个人{overage}，请先处理订阅来源',
       poolAvailableNote: '企业硬{quota}与个人{allocation}分开核对',
-      employeesWithUsage: '{count} 名员工有用量',
+      employeesWithUsage: '{count} 名员工有额度或用量',
       activeEmployees: '在职员工 {count} 名',
       windowWeekly: '统计窗口：每周',
       windowAnchor: '窗口锚点 {time}',
