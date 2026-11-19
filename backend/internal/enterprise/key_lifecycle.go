@@ -74,13 +74,15 @@ type EmployeeKeyMutationParams struct {
 }
 
 type EnterpriseKeySummary struct {
-	APIKeyID   int64     `json:"api_key_id"`
-	EmployeeID int64     `json:"employee_id"`
-	Email      string    `json:"employee_email"`
-	Generation int64     `json:"generation"`
-	Status     string    `json:"status"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	AssignmentID int64     `json:"assignment_id"`
+	APIKeyID     int64     `json:"api_key_id"`
+	EmployeeID   int64     `json:"employee_id"`
+	Email        string    `json:"employee_email"`
+	Generation   int64     `json:"generation"`
+	Status       string    `json:"status"`
+	InUse        bool      `json:"in_use"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type employeeKeyRow struct {
@@ -137,9 +139,10 @@ func (r *Repository) getEmployeeCurrentKey(ctx context.Context, enterpriseID, em
 
 func (r *Repository) ListEnterpriseKeys(ctx context.Context, enterpriseID int64) ([]EnterpriseKeySummary, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT assignment.api_key_id, assignment.employee_id,
+		SELECT assignment.id, assignment.api_key_id, assignment.employee_id,
 		       COALESCE(employee.current_email, employee.email, ''), assignment.generation,
 		       CASE WHEN assignment.status = 'active' AND api_key.status = 'active' THEN 'active' ELSE 'disabled' END,
+		       assignment.status = 'active',
 		       api_key.created_at, api_key.updated_at
 		FROM enterprise_key_assignments AS assignment
 		JOIN enterprise_employees AS employee
@@ -154,7 +157,7 @@ func (r *Repository) ListEnterpriseKeys(ctx context.Context, enterpriseID int64)
 	items := make([]EnterpriseKeySummary, 0)
 	for rows.Next() {
 		var item EnterpriseKeySummary
-		if err := rows.Scan(&item.APIKeyID, &item.EmployeeID, &item.Email, &item.Generation, &item.Status, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.AssignmentID, &item.APIKeyID, &item.EmployeeID, &item.Email, &item.Generation, &item.Status, &item.InUse, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

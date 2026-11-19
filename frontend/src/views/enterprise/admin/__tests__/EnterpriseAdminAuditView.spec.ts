@@ -31,7 +31,7 @@ describe('EnterpriseAdminAuditView', () => {
     listWorkbenchAuditEvents.mockResolvedValue(page())
     listEmployees.mockResolvedValue([{ id: 22, email: 'employee@example.com', status: 'active', must_change_password: false, version: 1 }])
     listDepartments.mockResolvedValue([{ id: 3, name: '研发部', created_at: '2026-01-01T00:00:00Z' }])
-    listAdminKeys.mockResolvedValue([{ api_key_id: 9, employee_id: 22, employee_email: 'employee@example.com', generation: 1, status: 'active', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }])
+    listAdminKeys.mockResolvedValue([{ assignment_id: 1, api_key_id: 9, employee_id: 22, employee_email: 'employee@example.com', generation: 1, status: 'active', in_use: true, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }])
   })
 
   it('maps event and entity labels without losing inspectable raw codes', async () => {

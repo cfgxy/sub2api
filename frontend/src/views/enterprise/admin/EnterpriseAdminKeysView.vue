@@ -16,8 +16,15 @@
       <div v-if="loadError" class="p-6" data-testid="admin-keys-load-error">
         <EmptyState icon="exclamationTriangle" title="员工 Key 信息暂时不可用" action-text="重新加载" @action="load" />
       </div>
-      <DataTable v-else :columns="columns" :data="keys" :loading="loading" row-key="api_key_id" :actions-count="1">
+      <DataTable v-else :columns="columns" :data="keys" :loading="loading" row-key="assignment_id" :actions-count="1">
         <template #cell-employee_email="{ value }"><span class="break-all">{{ value }}</span></template>
+        <template #cell-in_use="{ value }">
+          <StatusBadge
+            :status="value ? 'active' : 'archived'"
+            :label="value ? '当前使用中' : '历史记录'"
+            :data-testid="value ? 'admin-key-in-use' : 'admin-key-archived'"
+          />
+        </template>
         <template #cell-status="{ value }"><StatusBadge :status="value" :label="keyStatusLabel(value, t)" /></template>
         <template #cell-updated_at="{ value }">{{ formatDate(value) }}</template>
         <template #cell-actions="{ row }">
@@ -56,6 +63,7 @@ const appStore = useAppStore()
 const columns: Column[] = [
   { key: 'employee_email', label: '员工邮箱' }, { key: 'api_key_id', label: 'Key ID' },
   { key: 'generation', label: '代次' }, { key: 'status', label: '状态' },
+  { key: 'in_use', label: '当前使用中' },
   { key: 'updated_at', label: '更新时间' }, { key: 'actions', label: '操作' }
 ]
 const keys = ref<EnterpriseKeySummary[]>([])

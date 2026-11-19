@@ -12,7 +12,9 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 const { listAdminKeys, revokeAdminKey } = vi.hoisted(() => ({ listAdminKeys: vi.fn(), revokeAdminKey: vi.fn() }))
 vi.mock('@/api/enterprise', () => ({ enterpriseAPI: { listAdminKeys, revokeAdminKey } }))
 
-const row = { api_key_id: 1, employee_id: 9, employee_email: 'employee@example.com', generation: 2, status: 'active' as const, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+const now = new Date().toISOString()
+const row = { assignment_id: 11, api_key_id: 1, employee_id: 9, employee_email: 'employee@example.com', generation: 2, status: 'active' as const, in_use: true, created_at: now, updated_at: now }
+const archivedRow = { assignment_id: 10, api_key_id: 1, employee_id: 9, employee_email: 'employee@example.com', generation: 1, status: 'disabled' as const, in_use: false, created_at: now, updated_at: now }
 
 function mountView() {
   const pinia = createPinia()
@@ -32,6 +34,15 @@ describe('EnterpriseAdminKeysView', () => {
     expect(wrapper.text()).toContain('查看员工 Key 的归属与状态，可撤销已启用的 Key')
     expect(wrapper.text()).not.toMatch(/查看.*掩码|代轮换/)
     expect(wrapper.findAll('button').map(button => button.text()).join(' ')).not.toContain('轮换')
+    wrapper.unmount()
+  })
+
+  it('marks the current binding and keeps ended bindings as history', async () => {
+    listAdminKeys.mockResolvedValueOnce([row, archivedRow])
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="admin-key-in-use"]').text()).toContain('当前使用中')
+    expect(wrapper.get('[data-testid="admin-key-archived"]').text()).toContain('历史记录')
     wrapper.unmount()
   })
 
