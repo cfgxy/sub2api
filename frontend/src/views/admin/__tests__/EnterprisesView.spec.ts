@@ -12,12 +12,13 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: (await import('./enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
-const { list, get, enable, disable, updateHost } = vi.hoisted(() => ({
+const { list, get, enable, disable, updateHost, refreshSubscriptions } = vi.hoisted(() => ({
   list: vi.fn(),
   get: vi.fn(),
   enable: vi.fn(),
   disable: vi.fn(),
   updateHost: vi.fn(),
+  refreshSubscriptions: vi.fn(),
 }))
 
 vi.mock('@/api/enterprisePlatform', () => ({
@@ -28,6 +29,7 @@ vi.mock('@/api/enterprisePlatform', () => ({
     disable,
     enable,
     updateHost,
+    refreshSubscriptions,
   },
 }))
 
@@ -149,6 +151,34 @@ describe('EnterprisesView 信息结构补齐', () => {
     await flushPromises()
     expect(confirmDialog(wrapper).props('show')).toBe(false)
     expect(disable).not.toHaveBeenCalled()
+  })
+
+  it('刷新订阅会调用同步接口并以重新加载的数据替换展示结果', async () => {
+    list.mockResolvedValue([enterpriseFixture({ subscriptions: [] })])
+    refreshSubscriptions.mockResolvedValueOnce({ action: 'linked', upstream_user_subscription_id: 2, enterprise_subscription_id: 3 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="enterprise-refresh-subscriptions"]').trigger('click')
+    await flushPromises()
+
+    expect(refreshSubscriptions).toHaveBeenCalledWith(1)
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-testid="enterprise-no-subscriptions"]').text()).toBe('无订阅')
+  })
+
+  it('同步成功但重新加载失败时清空旧显示并提示来源不可用', async () => {
+    list.mockResolvedValueOnce([enterpriseFixture()]).mockRejectedValueOnce(new Error('service unavailable'))
+    refreshSubscriptions.mockResolvedValueOnce({ action: 'unchanged', upstream_user_subscription_id: 1, enterprise_subscription_id: 1 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="enterprise-refresh-subscriptions"]').trigger('click')
+    await flushPromises()
+
+    expect(refreshSubscriptions).toHaveBeenCalledWith(1)
+    expect(wrapper.find('[data-testid="enterprises-source-unavailable"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="enterprise-no-subscriptions"]').exists()).toBe(false)
   })
 
   it('改域名弹窗输入新域名后调用修改接口', async () => {

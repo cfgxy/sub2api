@@ -95,6 +95,15 @@
               <button class="btn btn-ghost btn-sm" data-testid="enterprise-update-host" @click="openHostDialog(row)">
                 {{ t('admin.enterprise.list.changeHost') }}
               </button>
+              <button
+                class="btn btn-ghost btn-sm"
+                :disabled="refreshingSubscriptionsID === row.id"
+                data-testid="enterprise-refresh-subscriptions"
+                @click="refreshSubscriptions(row)"
+              >
+                <Icon name="refresh" size="sm" :class="refreshingSubscriptionsID === row.id && 'animate-spin'" />
+                {{ t('admin.enterprise.list.refreshSubscriptions') }}
+              </button>
             </div>
           </template>
           <template #empty>
@@ -182,6 +191,7 @@ const hostDialogRow = ref<PlatformEnterprise | null>(null)
 const hostValue = ref('')
 const hostError = ref('')
 const hostSaving = ref(false)
+const refreshingSubscriptionsID = ref<number | null>(null)
 
 const columns = computed<Column[]>(() => [
   { key: 'name', label: t('admin.enterprise.common.name') },
@@ -213,10 +223,12 @@ async function load() {
   sourceUnavailable.value = false
   try {
     items.value = await enterprisePlatformAPI.list({ search: search.value, status: status.value })
+    return true
   } catch {
     items.value = []
     sourceUnavailable.value = true
     appStore.showError(t('admin.enterprise.list.unavailableMessage'))
+    return false
   } finally {
     loading.value = false
   }
@@ -280,6 +292,20 @@ async function enable(row: PlatformEnterprise) {
     await load()
   } catch {
     appStore.showError(t('admin.enterprise.list.enableFailed'))
+  }
+}
+
+async function refreshSubscriptions(row: PlatformEnterprise) {
+  refreshingSubscriptionsID.value = row.id
+  try {
+    await enterprisePlatformAPI.refreshSubscriptions(row.id)
+    const reloaded = await load()
+    if (reloaded) appStore.showSuccess(t('admin.enterprise.list.refreshSubscriptionsSuccess'))
+    else appStore.showError(t('admin.enterprise.list.refreshSubscriptionsReloadFailed'))
+  } catch {
+    appStore.showError(t('admin.enterprise.list.refreshSubscriptionsFailed'))
+  } finally {
+    refreshingSubscriptionsID.value = null
   }
 }
 

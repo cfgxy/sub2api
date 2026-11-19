@@ -138,6 +138,7 @@ func RegisterAdminRoutes(
 			admin.GET("/enterprises", h.Enterprise.ListPlatformEnterprises)
 			admin.POST("/enterprises", h.Enterprise.CreatePlatformEnterprise)
 			admin.GET("/enterprises/:id", h.Enterprise.GetPlatformEnterprise)
+			admin.POST("/enterprises/:id/subscriptions/refresh", h.Enterprise.RefreshPlatformEnterpriseSubscriptions)
 			admin.POST("/enterprises/:id/disable", h.Enterprise.DisablePlatformEnterprise)
 			admin.POST("/enterprises/:id/enable", h.Enterprise.EnablePlatformEnterprise)
 			admin.PUT("/enterprises/:id/portal-host", h.Enterprise.UpdatePlatformEnterpriseHost)

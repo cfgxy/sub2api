@@ -50,6 +50,7 @@ const auditEvents: Record<string, string> = {
   'key.employee_disable': 'keyEmployeeDisable',
   'key.employee_rotate': 'keyEmployeeRotate',
   'subscription.activated': 'subscriptionActivated',
+  'subscription.refreshed': 'subscriptionRefreshed',
   'brand.updated': 'brandUpdated',
   'brand.background_updated': 'brandBackgroundUpdated',
   'brand.update': 'brandUpdate',
@@ -85,7 +86,7 @@ export function auditActorLabel(value: string, t: Translate): string {
   const kind = /^enterprise_(employee|admin):\d+$/.exec(value)?.[1]
   if (kind) return t(`admin.enterprise.audit.actor.${kind}`)
   if (value === 'enterprise_public') return t('admin.enterprise.audit.actor.publicEntry')
-  if (value.startsWith('enterprise_')) return t('admin.enterprise.audit.actor.system')
+  if (value.startsWith('enterprise_') || value.startsWith('platform_user:')) return t('admin.enterprise.audit.actor.system')
   return value
 }
 

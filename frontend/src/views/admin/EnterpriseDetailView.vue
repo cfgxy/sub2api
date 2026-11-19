@@ -8,6 +8,14 @@
           <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.detail.description') }}</p>
         </div>
         <div class="flex gap-3">
+          <button
+            class="btn btn-secondary btn-md"
+            :disabled="!item || syncingSubscriptions"
+            data-testid="enterprise-detail-refresh-subscriptions"
+            @click="refreshSubscriptions"
+          >
+            {{ t('admin.enterprise.list.refreshSubscriptions') }}
+          </button>
           <button class="btn btn-secondary btn-md" data-testid="enterprise-detail-back" @click="router.back()">
             {{ t('admin.enterprise.common.back') }}
           </button>
@@ -174,6 +182,7 @@ const sourceUnavailable = ref(false)
 const activeTab = ref('overview')
 const confirmVisible = ref(false)
 const confirmMessage = ref('')
+const syncingSubscriptions = ref(false)
 
 const tabs = computed(() => [
   { name: 'overview', label: t('admin.enterprise.detail.overview') },
@@ -195,11 +204,29 @@ async function load() {
   sourceUnavailable.value = false
   try {
     item.value = await enterprisePlatformAPI.get(Number(route.params.id))
+    return true
   } catch {
     sourceUnavailable.value = true
     appStore.showError(t('admin.enterprise.detail.unavailableMessage'))
+    return false
   } finally {
     loading.value = false
+  }
+}
+
+async function refreshSubscriptions() {
+  const current = item.value
+  if (!current) return
+  syncingSubscriptions.value = true
+  try {
+    await enterprisePlatformAPI.refreshSubscriptions(current.id)
+    const reloaded = await load()
+    if (reloaded) appStore.showSuccess(t('admin.enterprise.list.refreshSubscriptionsSuccess'))
+    else appStore.showError(t('admin.enterprise.list.refreshSubscriptionsReloadFailed'))
+  } catch {
+    appStore.showError(t('admin.enterprise.list.refreshSubscriptionsFailed'))
+  } finally {
+    syncingSubscriptions.value = false
   }
 }
 

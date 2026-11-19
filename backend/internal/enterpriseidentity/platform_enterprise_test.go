@@ -70,3 +70,61 @@ func TestListPlatformEnterprisesIncludesSubscriptionsSameAsDetail(t *testing.T) 
 	require.Empty(t, items[1].Subscriptions)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestRefreshPlatformEnterpriseSubscriptionsLinksCurrentUpstreamSubscription(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dedicated_upstream_user_id\s+FROM enterprises\s+WHERE id = \$1\s+FOR UPDATE`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(int64(99)))
+	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id"}))
+	mock.ExpectQuery(`(?s)SELECT subscription\.id.*FROM user_subscriptions AS subscription.*subscription\.user_id = \$1.*FOR SHARE OF subscription`).
+		WithArgs(int64(99)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)))
+	mock.ExpectQuery(`(?s)INSERT INTO enterprise_subscriptions.*RETURNING id`).
+		WithArgs(int64(7), "platform_user:12", int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(88)))
+	mock.ExpectExec(`(?s)INSERT INTO enterprise_audit_events.*subscription\.refreshed`).
+		WithArgs(int64(7), int64(88), sqlmock.AnyArg(), "platform_user:12").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := svc.RefreshPlatformEnterpriseSubscriptions(context.Background(), 7, 12)
+
+	require.NoError(t, err)
+	require.Equal(t, "linked", result.Action)
+	require.EqualValues(t, 42, *result.UpstreamUserSubscriptionID)
+	require.EqualValues(t, 88, *result.EnterpriseSubscriptionID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRefreshPlatformEnterpriseSubscriptionsEndsStaleRelationshipWhenNoCurrentSource(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dedicated_upstream_user_id\s+FROM enterprises\s+WHERE id = \$1\s+FOR UPDATE`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(int64(99)))
+	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id"}).AddRow(int64(88), int64(42)))
+	mock.ExpectQuery(`(?s)SELECT subscription\.id.*FROM user_subscriptions AS subscription.*subscription\.user_id = \$1.*FOR SHARE OF subscription`).
+		WithArgs(int64(99)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(`(?s)UPDATE enterprise_subscriptions.*SET status = 'ended'.*WHERE id = \$1 AND status = 'active'`).
+		WithArgs(int64(88), "platform_user:12").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`(?s)INSERT INTO enterprise_audit_events.*subscription\.refreshed`).
+		WithArgs(int64(7), int64(88), sqlmock.AnyArg(), "platform_user:12").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := svc.RefreshPlatformEnterpriseSubscriptions(context.Background(), 7, 12)
+
+	require.NoError(t, err)
+	require.Equal(t, "unlinked", result.Action)
+	require.Nil(t, result.UpstreamUserSubscriptionID)
+	require.Nil(t, result.EnterpriseSubscriptionID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
