@@ -619,8 +619,9 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 	}
 
 	var sourceSubscriptionID int64
+	var sourceAnchor sql.NullTime
 	sourceErr := tx.QueryRowContext(ctx, `
-		SELECT subscription.id
+		SELECT subscription.id, subscription.weekly_window_start
 		FROM user_subscriptions AS subscription
 		JOIN users AS upstream_user ON upstream_user.id = subscription.user_id
 		JOIN groups AS group_record ON group_record.id = subscription.group_id
@@ -635,7 +636,7 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 		ORDER BY subscription.id
 		LIMIT 1
 		FOR SHARE OF subscription, upstream_user, group_record
-	`, dedicatedUpstreamUserID).Scan(&sourceSubscriptionID)
+	`, dedicatedUpstreamUserID).Scan(&sourceSubscriptionID, &sourceAnchor)
 	if sourceErr != nil && !errors.Is(sourceErr, sql.ErrNoRows) {
 		return nil, sourceErr
 	}
@@ -645,29 +646,57 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 		result.UpstreamUserSubscriptionID = &sourceSubscriptionID
 	}
 
+	needsLink := sourceErr == nil && (currentErr != nil || currentUpstreamSubscriptionID != sourceSubscriptionID)
+	var observedWindowStart time.Time
+	if needsLink {
+		if sourceAnchor.Valid {
+			observedWindowStart = sourceAnchor.Time
+		} else {
+			now := s.now()
+			// 与企业创建保持同一首次消费语义：仅三个窗口都未物化时初始化，
+			// 零行命中代表并发方已初始化，必须回读而非覆盖其锚点。
+			if err = tx.QueryRowContext(ctx, `
+				UPDATE user_subscriptions
+				SET daily_window_start = $2, weekly_window_start = $3, monthly_window_start = $3, updated_at = NOW()
+				WHERE id = $1
+				  AND daily_window_start IS NULL
+				  AND weekly_window_start IS NULL
+				  AND monthly_window_start IS NULL
+				RETURNING weekly_window_start
+			`, sourceSubscriptionID, timezone.StartOfDay(now), now).Scan(&observedWindowStart); err != nil {
+				if !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+				if err = tx.QueryRowContext(ctx, `
+					SELECT weekly_window_start FROM user_subscriptions WHERE id = $1
+				`, sourceSubscriptionID).Scan(&observedWindowStart); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	actor := fmt.Sprintf("platform_user:%d", actorUserID)
 	if currentErr == nil && (sourceErr != nil || currentUpstreamSubscriptionID != sourceSubscriptionID) {
 		if _, err = tx.ExecContext(ctx, `
 			UPDATE enterprise_subscriptions
 			SET status = 'ended', ended_at = NOW(), actor_ref = $2, updated_at = NOW()
 			WHERE id = $1 AND status = 'active'
-		`, currentEnterpriseSubscriptionID, fmt.Sprintf("platform_user:%d", actorUserID)); err != nil {
+		`, currentEnterpriseSubscriptionID, actor); err != nil {
 			return nil, err
 		}
 		result.Action = "unlinked"
 	}
 
-	if sourceErr == nil && (currentErr != nil || currentUpstreamSubscriptionID != sourceSubscriptionID) {
+	if needsLink {
 		var enterpriseSubscriptionID int64
 		if err = tx.QueryRowContext(ctx, `
 			INSERT INTO enterprise_subscriptions (
 				enterprise_id, upstream_user_subscription_id, status,
 				observed_weekly_window_start, activated_at, actor_ref
-			)
-			SELECT $1, subscription.id, 'active', subscription.weekly_window_start, NOW(), $2
-			FROM user_subscriptions AS subscription
-			WHERE subscription.id = $3
+			) VALUES ($1, $2, 'active', $3, NOW(), $4)
 			RETURNING id
-		`, enterpriseID, fmt.Sprintf("platform_user:%d", actorUserID), sourceSubscriptionID).Scan(&enterpriseSubscriptionID); err != nil {
+		`, enterpriseID, sourceSubscriptionID, observedWindowStart, actor).Scan(&enterpriseSubscriptionID); err != nil {
 			return nil, err
 		}
 		result.Action = "linked"
@@ -694,7 +723,7 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
 		VALUES ($1, 'subscription.refreshed', 'enterprise_subscription', $2, $3::jsonb, $4)
-	`, enterpriseID, auditEntityID, payload, fmt.Sprintf("platform_user:%d", actorUserID)); err != nil {
+	`, enterpriseID, auditEntityID, payload, actor); err != nil {
 		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
