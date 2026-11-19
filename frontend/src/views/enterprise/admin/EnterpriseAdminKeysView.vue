@@ -16,7 +16,7 @@
       <div v-if="loadError" class="p-6" data-testid="admin-keys-load-error">
         <EmptyState icon="exclamationTriangle" title="员工 Key 信息暂时不可用" action-text="重新加载" @action="load" />
       </div>
-      <DataTable v-else :columns="columns" :data="keys" :loading="loading" row-key="assignment_id" :actions-count="1">
+      <DataTable v-else :columns="columns" :data="keys" :loading="loading" row-key="assignment_id" :actions-count="2">
         <template #cell-employee_email="{ value }"><span class="break-all">{{ value }}</span></template>
         <template #cell-in_use="{ value }">
           <StatusBadge
@@ -29,7 +29,11 @@
         <template #cell-updated_at="{ value }">{{ formatDate(value) }}</template>
         <template #cell-actions="{ row }">
           <button
-            v-if="row.status === 'active'" type="button" class="btn btn-ghost btn-sm text-red-600 dark:text-red-400"
+            type="button" class="btn btn-ghost btn-sm" data-testid="admin-key-assignment-history"
+            @click="selectedKeyId = row.api_key_id"
+          >分配记录</button>
+          <button
+            v-if="row.in_use && row.status === 'active'" type="button" class="btn btn-ghost btn-sm text-red-600 dark:text-red-400"
             :disabled="revokingId !== null" data-testid="admin-key-revoke" @click="confirmRevoke(row.api_key_id)"
           >{{ revokingId === row.api_key_id ? '处理中…' : '撤销' }}</button>
         </template>
@@ -37,6 +41,22 @@
       </DataTable>
     </template>
   </TablePageLayout>
+  <BaseDialog :show="selectedKeyId !== null" title="分配记录" width="wide" @close="selectedKeyId = null">
+    <section v-if="selectedKeyId !== null" data-testid="admin-key-assignment-history-dialog" class="space-y-4">
+      <p class="text-sm text-gray-600 dark:text-dark-300">
+        仅供审计：代次记录此 Key 的分配/历史绑定，不会影响当前使用；此处不能修改、切换或撤销绑定。
+      </p>
+      <DataTable :columns="assignmentColumns" :data="selectedAssignments" row-key="assignment_id">
+        <template #cell-employee_email="{ value }"><span class="break-all">{{ value }}</span></template>
+        <template #cell-in_use="{ value }">
+          <StatusBadge :status="value ? 'active' : 'archived'" :label="value ? '当前使用中' : '历史记录'" />
+        </template>
+        <template #cell-status="{ value }"><StatusBadge :status="value" :label="keyStatusLabel(value, t)" /></template>
+        <template #cell-updated_at="{ value }">{{ formatDate(value) }}</template>
+      </DataTable>
+    </section>
+  </BaseDialog>
+
   <ConfirmDialog
     :show="confirmId !== null" title="撤销员工 Key" message="撤销后该 Key 将立即无法调用，且不会恢复。" danger
     @confirm="revoke" @cancel="confirmId = null"
@@ -44,11 +64,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -62,15 +83,22 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const columns: Column[] = [
   { key: 'employee_email', label: '员工邮箱' }, { key: 'api_key_id', label: 'Key ID' },
-  { key: 'generation', label: '代次' }, { key: 'status', label: '状态' },
-  { key: 'in_use', label: '当前使用中' },
+  { key: 'status', label: '状态' }, { key: 'in_use', label: '当前使用中' },
   { key: 'updated_at', label: '更新时间' }, { key: 'actions', label: '操作' }
+]
+const assignmentColumns: Column[] = [
+  { key: 'generation', label: '代次' }, { key: 'employee_email', label: '员工邮箱' },
+  { key: 'in_use', label: '当前使用中' }, { key: 'status', label: '状态' }, { key: 'updated_at', label: '更新时间' }
 ]
 const keys = ref<EnterpriseKeySummary[]>([])
 const loading = ref(false)
 const loadError = ref(false)
 const revokingId = ref<number | null>(null)
 const confirmId = ref<number | null>(null)
+const selectedKeyId = ref<number | null>(null)
+const selectedAssignments = computed(() => keys.value
+  .filter(row => row.api_key_id === selectedKeyId.value)
+  .sort((left, right) => left.generation - right.generation))
 const formatDate = (value: string) => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 
 async function load() {
