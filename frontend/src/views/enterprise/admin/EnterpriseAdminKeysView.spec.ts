@@ -30,6 +30,8 @@ describe('EnterpriseAdminKeysView', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('employee@example.com')
     expect(wrapper.text()).toContain('启用')
+    expect(wrapper.text()).toContain('当前使用中')
+    expect(wrapper.text()).not.toContain('代次')
     expect(wrapper.text()).not.toContain('generation')
     expect(wrapper.text()).toContain('查看员工 Key 的归属与状态，可撤销已启用的 Key')
     expect(wrapper.text()).not.toMatch(/查看.*掩码|代轮换/)
@@ -37,12 +39,17 @@ describe('EnterpriseAdminKeysView', () => {
     wrapper.unmount()
   })
 
-  it('marks the current binding and keeps ended bindings as history', async () => {
+  it('keeps the generation out of the daily list and reveals it only through the history record', async () => {
     listAdminKeys.mockResolvedValueOnce([row, archivedRow])
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.get('[data-testid="admin-key-in-use"]').text()).toContain('当前使用中')
     expect(wrapper.get('[data-testid="admin-key-archived"]').text()).toContain('历史记录')
+    expect(wrapper.text()).not.toContain('代次')
+    expect(wrapper.findAll('[data-testid="admin-key-revoke"]')).toHaveLength(1)
+    await wrapper.get('[data-testid="admin-key-history"]').trigger('click')
+    expect(wrapper.get('[data-testid="admin-key-history-detail"]').text()).toContain('第 1 次分配/绑定记录')
+    expect(wrapper.get('[data-testid="admin-key-history-detail"]').text()).toContain('不影响当前使用')
     wrapper.unmount()
   })
 

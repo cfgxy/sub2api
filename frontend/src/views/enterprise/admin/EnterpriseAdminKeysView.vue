@@ -29,14 +29,24 @@
         <template #cell-updated_at="{ value }">{{ formatDate(value) }}</template>
         <template #cell-actions="{ row }">
           <button
-            v-if="row.status === 'active'" type="button" class="btn btn-ghost btn-sm text-red-600 dark:text-red-400"
+            v-if="row.in_use && row.status === 'active'" type="button" class="btn btn-ghost btn-sm text-red-600 dark:text-red-400"
             :disabled="revokingId !== null" data-testid="admin-key-revoke" @click="confirmRevoke(row.api_key_id)"
           >{{ revokingId === row.api_key_id ? '处理中…' : '撤销' }}</button>
+          <button
+            v-else type="button" class="btn btn-ghost btn-sm" data-testid="admin-key-history" @click="historyKey = row"
+          >查看分配记录</button>
         </template>
         <template #empty><EmptyState icon="key" title="暂无员工 Key" /></template>
       </DataTable>
     </template>
   </TablePageLayout>
+  <BaseDialog
+    :show="historyKey !== null" title="分配记录" @close="historyKey = null"
+  >
+    <p v-if="historyKey" data-testid="admin-key-history-detail" class="text-sm leading-6 text-gray-600 dark:text-dark-300">
+      Key {{ historyKey.api_key_id }} 的第 {{ historyKey.generation }} 次分配/绑定记录，仅用于追溯历史用量，不影响当前使用。
+    </p>
+  </BaseDialog>
   <ConfirmDialog
     :show="confirmId !== null" title="撤销员工 Key" message="撤销后该 Key 将立即无法调用，且不会恢复。" danger
     @confirm="revoke" @cancel="confirmId = null"
@@ -49,6 +59,7 @@ import { useI18n } from 'vue-i18n'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -62,13 +73,14 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const columns: Column[] = [
   { key: 'employee_email', label: '员工邮箱' }, { key: 'api_key_id', label: 'Key ID' },
-  { key: 'generation', label: '代次' }, { key: 'status', label: '状态' },
-  { key: 'in_use', label: '当前使用中' },
+  { key: 'in_use', label: '当前使用中' }, { key: 'status', label: '状态' },
+
   { key: 'updated_at', label: '更新时间' }, { key: 'actions', label: '操作' }
 ]
 const keys = ref<EnterpriseKeySummary[]>([])
 const loading = ref(false)
 const loadError = ref(false)
+const historyKey = ref<EnterpriseKeySummary | null>(null)
 const revokingId = ref<number | null>(null)
 const confirmId = ref<number | null>(null)
 const formatDate = (value: string) => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
