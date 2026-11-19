@@ -113,11 +113,13 @@ export interface EnterpriseEmployeeHome {
 }
 
 export interface EnterpriseKeySummary {
+  assignment_id: number
   api_key_id: number
   employee_id: number
   employee_email: string
   generation: number
   status: 'active' | 'disabled'
+  in_use: boolean
   created_at: string
   updated_at: string
 }
