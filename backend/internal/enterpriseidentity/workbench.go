@@ -765,6 +765,7 @@ var auditPayloadFieldWhitelist = map[string]struct{}{
 	"result": {}, "reason": {},
 	"employee_id": {}, "department_id": {}, "api_key_id": {},
 	"subscription_id": {}, "upstream_subscription_id": {}, "upstream_group_id": {},
+	"upstream_user_subscription_id": {}, "enterprise_subscription_id": {}, "action": {},
 	"cancelled_subscription_id": {}, "scheduled_subscription_id": {},
 	"previous_assignment_id": {}, "new_assignment_id": {},
 	"previous_api_key_id": {}, "previous_masked_key": {}, "masked_key": {},

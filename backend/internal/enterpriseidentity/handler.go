@@ -466,6 +466,23 @@ func (h *Handler) GetPlatformEnterprise(c *gin.Context) {
 	response.Success(c, item)
 }
 
+func (h *Handler) RefreshPlatformEnterpriseSubscriptions(c *gin.Context) {
+	subject, ok := servermiddleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.RefreshPlatformEnterpriseSubscriptions(c.Request.Context(), id, subject.UserID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *Handler) DisablePlatformEnterprise(c *gin.Context) {
 	subject, ok := servermiddleware.GetAuthSubjectFromContext(c)
 	if !ok {

@@ -11,12 +11,13 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: (await import('./enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
-const { get } = vi.hoisted(() => ({
+const { get, refreshSubscriptions } = vi.hoisted(() => ({
   get: vi.fn(),
+  refreshSubscriptions: vi.fn(),
 }))
 
 vi.mock('@/api/enterprisePlatform', () => ({
-  enterprisePlatformAPI: { get, disable: vi.fn() },
+  enterprisePlatformAPI: { get, disable: vi.fn(), refreshSubscriptions },
 }))
 
 vi.mock('vue-router', () => ({
@@ -105,6 +106,30 @@ describe('EnterpriseDetailView 信息结构补齐', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Business (Suspended, weekly limit 100')
     expect(wrapper.text()).toContain('Starter (Unknown status, weekly limit Not configured')
+  })
+
+  it('刷新订阅后重新读取并展示服务端同步结果', async () => {
+    const initial = {
+      id: 7, name: '云川数据', portal_host: 'yunchuan.example.com', status: 'active',
+      created_at: '2026-01-05T08:00:00Z', admin_email: '', dedicated_upstream_user_id: 9,
+      employee_count: 0, active_employee_count: 0, active_session_count: 0, active_key_count: 0,
+      subscriptions: [],
+    }
+    const synchronized = {
+      ...initial,
+      subscriptions: [{ id: 2, plan: 'Business', status: 'active', weekly_limit: '100', expires_at: '2026-02-01T08:00:00Z' }],
+    }
+    get.mockResolvedValueOnce(initial).mockResolvedValueOnce(synchronized)
+    refreshSubscriptions.mockResolvedValueOnce({ action: 'linked', upstream_user_subscription_id: 2, enterprise_subscription_id: 3 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="enterprise-detail-refresh-subscriptions"]').trigger('click')
+    await flushPromises()
+
+    expect(refreshSubscriptions).toHaveBeenCalledWith(7)
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('Business')
   })
 
   it('详情来源不可用时展示失败卡片、隐藏停用入口，重试后恢复', async () => {

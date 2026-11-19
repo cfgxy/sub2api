@@ -210,6 +210,12 @@ type PlatformSubscription struct {
 	ExpiresAt         time.Time  `json:"expires_at"`
 }
 
+type SubscriptionRefreshResult struct {
+	Action                     string `json:"action"`
+	UpstreamUserSubscriptionID *int64 `json:"upstream_user_subscription_id,omitempty"`
+	EnterpriseSubscriptionID   *int64 `json:"enterprise_subscription_id,omitempty"`
+}
+
 type CreateEnterpriseInput struct {
 	Name                  string
 	Host                  string
@@ -575,6 +581,155 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, enterpriseID, actorUserID int64) (*SubscriptionRefreshResult, error) {
+	if enterpriseID <= 0 {
+		return nil, errInvalidEnterpriseInput
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var dedicatedUpstreamUserID int64
+	if err = tx.QueryRowContext(ctx, `
+		SELECT dedicated_upstream_user_id
+		FROM enterprises
+		WHERE id = $1
+		FOR UPDATE
+	`, enterpriseID).Scan(&dedicatedUpstreamUserID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errNotFound
+		}
+		return nil, err
+	}
+
+	var currentEnterpriseSubscriptionID, currentUpstreamSubscriptionID int64
+	currentErr := tx.QueryRowContext(ctx, `
+		SELECT id, upstream_user_subscription_id
+		FROM enterprise_subscriptions
+		WHERE enterprise_id = $1 AND status = 'active'
+		FOR UPDATE
+	`, enterpriseID).Scan(&currentEnterpriseSubscriptionID, &currentUpstreamSubscriptionID)
+	if currentErr != nil && !errors.Is(currentErr, sql.ErrNoRows) {
+		return nil, currentErr
+	}
+
+	var sourceSubscriptionID int64
+	var sourceAnchor sql.NullTime
+	sourceErr := tx.QueryRowContext(ctx, `
+		SELECT subscription.id, subscription.weekly_window_start
+		FROM user_subscriptions AS subscription
+		JOIN users AS upstream_user ON upstream_user.id = subscription.user_id
+		JOIN groups AS group_record ON group_record.id = subscription.group_id
+		WHERE subscription.user_id = $1
+		  AND upstream_user.status = 'active'
+		  AND subscription.status = 'active'
+		  AND subscription.starts_at <= NOW()
+		  AND subscription.expires_at > NOW()
+		  AND subscription.deleted_at IS NULL
+		  AND group_record.status = 'active'
+		  AND COALESCE(group_record.weekly_limit_usd, 0) > 0
+		ORDER BY subscription.id
+		LIMIT 1
+		FOR SHARE OF subscription, upstream_user, group_record
+	`, dedicatedUpstreamUserID).Scan(&sourceSubscriptionID, &sourceAnchor)
+	if sourceErr != nil && !errors.Is(sourceErr, sql.ErrNoRows) {
+		return nil, sourceErr
+	}
+
+	result := &SubscriptionRefreshResult{Action: "unchanged"}
+	if sourceErr == nil {
+		result.UpstreamUserSubscriptionID = &sourceSubscriptionID
+	}
+
+	needsLink := sourceErr == nil && (currentErr != nil || currentUpstreamSubscriptionID != sourceSubscriptionID)
+	var observedWindowStart time.Time
+	if needsLink {
+		if sourceAnchor.Valid {
+			observedWindowStart = sourceAnchor.Time
+		} else {
+			now := s.now()
+			// 与企业创建保持同一首次消费语义：仅三个窗口都未物化时初始化，
+			// 零行命中代表并发方已初始化，必须回读而非覆盖其锚点。
+			if err = tx.QueryRowContext(ctx, `
+				UPDATE user_subscriptions
+				SET daily_window_start = $2, weekly_window_start = $3, monthly_window_start = $3, updated_at = NOW()
+				WHERE id = $1
+				  AND daily_window_start IS NULL
+				  AND weekly_window_start IS NULL
+				  AND monthly_window_start IS NULL
+				RETURNING weekly_window_start
+			`, sourceSubscriptionID, timezone.StartOfDay(now), now).Scan(&observedWindowStart); err != nil {
+				if !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+				if err = tx.QueryRowContext(ctx, `
+					SELECT weekly_window_start FROM user_subscriptions WHERE id = $1
+				`, sourceSubscriptionID).Scan(&observedWindowStart); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	actor := fmt.Sprintf("platform_user:%d", actorUserID)
+	if currentErr == nil && (sourceErr != nil || currentUpstreamSubscriptionID != sourceSubscriptionID) {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE enterprise_subscriptions
+			SET status = 'ended', ended_at = NOW(), actor_ref = $2, updated_at = NOW()
+			WHERE id = $1 AND status = 'active'
+		`, currentEnterpriseSubscriptionID, actor); err != nil {
+			return nil, err
+		}
+		result.Action = "unlinked"
+	}
+
+	if needsLink {
+		var enterpriseSubscriptionID int64
+		if err = tx.QueryRowContext(ctx, `
+			INSERT INTO enterprise_subscriptions (
+				enterprise_id, upstream_user_subscription_id, status,
+				observed_weekly_window_start, activated_at, actor_ref
+			) VALUES ($1, $2, 'active', $3, NOW(), $4)
+			RETURNING id
+		`, enterpriseID, sourceSubscriptionID, observedWindowStart, actor).Scan(&enterpriseSubscriptionID); err != nil {
+			return nil, err
+		}
+		result.Action = "linked"
+		result.EnterpriseSubscriptionID = &enterpriseSubscriptionID
+	} else if currentErr == nil && sourceErr == nil {
+		result.EnterpriseSubscriptionID = &currentEnterpriseSubscriptionID
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"result":                        "success",
+		"action":                        result.Action,
+		"upstream_user_subscription_id": result.UpstreamUserSubscriptionID,
+		"enterprise_subscription_id":    result.EnterpriseSubscriptionID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var auditEntityID *int64
+	if result.EnterpriseSubscriptionID != nil {
+		auditEntityID = result.EnterpriseSubscriptionID
+	} else if currentErr == nil {
+		auditEntityID = &currentEnterpriseSubscriptionID
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
+		VALUES ($1, 'subscription.refreshed', 'enterprise_subscription', $2, $3::jsonb, $4)
+	`, enterpriseID, auditEntityID, payload, actor); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*PlatformEnterprise, error) {

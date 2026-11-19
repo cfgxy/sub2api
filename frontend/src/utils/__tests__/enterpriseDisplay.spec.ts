@@ -43,7 +43,7 @@ describe('企业公共枚举展示映射', () => {
         'key.employee_create', 'key.employee_disable', 'key.employee_rotate',
         'brand.updated', 'brand.background_updated', 'brand.update', 'brand.background.upload',
         'password.reset_requested', 'password.reset',
-        'session.revoke', 'session.revoke_all',
+        'session.revoke', 'session.revoke_all', 'subscription.refreshed',
       ]) {
         expect(auditEventLabel(event, t)).not.toBe(t('admin.enterprise.audit.event.unknown'))
         expect(auditEventLabel(event, t)).not.toBe(event)
@@ -60,7 +60,7 @@ describe('企业公共枚举展示映射', () => {
         expect(windowTypeLabel(window, t)).not.toBe(window)
       }
       expect(windowTypeLabel('quarter', t)).toBe(t('admin.enterprise.enums.unknown'))
-      for (const actor of ['enterprise_employee:12', 'enterprise_admin:3', 'enterprise_public', 'enterprise_actor']) {
+      for (const actor of ['enterprise_employee:12', 'enterprise_admin:3', 'enterprise_public', 'enterprise_actor', 'platform_user:42']) {
         const label = auditActorLabel(actor, t)
         expect(label).not.toContain('enterprise_')
         expect(label).not.toMatch(/\d/)
@@ -75,6 +75,7 @@ describe('企业公共枚举展示映射', () => {
     expect(windowTypeLabel('week', t)).toBe('按周')
     expect(auditActorLabel('enterprise_employee:12', t)).toBe('企业员工')
     expect(auditActorLabel('enterprise_admin:3', t)).toBe('企业管理员')
+    expect(auditActorLabel('platform_user:42', t)).toBe('企业操作者')
     expect(auditActorLabel('system', t)).toBe('system')
   })
 })
