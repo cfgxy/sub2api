@@ -365,17 +365,15 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 	if err := h.owner.service.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM enterprise_employees WHERE `+activeWhere, activeArgs...).Scan(&result.ActiveEmployeeCount); err != nil {
 		return nil, err
 	}
-	if err := h.owner.service.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT attribution.employee_id)
-		FROM enterprise_usage_attributions AS attribution
-		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
-		LEFT JOIN enterprise_employees AS employee
-		  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
-		WHERE `+scope.where+` AND attribution.employee_id IS NOT NULL`, scope.args...).Scan(&result.EmployeeCount); err != nil {
+	// 员工额度面板与计数必须同源：无筛选（当前权威周）时以在职员工为基表，
+	// 仅有额度分配、尚无调用的员工也要出现，否则「N 名员工有用量」实际表达的是
+	// 「本周有调用」，会把已配置额度的员工误报为不存在。
+	summaryQuery, countQuery, summaryArgs := buildEmployeeSummaryQueries(enterpriseID, q, currentWeek, scope)
+	if err := h.owner.service.db.QueryRowContext(ctx, countQuery, summaryArgs...).Scan(&result.EmployeeCount); err != nil {
 		return nil, err
 	}
 
-	rows, err := h.owner.service.db.QueryContext(ctx, buildEmployeeSummaryQuery(scope), scope.args...)
+	rows, err := h.owner.service.db.QueryContext(ctx, summaryQuery, summaryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -534,6 +532,107 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		result.UsageTrend = append(result.UsageTrend, point)
 	}
 	return result, trendRows.Err()
+}
+
+// buildEmployeeSummaryQueries 返回员工额度面板的列表与计数 SQL（含各自参数）。
+// 无筛选的当前权威周以在职员工为基表，把「有额度或无调用」作为纳入条件；
+// 显式按 api_key/model 筛选用量时仍只保留有匹配用量的员工，避免把筛选结果扩大成全员。
+// 其他筛选窗口（window_anchor/start_at/end_at）没有权威订阅周语义，沿用只读用量的旧口径。
+func buildEmployeeSummaryQueries(
+	enterpriseID int64,
+	q workbenchQuery,
+	week *currentEnterpriseWeek,
+	scope workbenchSQLScope,
+) (summarySQL, countSQL string, args []any) {
+	if week == nil {
+		return buildEmployeeSummaryQuery(scope), buildEmployeeCountQuery(scope), scope.args
+	}
+
+	args = []any{enterpriseID, week.SubscriptionID, week.Anchor}
+	usageConditions := []string{
+		"attribution.enterprise_id = $1",
+		"attribution.window_type = 'week'",
+		"attribution.subscription_id = $2",
+		"attribution.window_anchor = $3",
+		"attribution.employee_id IS NOT NULL",
+	}
+	employeeConditions := []string{
+		"employee.enterprise_id = $1",
+		"employee.status = 'active'",
+	}
+	if q.DepartmentID != nil {
+		args = append(args, *q.DepartmentID)
+		position := len(args)
+		usageConditions = append(usageConditions, fmt.Sprintf("employee.department_id = $%d", position))
+		employeeConditions = append(employeeConditions, fmt.Sprintf("employee.department_id = $%d", position))
+	}
+	if q.EmployeeID != nil {
+		args = append(args, *q.EmployeeID)
+		position := len(args)
+		usageConditions = append(usageConditions, fmt.Sprintf("attribution.employee_id = $%d", position))
+		employeeConditions = append(employeeConditions, fmt.Sprintf("employee.id = $%d", position))
+	}
+	if q.APIKeyID != nil {
+		args = append(args, *q.APIKeyID)
+		usageConditions = append(usageConditions, fmt.Sprintf("attribution.api_key_id = $%d", len(args)))
+	}
+	if q.Model != "" {
+		args = append(args, q.Model)
+		usageConditions = append(usageConditions, fmt.Sprintf("usage_log.model = $%d", len(args)))
+	}
+
+	// api_key/model 是纯用量维度：没有匹配调用的员工不应凭「有额度」留在结果里。
+	inclusion := "(COALESCE(allocation.amount, 0) > 0 OR COALESCE(usage.requests, 0) > 0)"
+	if q.APIKeyID != nil || q.Model != "" {
+		inclusion = "COALESCE(usage.requests, 0) > 0"
+	}
+
+	base := `
+		FROM enterprise_employees AS employee
+		LEFT JOIN employee_window_usage AS usage ON usage.employee_id = employee.id
+		LEFT JOIN LATERAL (` + enterpriseallocation.EffectiveWeeklyAllocationQuery(
+		"employee.enterprise_id", "$2", "employee.id", "$3",
+	) + `) AS allocation ON TRUE
+		WHERE ` + strings.Join(employeeConditions, " AND ") + ` AND ` + inclusion
+
+	usageCTE := `
+		WITH employee_window_usage AS (
+			SELECT attribution.employee_id,
+			       COUNT(*) AS requests,
+			       COALESCE(SUM(COALESCE(usage_log.actual_cost, 0)), 0) AS usage_credit
+			FROM enterprise_usage_attributions AS attribution
+			LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+			LEFT JOIN enterprise_employees AS employee
+			  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
+			WHERE ` + strings.Join(usageConditions, " AND ") + `
+			GROUP BY attribution.employee_id
+		)`
+
+	summarySQL = usageCTE + `
+		SELECT employee.id, COALESCE(employee.current_email, employee.email, ''), employee.department_id,
+		       COALESCE(usage.requests, 0),
+		       COALESCE(allocation.amount, 0)::NUMERIC(20, 8)::text,
+		       COALESCE(usage.usage_credit, 0)::NUMERIC(20, 8)::text,
+		       GREATEST(COALESCE(allocation.amount, 0) - COALESCE(usage.usage_credit, 0), 0)::NUMERIC(20, 8)::text,
+		       GREATEST(COALESCE(usage.usage_credit, 0) - COALESCE(allocation.amount, 0), 0)::NUMERIC(20, 8)::text` +
+		base + `
+		ORDER BY COALESCE(usage.usage_credit, 0) DESC, employee.id
+		LIMIT 100`
+
+	countSQL = usageCTE + `
+		SELECT COUNT(*)` + base
+	return summarySQL, countSQL, args
+}
+
+// buildEmployeeCountQuery 是显式历史窗口的计数口径：与只读用量的摘要查询同源。
+func buildEmployeeCountQuery(scope workbenchSQLScope) string {
+	return `
+		SELECT COUNT(DISTINCT attribution.employee_id)
+		FROM enterprise_usage_attributions AS attribution
+		LEFT JOIN usage_logs AS usage_log ON usage_log.id = attribution.usage_log_id
+		LEFT JOIN enterprise_employees AS employee
+		  ON employee.enterprise_id = attribution.enterprise_id AND employee.id = attribution.employee_id
+		WHERE ` + scope.where + ` AND attribution.employee_id IS NOT NULL`
 }
 
 func buildEmployeeSummaryQuery(scope workbenchSQLScope) string {
