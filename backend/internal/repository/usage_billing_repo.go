@@ -9,6 +9,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/enterpriseallocation"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -22,11 +23,41 @@ const (
 )
 
 type usageBillingRepository struct {
-	db *sql.DB
+	db                                 *sql.DB
+	enterpriseEmployeeWeeklyOverageUSD float64
 }
 
-func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
-	return &usageBillingRepository{db: sqlDB}
+// NewUsageBillingRepository constructs the repository with the production
+// default. Tests and standalone callers may pass an explicit runtime config.
+func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfg ...*config.Config) service.UsageBillingRepository {
+	return newUsageBillingRepository(sqlDB, firstConfig(cfg))
+}
+
+// ProvideUsageBillingRepository is the Wire provider so runtime configuration
+// controls the enterprise employee allocation overage.
+func ProvideUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfg *config.Config) service.UsageBillingRepository {
+	return newUsageBillingRepository(sqlDB, cfg)
+}
+
+func newUsageBillingRepository(sqlDB *sql.DB, cfg *config.Config) service.UsageBillingRepository {
+	return &usageBillingRepository{
+		db:                                 sqlDB,
+		enterpriseEmployeeWeeklyOverageUSD: enterpriseEmployeeWeeklyAllocationOverageUSD(cfg),
+	}
+}
+
+func firstConfig(configs []*config.Config) *config.Config {
+	if len(configs) == 0 {
+		return nil
+	}
+	return configs[0]
+}
+
+func enterpriseEmployeeWeeklyAllocationOverageUSD(cfg *config.Config) float64 {
+	if cfg == nil {
+		return config.DefaultEnterpriseEmployeeWeeklyAllocationOverageUSD
+	}
+	return cfg.Billing.EnterpriseEmployeeWeeklyAllocationOverageUSD
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -263,7 +294,7 @@ func (r *usageBillingRepository) ReserveEnterpriseEmployeeUsage(ctx context.Cont
 		  AND weekly_window_anchor = $3 AND status IN ('reserved', 'committed')`, employeeID, enterpriseSubscriptionID, anchor).Scan(&reserved); err != nil {
 		return nil, err
 	}
-	if usage7d+reserved+cmd.ReservedUSD > allocation+0.000000001 {
+	if usage7d+reserved+cmd.ReservedUSD > allocation+r.enterpriseEmployeeWeeklyOverageUSD+0.000000001 {
 		return nil, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded
 	}
 

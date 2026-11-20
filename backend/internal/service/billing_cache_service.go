@@ -579,9 +579,9 @@ func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey 
 
 // checkAPIKeyRateLimitsWithPending 在窗口用量上叠加 pending（即将扣除的金额）后检查限速窗口。
 func (s *BillingCacheService) checkAPIKeyRateLimitsWithPending(ctx context.Context, apiKey *APIKey, pending float64) error {
-	// Enterprise employee allocations are hard limits. Their canonical window is
-	// user_subscriptions.weekly_window_start, so this path deliberately bypasses
-	// the ordinary Redis snapshot and its fail-open compatibility behavior.
+	// Enterprise employee allocations use the subscription-anchored 7d window
+	// and tolerate only the configured bounded overage. This path deliberately
+	// bypasses the ordinary Redis snapshot and its fail-open compatibility behavior.
 	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
 		if s.apiKeyRateLimitLoader == nil || apiKey.EnterpriseWeeklyWindowAnchor == nil {
 			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
@@ -590,7 +590,8 @@ func (s *BillingCacheService) checkAPIKeyRateLimitsWithPending(ctx context.Conte
 		if err != nil || data.Window7dStart == nil || !data.Window7dStart.UTC().Equal(apiKey.EnterpriseWeeklyWindowAnchor.UTC()) {
 			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
 		}
-		if apiKey.RateLimit7d <= 0 || data.Usage7d >= apiKey.RateLimit7d || data.Usage7d+pending > apiKey.RateLimit7d {
+		maximum := apiKey.RateLimit7d + enterpriseEmployeeWeeklyAllocationOverageUSD(s.cfg)
+		if apiKey.RateLimit7d <= 0 || data.Usage7d > maximum+0.000000001 || data.Usage7d+pending > maximum+0.000000001 {
 			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
 		}
 		// Employee keys normally do not carry 5h/1d limits. Preserve those
@@ -657,6 +658,13 @@ func (s *BillingCacheService) checkAPIKeyRateLimitsWithPending(ctx context.Conte
 		w7d = &t
 	}
 	return s.evaluateRateLimits(ctx, apiKey, cacheData.Usage5h, cacheData.Usage1d, cacheData.Usage7d, w5h, w1d, w7d, pending)
+}
+
+func enterpriseEmployeeWeeklyAllocationOverageUSD(cfg *config.Config) float64 {
+	if cfg == nil {
+		return config.DefaultEnterpriseEmployeeWeeklyAllocationOverageUSD
+	}
+	return cfg.Billing.EnterpriseEmployeeWeeklyAllocationOverageUSD
 }
 
 // evaluateRateLimits checks usage (plus pending) against limits, triggering async resets for expired windows.

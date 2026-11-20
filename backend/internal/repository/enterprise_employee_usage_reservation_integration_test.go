@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	enterprise "github.com/Wei-Shaw/sub2api/internal/enterprise"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -40,6 +41,37 @@ func enterpriseEmployeeReservationCommand(fixture enterpriseFixture, requestID, 
 		SourceAPIKeyID:     fixture.apiKeyID,
 		ReservedUSD:        amount,
 	}
+}
+
+func TestEnterpriseEmployeeWeeklyAllocationOverageReservation(t *testing.T) {
+	ctx := context.Background()
+	newRepository := func() *usageBillingRepository {
+		return NewUsageBillingRepository(nil, integrationDB, &config.Config{Billing: config.BillingConfig{
+			EnterpriseEmployeeWeeklyAllocationOverageUSD: 0.10,
+		}}).(*usageBillingRepository)
+	}
+
+	t.Run("admits reproduced amount without mutating usage before settlement", func(t *testing.T) {
+		fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 2, 1.631826)
+		repo := newRepository()
+		_, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
+			fixture, fmt.Sprintf("reservation-overage-admit-%d", time.Now().UnixNano()), strings.Repeat("a", 64), 0.418595,
+		))
+		require.NoError(t, err)
+
+		var usage float64
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
+		require.InDelta(t, 1.631826, usage, 0.000000001)
+	})
+
+	t.Run("rejects reservation beyond configured overage", func(t *testing.T) {
+		fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 2, 1.631826)
+		repo := newRepository()
+		_, err := repo.ReserveEnterpriseEmployeeUsage(ctx, enterpriseEmployeeReservationCommand(
+			fixture, fmt.Sprintf("reservation-overage-reject-%d", time.Now().UnixNano()), strings.Repeat("b", 64), 0.468175,
+		))
+		require.ErrorIs(t, err, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded)
+	})
 }
 
 func TestEnterpriseEmployeeUsageReservationConcurrentBoundaryAdmitsOnlyOne(t *testing.T) {
