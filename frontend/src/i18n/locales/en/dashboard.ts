@@ -117,7 +117,7 @@ export default {
       import: 'Import key configuration',
       importToCodex: 'Import to Codex++',
       confirmInApp: 'After clicking, confirm in Codex++. The protocol link may be recorded by the browser or OS; use only a trusted device.',
-      codexUnavailable: 'Only active, readable OpenAI keys are supported; Claude import is not yet available'
+      codexUnavailable: 'Codex++ supports active, readable ChatGPT (OpenAI) keys only; import Claude keys from the CCSwitch tab'
     },
     enable: 'Enable',
     disable: 'Disable',

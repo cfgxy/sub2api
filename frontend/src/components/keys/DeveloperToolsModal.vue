@@ -86,9 +86,13 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ close: []; importCcs: []; importCodex: [] }>()
 const { t } = useI18n()
-const activeTab = ref<'codex' | 'ccs'>('codex')
+// ChatGPT（OpenAI）分组的密钥两个入口都可用，默认停在 Codex++；
+// Claude 分组只支持 CCSwitch，默认直接落到 CCSwitch，避免打开就看到禁用按钮
+const defaultTab = (): 'codex' | 'ccs' =>
+  !props.codexCandidate && props.canImportCcs ? 'ccs' : 'codex'
+const activeTab = ref<'codex' | 'ccs'>(defaultTab())
 
 watch(() => props.show, (show) => {
-  if (show) activeTab.value = 'codex'
+  if (show) activeTab.value = defaultTab()
 })
 </script>
