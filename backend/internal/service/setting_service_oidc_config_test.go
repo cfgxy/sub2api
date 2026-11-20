@@ -102,6 +102,62 @@ func TestGetOIDCConnectOAuthConfig_ResolvesEndpointsFromIssuerDiscovery(t *testi
 	require.Equal(t, srv.URL+"/issuer/protocol/openid-connect/certs", got.JWKSURL)
 }
 
+func TestGetOIDCConnectOAuthConfig_ResolvesEndpointsFromExplicitDiscoveryURL(t *testing.T) {
+	var discoveryHits int
+	var baseURL string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/nodeloc/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		discoveryHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(fmt.Sprintf(`{
+			"issuer":"%s/nodeloc",
+			"authorization_endpoint":"%s/nodeloc/authorize",
+			"token_endpoint":"%s/nodeloc/token",
+			"userinfo_endpoint":"%s/nodeloc/userinfo",
+			"jwks_uri":"%s/nodeloc/jwks"
+		}`, baseURL, baseURL, baseURL, baseURL, baseURL)))
+	}))
+	defer srv.Close()
+	baseURL = srv.URL
+
+	cfg := &config.Config{
+		OIDC: config.OIDCConnectConfig{
+			Enabled:             true,
+			ProviderName:        "NodeLoc",
+			ClientID:            "nodeloc-client",
+			ClientSecret:        "nodeloc-secret",
+			IssuerURL:           srv.URL + "/nodeloc",
+			DiscoveryURL:        srv.URL + "/nodeloc/.well-known/openid-configuration",
+			RedirectURL:         "https://example.com/api/v1/auth/oauth/oidc/callback",
+			FrontendRedirectURL: "/auth/oidc/callback",
+			Scopes:              "openid profile",
+			TokenAuthMethod:     "client_secret_post",
+			UsePKCE:             true,
+			ValidateIDToken:     true,
+			AllowedSigningAlgs:  "RS256",
+			ClockSkewSeconds:    120,
+		},
+	}
+
+	repo := &settingOIDCRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, cfg)
+
+	got, err := svc.GetOIDCConnectOAuthConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, discoveryHits)
+	require.Equal(t, "NodeLoc", got.ProviderName)
+	require.Equal(t, srv.URL+"/nodeloc/.well-known/openid-configuration", got.DiscoveryURL)
+	require.Equal(t, srv.URL+"/nodeloc/authorize", got.AuthorizeURL)
+	require.Equal(t, srv.URL+"/nodeloc/token", got.TokenURL)
+	require.Equal(t, srv.URL+"/nodeloc/userinfo", got.UserInfoURL)
+	require.Equal(t, srv.URL+"/nodeloc/jwks", got.JWKSURL)
+	require.True(t, got.UsePKCE)
+}
+
 func TestSettingService_ParseSettings_PreservesOptionalOIDCCompatibilityFlags(t *testing.T) {
 	svc := NewSettingService(&settingOIDCRepoStub{values: map[string]string{}}, &config.Config{})
 
