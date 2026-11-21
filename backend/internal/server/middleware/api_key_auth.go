@@ -19,6 +19,18 @@ import (
 
 const maxAPIKeyAuthorizationHeaderBytes = service.MaxAPIKeyCredentialBytes + 128
 
+func enterpriseEmployeeWeeklyAllocationExceeded(apiKey *service.APIKey, cfg *config.Config) bool {
+	if apiKey == nil || !apiKey.EnterpriseEmployeeWeeklyLimit {
+		return false
+	}
+	overage := 0.0
+	if cfg != nil {
+		overage = cfg.Billing.EnterpriseEmployeeWeeklyAllocationOverageUSD
+	}
+	maximum := apiKey.RateLimit7d + overage
+	return apiKey.RateLimit7d <= 0 || apiKey.Usage7d > maximum+0.000000001
+}
+
 // statusClientClosedRequest 非标准状态码 499：客户端在响应前断开。
 const statusClientClosedRequest = 499
 
@@ -186,7 +198,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if err := finalizeEnterpriseAttribution(c, apiKeyService, apiKey, apiKeyString, nil); err != nil {
 				return
 			}
-			if !skipBilling && apiKey.EnterpriseEmployeeWeeklyLimit && (apiKey.RateLimit7d <= 0 || apiKey.Usage7d >= apiKey.RateLimit7d) {
+			if !skipBilling && enterpriseEmployeeWeeklyAllocationExceeded(apiKey, cfg) {
 				AbortWithError(c, http.StatusTooManyRequests, "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED", service.ErrEnterpriseEmployeeWeeklyAllocationExceeded.Error())
 				return
 			}

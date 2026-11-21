@@ -1,6 +1,6 @@
 # 企业员工积分分配
 
-企业积分分配接口用于按 Sub2API 原生订阅窗口配置员工积分目标并查询实际使用量。该能力仅用于管理与报表，不改变原生订阅限额执行，不修改 group，不预留或预扣积分，也不阻断员工请求。
+企业积分分配接口用于按 Sub2API 原生订阅窗口配置员工积分目标并查询实际使用量。该能力保持原生订阅限额、group 与用量报表语义不变；对已启用的企业员工 Key，运行时仅在 allocation 准入处允许受控小额超额，不修改上游账号余额及其最终拒绝链。
 
 > 契约权威：本文档是分配域接口的实现说明；窗口与分配契约的权威定义见规划仓 `cfgxy/sub2api-enterprise` 的 `docs/adr/001-enterprise-subscription-pool.md`（ADR-001），两者不一致时以 ADR-001 为准。
 
@@ -51,6 +51,12 @@
 ```
 
 `remaining_credit = max(configured_credit - usage_credit, 0)`，`overage_credit = max(usage_credit - configured_credit, 0)`。
+
+## 员工 Key 准入超额
+
+运行时配置 `billing.enterprise_employee_weekly_allocation_overage_usd`（环境变量 `BILLING_ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_OVERAGE_USD`）限制已启用企业员工 Key 可低于 allocation 的最大余额；默认 `0.10` USD。预检与事务预留均要求 `usage + in-flight reservation + current reservation <= allocation + overage`。因此例如 allocation `$2.000000`、usage `$1.631826`、预留 `$0.418595` 的余额为 `$-0.050421`，在默认值下允许；小于 `$-0.10` 则拒绝。
+
+此设置只影响企业员工 allocation 的准入，不改变 allocation/usage 报表数值、普通 API Key 的 5h/1d/7d 限流，且不绕过上游账号余额或既有最终账务拒绝。
 
 ## 使用归属与兼容边界
 

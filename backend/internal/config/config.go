@@ -24,6 +24,10 @@ import (
 const (
 	RunModeStandard = "standard"
 	RunModeSimple   = "simple"
+
+	// DefaultEnterpriseEmployeeWeeklyAllocationOverageUSD is the maximum
+	// employee-allocation overage admitted before the enterprise guard rejects.
+	DefaultEnterpriseEmployeeWeeklyAllocationOverageUSD = 0.10
 )
 
 // 使用量记录队列溢出策略
@@ -983,6 +987,11 @@ type BillingConfig struct {
 	// Requests in balance mode are rejected when the cached balance is below this
 	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
+	// EnterpriseEmployeeWeeklyAllocationOverageUSD permits an active enterprise
+	// employee key to reserve this much beyond its weekly allocation. It affects
+	// only enterprise-allocation admission; upstream account billing remains
+	// authoritative.
+	EnterpriseEmployeeWeeklyAllocationOverageUSD float64 `mapstructure:"enterprise_employee_weekly_allocation_overage_usd"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -2223,6 +2232,7 @@ func setDefaults() {
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)
 	viper.SetDefault("billing.circuit_breaker.half_open_requests", 3)
 	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
+	viper.SetDefault("billing.enterprise_employee_weekly_allocation_overage_usd", DefaultEnterpriseEmployeeWeeklyAllocationOverageUSD)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 	viper.SetDefault("billing.inflight_reservation.enabled", true)
@@ -3225,6 +3235,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
+	}
+	if c.Billing.EnterpriseEmployeeWeeklyAllocationOverageUSD < 0 ||
+		math.IsNaN(c.Billing.EnterpriseEmployeeWeeklyAllocationOverageUSD) ||
+		math.IsInf(c.Billing.EnterpriseEmployeeWeeklyAllocationOverageUSD, 0) {
+		return fmt.Errorf("billing.enterprise_employee_weekly_allocation_overage_usd must be a finite non-negative value")
 	}
 	if c.Billing.InflightReservation.TTLSeconds < 0 || c.Billing.InflightReservation.DefaultMaxTokens < 0 ||
 		c.Billing.InflightReservation.MaxOutputTokens < 0 || c.Billing.InflightReservation.MaxInputTokens < 0 ||

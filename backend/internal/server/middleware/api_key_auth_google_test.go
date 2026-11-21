@@ -171,6 +171,7 @@ func TestEnterpriseCandidateSimpleModeSelfResolvesAndRejectsMissingOrZeroAllocat
 		expectedSync int32
 	}{
 		{name: "active allocation", limitState: &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: 10, Usage7d: 1}, expectedCode: http.StatusOK, expectedSync: 1},
+		{name: "reproduction amount within configured overage", limitState: &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: 2, Usage7d: 1.631826}, expectedCode: http.StatusOK, expectedSync: 1},
 		{name: "missing allocation", limitState: &service.EnterpriseEmployeeWeeklyLimitState{}, expectedCode: http.StatusTooManyRequests, expectedSync: 1},
 		{name: "zero allocation", limitState: &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: 0}, expectedCode: http.StatusTooManyRequests, expectedSync: 1},
 		{name: "missing active subscription", resolveErr: service.ErrEnterpriseAttributionUnavailable, expectedCode: http.StatusServiceUnavailable},
@@ -179,7 +180,9 @@ func TestEnterpriseCandidateSimpleModeSelfResolvesAndRejectsMissingOrZeroAllocat
 	for _, middlewareCase := range middlewareCases {
 		for _, allocationCase := range allocationCases {
 			t.Run(middlewareCase.name+"/"+allocationCase.name, func(t *testing.T) {
-				cfg := &config.Config{RunMode: config.RunModeSimple}
+				cfg := &config.Config{RunMode: config.RunModeSimple, Billing: config.BillingConfig{
+					EnterpriseEmployeeWeeklyAllocationOverageUSD: 0.10,
+				}}
 				repo := &enterpriseAttributionSimpleModeRepo{resolveErr: allocationCase.resolveErr, limitState: allocationCase.limitState}
 				apiKeyService := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
 				r := gin.New()
