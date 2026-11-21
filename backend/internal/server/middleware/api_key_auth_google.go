@@ -144,7 +144,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			if finalizeErr := finalizeEnterpriseAttributionGoogle(c, apiKeyService, apiKey, apiKeyString, nil); finalizeErr != nil {
 				return
 			}
-			if !skipBilling && apiKey.EnterpriseEmployeeWeeklyLimit && (apiKey.RateLimit7d <= 0 || apiKey.Usage7d >= apiKey.RateLimit7d) {
+			if !skipBilling && enterpriseEmployeeWeeklyAllocationExceeded(apiKey, cfg) {
 				abortWithGoogleErrorWithReason(c, http.StatusTooManyRequests, service.ErrEnterpriseEmployeeWeeklyAllocationExceeded.Error(), "ENTERPRISE_EMPLOYEE_WEEKLY_ALLOCATION_EXCEEDED")
 				return
 			}
