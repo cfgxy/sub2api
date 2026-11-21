@@ -16,7 +16,7 @@
       <div v-if="loadError" class="p-6" data-testid="admin-keys-load-error">
         <EmptyState icon="exclamationTriangle" title="员工 Key 信息暂时不可用" action-text="重新加载" @action="load" />
       </div>
-      <DataTable v-else :columns="columns" :data="keys" :loading="loading" row-key="assignment_id" :actions-count="2">
+      <DataTable v-else :columns="columns" :data="dailyKeys" :loading="loading" row-key="api_key_id" :actions-count="2">
         <template #cell-employee_email="{ value }"><span class="break-all">{{ value }}</span></template>
         <template #cell-in_use="{ value }">
           <StatusBadge
@@ -96,6 +96,16 @@ const loadError = ref(false)
 const revokingId = ref<number | null>(null)
 const confirmId = ref<number | null>(null)
 const selectedKeyId = ref<number | null>(null)
+const dailyKeys = computed(() => {
+  const latestByKey = new Map<number, EnterpriseKeySummary>()
+  for (const row of keys.value) {
+    const current = latestByKey.get(row.api_key_id)
+    if (!current || (row.in_use && !current.in_use) || (row.in_use === current.in_use && row.generation > current.generation)) {
+      latestByKey.set(row.api_key_id, row)
+    }
+  }
+  return [...latestByKey.values()]
+})
 const selectedAssignments = computed(() => keys.value
   .filter(row => row.api_key_id === selectedKeyId.value)
   .sort((left, right) => left.generation - right.generation))

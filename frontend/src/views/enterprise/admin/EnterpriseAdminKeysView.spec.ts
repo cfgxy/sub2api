@@ -43,7 +43,10 @@ describe('EnterpriseAdminKeysView', () => {
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.get('[data-testid="admin-key-in-use"]').text()).toContain('当前使用中')
-    expect(wrapper.get('[data-testid="admin-key-archived"]').text()).toContain('历史记录')
+    expect(wrapper.find('[data-testid="admin-key-archived"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="admin-key-assignment-history"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="admin-key-assignment-history-dialog"]').text()).toContain('历史记录')
     wrapper.unmount()
   })
 
@@ -68,7 +71,7 @@ describe('EnterpriseAdminKeysView', () => {
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.findAll('[data-testid="admin-key-revoke"]')).toHaveLength(1)
-    expect(wrapper.findAll('[data-testid="admin-key-assignment-history"]')).toHaveLength(2)
+    expect(wrapper.findAll('[data-testid="admin-key-assignment-history"]')).toHaveLength(1)
     wrapper.unmount()
   })
 
