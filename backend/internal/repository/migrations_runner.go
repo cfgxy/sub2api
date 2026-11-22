@@ -66,6 +66,8 @@ const usageLogsUpstreamRequestIDIndexMigration = "233_add_usage_log_upstream_req
 const usageLogsUpstreamRequestIDIndex = "idx_usage_logs_upstream_request_id"
 const enterpriseKeyLifecycleProvisionLimitIndexMigration = "242_enterprise_key_lifecycle_provision_limit_notx.sql"
 const enterpriseKeyLifecycleProvisionLimitIndex = "idx_enterprise_key_lifecycle_provision_limit"
+const usageLogsAPIKeyCostIndexMigration = "249_add_usage_logs_api_key_cost_index_notx.sql"
+const usageLogsAPIKeyCostIndex = "idx_usage_logs_api_key_created_cost"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -313,6 +315,8 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 		return dropInvalidIndexIfPresent(ctx, db, usageLogsUpstreamRequestIDIndex)
 	case enterpriseKeyLifecycleProvisionLimitIndexMigration:
 		return dropInvalidIndexIfPresent(ctx, db, enterpriseKeyLifecycleProvisionLimitIndex)
+	case usageLogsAPIKeyCostIndexMigration:
+		return dropInvalidIndexIfPresent(ctx, db, usageLogsAPIKeyCostIndex)
 	default:
 		return nil
 	}
