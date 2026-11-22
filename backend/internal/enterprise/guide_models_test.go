@@ -12,7 +12,10 @@ import (
 func TestGetEmployeeGuideGroupIDUsesCurrentActiveSubscription(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 	r := &Repository{db: db}
 	mock.ExpectQuery("FROM enterprise_key_assignments AS assignment").
 		WithArgs(int64(5), int64(8)).
@@ -26,5 +29,5 @@ func TestGetEmployeeGuideGroupIDUsesCurrentActiveSubscription(t *testing.T) {
 	groupID, err = r.GetEmployeeGuideGroupID(context.Background(), 5, 8)
 	require.NoError(t, err)
 	require.Nil(t, groupID)
-	require.NoError(t, mock.ExpectationsWereMet())
+	mock.ExpectClose()
 }
