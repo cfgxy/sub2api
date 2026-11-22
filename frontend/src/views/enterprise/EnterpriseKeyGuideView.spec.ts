@@ -8,15 +8,13 @@ vi.mock('vue-i18n', async () => ({
   useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
-const { getCurrentKey, fetchEnterpriseGuideModels, getPublicSettings, copyToClipboard } = vi.hoisted(() => ({
+const { getCurrentKey, fetchEnterpriseGuideModels, copyToClipboard } = vi.hoisted(() => ({
   getCurrentKey: vi.fn(),
   fetchEnterpriseGuideModels: vi.fn(),
-  getPublicSettings: vi.fn(),
   copyToClipboard: vi.fn(),
 }))
 
 vi.mock('@/api/enterprise', () => ({ enterpriseAPI: { getCurrentKey }, fetchEnterpriseGuideModels }))
-vi.mock('@/api/auth', () => ({ getPublicSettings }))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard }) }))
 
 const FULL_KEY = `sk-guide-${'a1b2c3d4'.repeat(4)}`
@@ -40,7 +38,6 @@ describe('EnterpriseKeyGuideView', () => {
     open = vi.fn()
     vi.stubGlobal('open', open)
     getCurrentKey.mockResolvedValue(employeeKey())
-    getPublicSettings.mockResolvedValue({ api_base_url: 'https://gw.example.com/v1' })
     fetchEnterpriseGuideModels.mockResolvedValue([
       { id: 'gpt-guide', platform: 'openai' },
       { id: 'claude-guide', platform: 'anthropic' },
@@ -78,30 +75,13 @@ describe('EnterpriseKeyGuideView', () => {
     wrapper.unmount()
   })
 
-  it('shows dynamic base urls: openai with /v1, anthropic without', async () => {
+  it('shows the enterprise API domain without exposing the personal domain', async () => {
     const wrapper = mountView()
     await flushPromises()
-    expect(wrapper.get('[data-testid="guide-base-url-openai"]').text()).toBe('https://gw.example.com/v1')
-    expect(wrapper.get('[data-testid="guide-base-url-anthropic"]').text()).toBe('https://gw.example.com')
+    expect(wrapper.get('[data-testid="guide-base-url-openai"]').text()).toBe('https://api.ainoriahub.com/v1')
+    expect(wrapper.get('[data-testid="guide-base-url-anthropic"]').text()).toBe('https://api.ainoriahub.com')
     await wrapper.get('[data-testid="guide-copy-base-url-openai"]').trigger('click')
-    expect(copyToClipboard).toHaveBeenCalledWith('https://gw.example.com/v1', expect.any(String))
-    wrapper.unmount()
-  })
-
-  it('falls back to the current origin only when no deployment address is configured', async () => {
-    getPublicSettings.mockResolvedValue({ api_base_url: '' })
-    const wrapper = mountView()
-    await flushPromises()
-    expect(wrapper.get('[data-testid="guide-base-url-openai"]').text()).toBe(`${window.location.origin}/v1`)
-    wrapper.unmount()
-  })
-
-  it('reports an unusable deployment address instead of inventing one', async () => {
-    getPublicSettings.mockResolvedValue({ api_base_url: 'ftp://gw.example.com' })
-    const wrapper = mountView()
-    await flushPromises()
-    expect(wrapper.find('[data-testid="guide-base-url-error"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="guide-example-code"]').exists()).toBe(false)
+    expect(copyToClipboard).toHaveBeenCalledWith('https://api.ainoriahub.com/v1', expect.any(String))
     wrapper.unmount()
   })
 
@@ -110,12 +90,12 @@ describe('EnterpriseKeyGuideView', () => {
     await flushPromises()
     const options = wrapper.findAll('[data-testid="guide-model-option"]')
     expect(options).toHaveLength(2)
-    expect(wrapper.get('[data-testid="guide-example-code"]').text()).toContain('https://gw.example.com/v1/chat/completions')
+    expect(wrapper.get('[data-testid="guide-example-code"]').text()).toContain('https://api.ainoriahub.com/v1/chat/completions')
     expect(wrapper.get('[data-testid="guide-example-code"]').text()).toContain('gpt-guide')
 
     await options[1].setValue(true)
     const example = wrapper.get('[data-testid="guide-example-code"]').text()
-    expect(example).toContain('https://gw.example.com/v1/messages')
+    expect(example).toContain('https://api.ainoriahub.com/v1/messages')
     expect(example).not.toContain('/v1/v1')
     expect(example).toContain('claude-guide')
 
@@ -183,7 +163,7 @@ describe('EnterpriseKeyGuideView', () => {
     const ccsUri = String(open.mock.calls[1][0])
     expect(ccsUri.startsWith('ccswitch://v1/import?')).toBe(true)
     expect(new URL(ccsUri).searchParams.get('model')).toBe('claude-guide')
-    expect(new URL(ccsUri).searchParams.get('endpoint')).toBe('https://gw.example.com')
+    expect(new URL(ccsUri).searchParams.get('endpoint')).toBe('https://api.ainoriahub.com')
 
     expect(JSON.stringify(logs.map((spy) => spy.mock.calls))).not.toContain(FULL_KEY)
     expect(JSON.stringify(localStorage)).not.toContain(FULL_KEY)

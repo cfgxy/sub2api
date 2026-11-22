@@ -200,7 +200,6 @@ import Icon from '@/components/icons/Icon.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
-import { getPublicSettings } from '@/api/auth'
 import { enterpriseAPI, fetchEnterpriseGuideModels, type EnterpriseGuideModel } from '@/api/enterprise'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores/app'
@@ -223,6 +222,7 @@ const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 
 const exampleKinds: EnterpriseGuideExampleKind[] = ['curl', 'python', 'javascript']
+const enterpriseAPIBaseURL = 'https://api.ainoriahub.com'
 const errorItems = ['unauthorized', 'forbidden', 'rateLimited'] as const
 
 const key = ref<EnterpriseEmployeeKey | null>(null)
@@ -302,12 +302,7 @@ function importCcs() {
 }
 
 async function loadAddress() {
-  try {
-    const settings = await getPublicSettings()
-    address.value = enterpriseImportBaseUrls(settings.api_base_url?.trim() || window.location.origin)
-  } catch {
-    address.value = null
-  }
+  address.value = enterpriseImportBaseUrls(enterpriseAPIBaseURL)
 }
 
 async function loadModels() {
