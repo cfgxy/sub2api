@@ -467,3 +467,25 @@ func TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *test
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestRecoverEnterpriseEmployeeUsage_ClosesCommittedRowsOnScanError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery(billingKeyAssignmentSQL).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"enterprise_id", "employee_id"}).AddRow(int64(11), int64(17)))
+	mock.ExpectExec("UPDATE enterprise_employee_usage_reservations AS reservation").
+		WithArgs(int64(11), int64(17)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT request_id, source_api_key_id, actual_usd").
+		WithArgs(int64(11), int64(17)).
+		WillReturnRows(sqlmock.NewRows([]string{"request_id", "source_api_key_id", "actual_usd"}).
+			AddRow("recovery-request", int64(7), "not-a-number")).
+		RowsWillBeClosed()
+
+	err = (&usageBillingRepository{db: db}).RecoverEnterpriseEmployeeUsage(context.Background(), 7)
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

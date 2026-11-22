@@ -551,7 +551,7 @@ func (r *usageBillingRepository) RecoverEnterpriseEmployeeUsage(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type pendingSettlement struct {
 		requestID      string
