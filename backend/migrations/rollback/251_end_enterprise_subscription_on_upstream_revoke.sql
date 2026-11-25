@@ -1,0 +1,2 @@
+DROP TRIGGER IF EXISTS trg_end_enterprise_subscription_on_upstream_revoke ON user_subscriptions;
+DROP FUNCTION IF EXISTS end_enterprise_subscriptions_on_upstream_revoke();

@@ -51,6 +51,25 @@ func TestEnterpriseBrandObjectMigrationContract(t *testing.T) {
 	require.NotContains(t, sql, "alter column background_url")
 }
 
+func TestEnterpriseSubscriptionEndsWhenUpstreamSubscriptionIsRevoked(t *testing.T) {
+	raw, err := FS.ReadFile("251_end_enterprise_subscription_on_upstream_revoke.sql")
+	require.NoError(t, err)
+	sql := strings.ToLower(string(raw))
+	for _, fragment := range []string{
+		"end_enterprise_subscriptions_on_upstream_revoke",
+		"after update of deleted_at on user_subscriptions",
+		"status = 'ended'",
+		"upstream_user_subscription_id = new.id",
+		"subscription.source_revoked",
+	} {
+		require.Contains(t, sql, fragment)
+	}
+
+	rollback, err := FS.ReadFile("rollback/251_end_enterprise_subscription_on_upstream_revoke.sql")
+	require.NoError(t, err)
+	require.Contains(t, strings.ToLower(string(rollback)), "drop trigger if exists trg_end_enterprise_subscription_on_upstream_revoke")
+}
+
 func TestEnterpriseEmployeeKeyLifecycleMigrationContract(t *testing.T) {
 	raw, err := FS.ReadFile("239_enterprise_employee_key_lifecycle.sql")
 	require.NoError(t, err)
