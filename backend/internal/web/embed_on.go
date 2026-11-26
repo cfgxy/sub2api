@@ -165,16 +165,18 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 
 	settings, err := s.settings.GetPublicSettingsForInjection(ctx)
 	if err != nil {
-		// Fallback: serve without injection
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		// Fallback: preserve request-specific nonce for all inline scripts.
+		content := replaceNoncePlaceholder(s.baseHTML, nonce)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 		c.Abort()
 		return
 	}
 
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {
-		// Fallback: serve without injection
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		// Fallback: preserve request-specific nonce for all inline scripts.
+		content := replaceNoncePlaceholder(s.baseHTML, nonce)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 		c.Abort()
 		return
 	}

@@ -304,6 +304,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		// Nonce placeholder should be replaced
 		assert.NotContains(t, body, NonceHTMLPlaceholder)
 		assert.Contains(t, body, `nonce="`+testNonce+`"`)
+		assert.Contains(t, body, `<script id="enterprise-branding" nonce="`+testNonce+`">`)
 	})
 
 	t.Run("caches_html_content", func(t *testing.T) {
@@ -394,6 +395,8 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			require.NotEqual(t, -1, nonceStart)
 			nonce := strings.SplitN(csp[nonceStart+len("'nonce-"):], "'", 2)[0]
 			assert.Contains(t, w.Body.String(), `nonce="`+nonce+`"`)
+			assert.Contains(t, w.Body.String(), `<script id="enterprise-branding" nonce="`+nonce+`">`)
+			assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
 		}
 		assert.NotEqual(t, responses[0].Header().Get("Content-Security-Policy"), responses[1].Header().Get("Content-Security-Policy"))
 	})
@@ -434,10 +437,32 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 
 		server.serveIndexHTML(c)
 
-		// Should still return 200 with base HTML
+		// Fallback must still replace all inline-script nonce placeholders.
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
 		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		assert.Contains(t, w.Body.String(), `<script id="enterprise-branding" nonce="nonce123">`)
+		assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
+	})
+
+	t.Run("fallback_on_settings_serialization_error_preserves_nonce", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: make(chan int),
+		}
+
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		c.Set(middleware.CSPNonceKey, "serialization-nonce")
+
+		server.serveIndexHTML(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `<script id="enterprise-branding" nonce="serialization-nonce">`)
+		assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
 	})
 }
 
