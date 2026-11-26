@@ -1,6 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import EnterpriseAuthShell from './EnterpriseAuthShell.vue'
 
 const getBrand = vi.hoisted(() => vi.fn())
 
@@ -31,8 +30,22 @@ const brandResponse = {
   background_size_bytes: 128,
 }
 
+const originalLocation = window.location
+
+async function mountShell(hostname = originalLocation.hostname) {
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { ...originalLocation, hostname },
+  })
+  vi.resetModules()
+  const { default: EnterpriseAuthShell } = await import('./EnterpriseAuthShell.vue')
+  return mount(EnterpriseAuthShell, { slots: { default: '<div>登录表单</div>' } })
+}
+
 afterEach(() => {
+  Object.defineProperty(window, 'location', { configurable: true, value: originalLocation })
   vi.unstubAllGlobals()
+  vi.resetModules()
 })
 
 describe('EnterpriseAuthShell brand background', () => {
@@ -41,7 +54,7 @@ describe('EnterpriseAuthShell brand background', () => {
     vi.stubGlobal('Image', FakeImage)
     getBrand.mockResolvedValue(brandResponse)
 
-    const wrapper = mount(EnterpriseAuthShell, { slots: { default: '<div>登录表单</div>' } })
+    const wrapper = await mountShell()
     await flushPromises()
     await flushPromises()
 
@@ -57,13 +70,33 @@ describe('EnterpriseAuthShell brand background', () => {
     vi.stubGlobal('Image', FakeImage)
     getBrand.mockResolvedValue(brandResponse)
 
-    const wrapper = mount(EnterpriseAuthShell, { slots: { default: '<div>登录表单</div>' } })
+    const wrapper = await mountShell()
     await flushPromises()
     await flushPromises()
 
     const style = wrapper.get('.auth-background').attributes('style') || ''
     expect(style).toContain('url("/logo.svg")')
     expect(style).not.toContain('/api/v1/enterprise/brand/background')
+    wrapper.unmount()
+  })
+
+  it('renders custom API-backed copy verbatim on a 派诺云 host', async () => {
+    getBrand.mockResolvedValue({
+      ...brandResponse,
+      enterprise_name: 'Acme Sub2API 团队',
+      title: 'Sub2API 专属工作台',
+      body: '保留 Sub2API 作为企业业务文案',
+      slogan: 'Sub2API 企业入口',
+      background_url: '/logo.svg',
+    })
+
+    const wrapper = await mountShell('tenant.ainoriahub.com')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Acme Sub2API 团队')
+    expect(wrapper.text()).toContain('Sub2API 专属工作台')
+    expect(wrapper.text()).toContain('保留 Sub2API 作为企业业务文案')
+    expect(wrapper.text()).toContain('Sub2API 企业入口')
     wrapper.unmount()
   })
 })

@@ -11,7 +11,3 @@ export function isPainuoyunEnterprisePortal(hostname: string, pathname: string):
   return isPainuoyunEnterpriseHost(hostname)
     && (pathname === '/enterprise' || pathname.startsWith('/enterprise/'))
 }
-
-export function replaceLegacyEnterpriseBrand(value: string, enabled: boolean): string {
-  return enabled ? value.replace(/sub2api/gi, PAINUOYUN_ENTERPRISE_NAME) : value
-}

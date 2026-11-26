@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   isPainuoyunEnterpriseHost,
   isPainuoyunEnterprisePortal,
-  PAINUOYUN_ENTERPRISE_NAME,
-  replaceLegacyEnterpriseBrand,
 } from '../enterpriseBranding'
 
 describe('派诺云企业端 host 边界', () => {
@@ -22,10 +20,5 @@ describe('派诺云企业端 host 边界', () => {
     expect(isPainuoyunEnterprisePortal('tenant.ainoriahub.com', '/enterprise')).toBe(true)
     expect(isPainuoyunEnterprisePortal('tenant.ainoriahub.com', '/admin/enterprises')).toBe(false)
     expect(isPainuoyunEnterprisePortal('tenant.ainoriahub.com', '/dashboard')).toBe(false)
-  })
-
-  it('只在目标 host 改写运行时返回的旧品牌文本', () => {
-    expect(replaceLegacyEnterpriseBrand('Sub2API 企业工作台', true)).toBe(`${PAINUOYUN_ENTERPRISE_NAME} 企业工作台`)
-    expect(replaceLegacyEnterpriseBrand('Sub2API 企业工作台', false)).toBe('Sub2API 企业工作台')
   })
 })

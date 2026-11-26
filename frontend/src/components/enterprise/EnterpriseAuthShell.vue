@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { enterpriseAPI } from '@/api/enterprise'
-import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME, replaceLegacyEnterpriseBrand } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import type { EnterpriseBrand } from '@/types/enterprise'
 
@@ -58,10 +58,10 @@ const brand = reactive<EnterpriseBrand>({ ...defaultBrand })
 const customBackgroundVerified = ref(false)
 
 function applyBrand(response: EnterpriseBrand) {
-  brand.enterprise_name = replaceLegacyEnterpriseBrand(response.enterprise_name?.trim() || defaultBrand.enterprise_name, isPainuoyun)
-  brand.title = replaceLegacyEnterpriseBrand(response.title?.trim() || defaultBrand.title, isPainuoyun)
-  brand.body = replaceLegacyEnterpriseBrand(response.body?.trim() || defaultBrand.body, isPainuoyun)
-  brand.slogan = replaceLegacyEnterpriseBrand(response.slogan?.trim() || defaultBrand.slogan, isPainuoyun)
+  brand.enterprise_name = response.enterprise_name?.trim() || defaultBrand.enterprise_name
+  brand.title = response.title?.trim() || defaultBrand.title
+  brand.body = response.body?.trim() || defaultBrand.body
+  brand.slogan = response.slogan?.trim() || defaultBrand.slogan
   brand.background_url = response.background_url === '/api/v1/enterprise/brand/background' ? response.background_url : defaultBrand.background_url
   brand.background_content_type = response.background_content_type || defaultBrand.background_content_type
   brand.background_sha256 = /^[a-f\d]{64}$/i.test(response.background_sha256 || '') ? response.background_sha256 : defaultBrand.background_sha256

@@ -100,7 +100,7 @@ import { ElMessage } from 'element-plus'
 import { enterpriseAPI } from '@/api/enterprise'
 import { validateBrand, validateImageFile } from '@/features/enterprise/validation'
 import type { EnterpriseBrand } from '@/types/enterprise'
-import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME, replaceLegacyEnterpriseBrand } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
 
 const isPainuoyun = isPainuoyunEnterpriseHost(window.location.hostname)
 const defaultBrand: EnterpriseBrand = {
@@ -143,10 +143,10 @@ function customizedFieldCount() {
 }
 
 function applyBrand(response: EnterpriseBrand) {
-  brand.enterprise_name = replaceLegacyEnterpriseBrand(response.enterprise_name?.trim() || defaultBrand.enterprise_name, isPainuoyun)
-  brand.title = replaceLegacyEnterpriseBrand(response.title?.trim() || defaultBrand.title, isPainuoyun)
-  brand.body = replaceLegacyEnterpriseBrand(response.body?.trim() || defaultBrand.body, isPainuoyun)
-  brand.slogan = replaceLegacyEnterpriseBrand(response.slogan?.trim() || defaultBrand.slogan, isPainuoyun)
+  brand.enterprise_name = response.enterprise_name?.trim() || defaultBrand.enterprise_name
+  brand.title = response.title?.trim() || defaultBrand.title
+  brand.body = response.body?.trim() || defaultBrand.body
+  brand.slogan = response.slogan?.trim() || defaultBrand.slogan
   brand.background_url = controlledBackgroundURLs.has(response.background_url) ? response.background_url : defaultBrand.background_url
   brand.background_content_type = response.background_content_type || defaultBrand.background_content_type
   brand.background_sha256 = response.background_sha256 || defaultBrand.background_sha256
@@ -261,6 +261,7 @@ onMounted(load)
 .metadata{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin:14px 0 4px;color:#64748b;font-size:13px}
 .metadata code{grid-column:1/-1;overflow-wrap:anywhere}
 .field-fallback-hint{margin:14px 0 0;color:#94a3b8;font-size:13px}
+.preview{position:relative;aspect-ratio:16/10;border-radius:8px;background:#173f3d center/cover;color:white;overflow:hidden}
 .preview.painuoyun-default-background{background:radial-gradient(circle at 18% 14%,rgba(94,234,212,.5),transparent 28%),linear-gradient(135deg,#0f766e,#134e4a 58%,#0f172a)}
 .preview-shade{position:absolute;inset:0;background:rgba(9,31,31,.72)}
 .preview-copy{position:absolute;left:0;right:0;bottom:0;padding:28px}
