@@ -22,10 +22,10 @@ func TestGetPlatformEnterpriseIncludesSubscriptionAndImpactSummary(t *testing.T)
 	})
 	require.NoError(t, err)
 	mock.ExpectQuery(`SELECT id, name, LOWER.*FROM enterprises WHERE id = \$1`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "dedicated", "status", "created_at"}).
-			AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", createdAt))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "dedicated", "status", "created_at", "seat_count"}).
+			AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", createdAt, 5))
 	mock.ExpectQuery(`(?s)SELECT COALESCE.*FROM enterprises AS e WHERE e.id = \$1`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"admin_email", "subscriptions"}).AddRow("admin@example.com", subscriptions))
+		WillReturnRows(sqlmock.NewRows([]string{"admin_email", "concurrency", "subscriptions"}).AddRow("admin@example.com", 5, subscriptions))
 	mock.ExpectQuery(`(?s)SELECT.*COUNT\(\*\).*enterprise_employees`).WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"employees", "active_employees", "sessions", "keys"}).AddRow(int64(12), int64(10), int64(3), int64(8)))
 
@@ -52,11 +52,11 @@ func TestListPlatformEnterprisesIncludesSubscriptionsSameAsDetail(t *testing.T) 
 			"weekly_window_start": anchor, "starts_at": createdAt, "expires_at": anchor.AddDate(0, 0, 7)},
 	})
 	require.NoError(t, err)
-	columns := []string{"id", "name", "host", "dedicated", "status", "created_at", "admin_email", "employees", "active_employees", "sessions", "keys", "subscriptions"}
+	columns := []string{"id", "name", "host", "dedicated", "status", "created_at", "seat_count", "admin_email", "concurrency", "employees", "active_employees", "sessions", "keys", "subscriptions"}
 	mock.ExpectQuery(`(?s)SELECT e\.id.*jsonb_agg.*es\.enterprise_id = e\.id.*FROM enterprises AS e`).
 		WillReturnRows(sqlmock.NewRows(columns).
-			AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", createdAt, "admin@example.com", int64(12), int64(10), int64(3), int64(8), subscriptions).
-			AddRow(int64(8), "Beta", "beta.example.com", int64(98), "active", createdAt, "", int64(0), int64(0), int64(0), int64(0), []byte("[]")))
+			AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", createdAt, 5, "admin@example.com", 5, int64(12), int64(10), int64(3), int64(8), subscriptions).
+			AddRow(int64(8), "Beta", "beta.example.com", int64(98), "active", createdAt, 1, "", 1, int64(0), int64(0), int64(0), int64(0), []byte("[]")))
 
 	items, err := svc.ListPlatformEnterprises(context.Background(), "", "")
 

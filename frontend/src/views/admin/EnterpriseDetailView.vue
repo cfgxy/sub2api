@@ -136,7 +136,25 @@
               <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.dedicated_upstream_user_id }}</dd>
             </div>
             <div>
-              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.activeSessions') }}</dt>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.seats') }}</dt>
+              <dd class="mt-1 flex flex-wrap items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
+                <input v-model.number="seatDraft" class="input w-24" type="number" min="1" max="10000" :aria-label="t('admin.enterprise.common.seats')">
+                <span class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.detail.seatUsage', { used: item.seat_usage, total: item.seat_count }) }}</span>
+                <span v-if="item.seat_overage" class="text-xs text-red-600 dark:text-red-400">{{ t('admin.enterprise.detail.seatOverage', { count: item.seat_overage }) }}</span>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.detail.dedicatedConcurrency') }}</dt>
+              <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.dedicated_upstream_user_concurrency }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.detail.seatChangeReason') }}</dt>
+              <dd class="mt-1 flex flex-wrap gap-2">
+                <input v-model="seatChangeReason" class="input min-w-56 flex-1" type="text" :placeholder="t('admin.enterprise.detail.seatChangeReasonPlaceholder')">
+                <button class="btn btn-secondary btn-sm" :disabled="updatingSeats" data-testid="enterprise-detail-update-seats" @click="updateSeats">{{ t('admin.enterprise.detail.updateSeats') }}</button>
+              </dd>
+            </div>
+            <div>
               <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.active_session_count }}</dd>
             </div>
             <div>
@@ -183,6 +201,9 @@ const activeTab = ref('overview')
 const confirmVisible = ref(false)
 const confirmMessage = ref('')
 const syncingSubscriptions = ref(false)
+const updatingSeats = ref(false)
+const seatDraft = ref(1)
+const seatChangeReason = ref('')
 
 const tabs = computed(() => [
   { name: 'overview', label: t('admin.enterprise.detail.overview') },
@@ -204,6 +225,7 @@ async function load() {
   sourceUnavailable.value = false
   try {
     item.value = await enterprisePlatformAPI.get(Number(route.params.id))
+    seatDraft.value = item.value.seat_count
     return true
   } catch {
     sourceUnavailable.value = true
@@ -230,7 +252,25 @@ async function refreshSubscriptions() {
   }
 }
 
-// 停用前重新拉取当前影响面，确保确认框展示的是实时数据而非页面旧值
+async function updateSeats() {
+  const current = item.value
+  if (!current || !Number.isInteger(seatDraft.value) || seatDraft.value < 1 || seatDraft.value > 10000 || !seatChangeReason.value.trim()) {
+    appStore.showError(t('admin.enterprise.detail.seatUpdateInvalid'))
+    return
+  }
+  updatingSeats.value = true
+  try {
+    await enterprisePlatformAPI.updateSeats(current.id, seatDraft.value, seatChangeReason.value.trim())
+    seatChangeReason.value = ''
+    await load()
+    appStore.showSuccess(t('admin.enterprise.detail.seatUpdateSuccess'))
+  } catch {
+    appStore.showError(t('admin.enterprise.detail.seatUpdateFailed'))
+  } finally {
+    updatingSeats.value = false
+  }
+}
+
 async function askDisable() {
   let current: PlatformEnterprise
   try {

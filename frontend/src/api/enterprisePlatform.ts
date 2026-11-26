@@ -12,6 +12,10 @@ export interface PlatformEnterprise {
   active_employee_count: number
   active_session_count: number
   active_key_count: number
+  seat_count: number
+  seat_usage: number
+  seat_overage: number
+  dedicated_upstream_user_concurrency: number
   subscriptions: PlatformSubscription[]
 }
 
@@ -35,8 +39,9 @@ export const enterprisePlatformAPI = {
   list: (params?: { search?: string; status?: string }) => apiClient.get<PlatformEnterprise[]>('/admin/enterprises', { params }).then((response) => response.data),
   get: (id: number) => apiClient.get<PlatformEnterprise>(`/admin/enterprises/${id}`).then((response) => response.data),
   refreshSubscriptions: (id: number) => apiClient.post<SubscriptionRefreshResult>(`/admin/enterprises/${id}/subscriptions/refresh`).then((response) => response.data),
-  create: (input: { name: string; portal_host: string; dedicated_upstream_user_id: number; reason: string }) => apiClient.post<PlatformEnterprise>('/admin/enterprises', input).then((response) => response.data),
+  create: (input: { name: string; portal_host: string; dedicated_upstream_user_id: number; seat_count: number; reason: string }) => apiClient.post<PlatformEnterprise>('/admin/enterprises', input).then((response) => response.data),
   disable: (id: number, reason: string) => apiClient.post<{ success: boolean }>(`/admin/enterprises/${id}/disable`, { reason }).then((response) => response.data),
   enable: (id: number, reason: string) => apiClient.post<{ success: boolean }>(`/admin/enterprises/${id}/enable`, { reason }).then((response) => response.data),
   updateHost: (id: number, portal_host: string, reason: string) => apiClient.put<{ success: boolean }>(`/admin/enterprises/${id}/portal-host`, { portal_host, reason }).then((response) => response.data),
+  updateSeats: (id: number, seat_count: number, reason: string) => apiClient.put<{ success: boolean }>(`/admin/enterprises/${id}/seats`, { seat_count, reason }).then((response) => response.data),
 }

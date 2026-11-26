@@ -142,6 +142,7 @@ func RegisterAdminRoutes(
 			admin.POST("/enterprises/:id/disable", h.Enterprise.DisablePlatformEnterprise)
 			admin.POST("/enterprises/:id/enable", h.Enterprise.EnablePlatformEnterprise)
 			admin.PUT("/enterprises/:id/portal-host", h.Enterprise.UpdatePlatformEnterpriseHost)
+			admin.PUT("/enterprises/:id/seats", h.Enterprise.UpdatePlatformEnterpriseSeats)
 		}
 	}
 }

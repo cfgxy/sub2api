@@ -231,3 +231,27 @@ func TestDisableEnterpriseRequiresIDAndReason(t *testing.T) {
 	require.ErrorIs(t, svc.DisableEnterprise(context.Background(), 7, 1, "  "), errInvalidEnterpriseInputTarget)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestUpdateEnterpriseSeatsUpdatesDedicatedConcurrencyInSameTransaction(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT e\.dedicated_upstream_user_id, e\.seat_count, u\.concurrency.*FOR UPDATE OF e, u`).WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id", "seat_count", "concurrency"}).AddRow(int64(99), 2, 2))
+	mock.ExpectExec(`UPDATE enterprises SET seat_count = \$2, updated_at = NOW\(\) WHERE id = \$1`).WithArgs(int64(7), 1).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE users SET concurrency = \$2, updated_at = NOW\(\) WHERE id = \$1`).WithArgs(int64(99), 1).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO enterprise_audit_events.*enterprise\.seats_updated`).WithArgs(int64(7), sqlmock.AnyArg(), "platform_user:1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, svc.UpdateEnterpriseSeats(context.Background(), 7, 1, 1, "plan downsized"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateEnterpriseSeatsRejectsOutOfRangeWithoutDatabaseAccess(t *testing.T) {
+	svc, mock := newMockService(t)
+	require.ErrorIs(t, svc.UpdateEnterpriseSeats(context.Background(), 7, 1, 0, "invalid"), errInvalidEnterpriseSeatCount)
+	require.ErrorIs(t, svc.UpdateEnterpriseSeats(context.Background(), 7, 1, 10001, "invalid"), errInvalidEnterpriseSeatCount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

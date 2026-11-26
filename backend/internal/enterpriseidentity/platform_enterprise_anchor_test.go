@@ -25,8 +25,9 @@ func TestCreateEnterpriseInitializesMissingAnchorAsFirstConsumption(t *testing.T
 	mock.ExpectQuery(`UPDATE user_subscriptions\s+SET daily_window_start = \$2, weekly_window_start = \$3, monthly_window_start = \$3`).
 		WithArgs(int64(5), timezone.StartOfDay(fixed), fixed).
 		WillReturnRows(sqlmock.NewRows([]string{"weekly_window_start"}).AddRow(fixed))
-	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com").
+	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "dedicated", "status", "created_at"}).AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", fixed))
+	mock.ExpectExec(`UPDATE users SET concurrency`).WithArgs(int64(99), 1).WillReturnResult(sqlmock.NewResult(99, 1))
 	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), sqlmock.AnyArg(), "platform_user:1").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`INSERT INTO enterprise_subscriptions`).WithArgs(int64(7), int64(5), fixed, "platform_user:1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(11)))
@@ -56,8 +57,9 @@ func TestCreateEnterprisePreservesAnchorWhenConcurrentlyActivated(t *testing.T) 
 		WillReturnRows(sqlmock.NewRows([]string{"weekly_window_start"}))
 	mock.ExpectQuery(`SELECT weekly_window_start FROM user_subscriptions WHERE id = \$1`).WithArgs(int64(5)).
 		WillReturnRows(sqlmock.NewRows([]string{"weekly_window_start"}).AddRow(existing))
-	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com").
+	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "dedicated", "status", "created_at"}).AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", fixed))
+	mock.ExpectExec(`UPDATE users SET concurrency`).WithArgs(int64(99), 1).WillReturnResult(sqlmock.NewResult(99, 1))
 	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), sqlmock.AnyArg(), "platform_user:1").WillReturnResult(sqlmock.NewResult(1, 1))
 	// 观测锚点 = 既有值，而非当前时刻
 	mock.ExpectQuery(`INSERT INTO enterprise_subscriptions`).WithArgs(int64(7), int64(5), existing, "platform_user:1").
