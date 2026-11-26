@@ -24,7 +24,7 @@ vi.mock('@/api/enterprise', () => ({ enterpriseAPI: { getWorkbenchSummary, listW
 
 const summary = {
   total_usage_credit: '2.75', total_requests: 1, employee_count: 1, active_employee_count: 1,
-  subscription_status: 'active', subscription_plan: 'Business', enterprise_pool_limit: '100', enterprise_pool_used: '2.75', enterprise_pool_remaining: '97.25', enterprise_pool_exhausted: false, pool_source_status: 'available', pool_source: 'upstream subscription', pool_window_type: 'week', pool_window_anchor: new Date().toISOString(),
+  subscription_status: 'active', subscription_plan: 'Business', enterprise_pool_limit: '100', enterprise_pool_used: '9.25', enterprise_pool_remaining: '90.75', enterprise_pool_exhausted: false, pool_source_status: 'available', pool_source: 'upstream subscription', pool_window_type: 'week', pool_window_anchor: new Date().toISOString(),
   employee_summaries: [{ employee_id: 22, email: 'employee@example.com', requests: 1, configured_credit: '12.50', usage_credit: '2.75', remaining_credit: '9.75', overage_credit: '0', recommendation: '当前额度范围内' }],
   usage_trend: [],
 }
@@ -68,6 +68,9 @@ describe('EnterpriseAdminUsageView', () => {
     await wrapper.findAll('button').find(item => item.text() === '查询')!.trigger('click')
     await flushPromises()
     expect(listWorkbenchUsage.mock.calls.at(-1)?.[0]).toMatchObject({ model: 'gpt-4o', window_type: 'week' })
+    expect(wrapper.text()).toContain('总池已用额度')
+    expect(wrapper.text()).toContain('9.25')
+    expect(wrapper.text()).not.toContain('筛选用量')
     expect(wrapper.text()).toContain('剩余额度')
     expect(wrapper.text()).not.toContain('actual cost')
     wrapper.unmount()

@@ -79,12 +79,12 @@
           </p>
         </div>
         <div class="card p-4">
-          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.workbench.filteredUsage') }}</p>
+          <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.workbench.totalPoolUsed') }}</p>
           <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-            {{ summary?.total_usage_credit || '0' }}
+            {{ summary?.enterprise_pool_used || '0' }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-            {{ t('enterprise.workbench.requestsInScope', { count: summary?.total_requests || 0 }) }}
+            {{ t('enterprise.workbench.totalPoolUsedHint') }}
           </p>
         </div>
       </section>
@@ -122,9 +122,12 @@
         <div class="card flex items-start gap-3 p-4">
           <StatusBadge status="neutral" label="" class="mt-1" />
           <div class="min-w-0">
-            <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.windowWeekly') }}</p>
+            <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('enterprise.workbench.subscriptionExpiry') }}</p>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              {{ t('enterprise.workbench.windowAnchor', { time: formatOptionalDate(summary?.pool_window_anchor) }) }}
+              {{ subscriptionExpiryText }}
+            </p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ weeklyResetText }}
             </p>
           </div>
         </div>
@@ -300,7 +303,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
@@ -312,6 +315,7 @@ import EnterpriseUsageTrendChart from '@/components/charts/EnterpriseUsageTrendC
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
 import { auditActorLabel, auditEntityLabel, auditEventLabel, sourceStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
+import { subscriptionDaysHoursRemaining, subscriptionDaysRemaining } from '@/utils/subscriptionTime'
 import type { Column } from '@/components/common/types'
 import type {
   EnterpriseDepartment,
@@ -341,6 +345,8 @@ const recentAuditEvents = ref<EnterpriseWorkbenchAuditEvent[]>([])
 const activityState = ref<SourceState>('loading')
 const sourceStates = reactive({ summary: 'loading' as SourceState, directories: 'loading' as SourceState })
 const loading = ref(false)
+const now = ref(new Date())
+let countdownTimer: number | undefined
 
 const hasSourceIssue = computed(() => Object.values(sourceStates).some((state) => state === 'unavailable'))
 const sourceIssueText = computed(() =>
@@ -365,6 +371,18 @@ const poolObservedAtLabel = computed(() =>
 const trendSourceLabel = computed(() =>
   t(sourceStates.summary === 'ready' ? 'enterprise.workbench.trendSource' : 'enterprise.workbench.trendSourceUnavailable')
 )
+const subscriptionExpiryText = computed(() => {
+  const expiresAt = summary.value?.subscription_expires_at
+  const days = subscriptionDaysRemaining(expiresAt, now.value)
+  if (!expiresAt || days === null) return t('enterprise.workbench.subscriptionExpiryUnavailable')
+  if (days === 0) return t('enterprise.workbench.subscriptionExpired')
+  return t('enterprise.workbench.subscriptionExpiresAt', { time: formatDate(expiresAt), days })
+})
+const weeklyResetText = computed(() => {
+  const remaining = subscriptionDaysHoursRemaining(summary.value?.weekly_reset_at, now.value)
+  if (!remaining) return t('enterprise.workbench.weeklyResetUnavailable')
+  return t('enterprise.workbench.weeklyReset', { days: remaining.days, hours: remaining.hours })
+})
 
 const employeeSummaries = computed(() => summary.value?.employee_summaries || [])
 const topEmployees = computed(() =>
@@ -452,5 +470,10 @@ async function load() {
 onMounted(() => {
   load()
   loadRecentActivity()
+  countdownTimer = window.setInterval(() => { now.value = new Date() }, 60 * 1000)
+})
+
+onUnmounted(() => {
+  if (countdownTimer !== undefined) window.clearInterval(countdownTimer)
 })
 </script>

@@ -104,7 +104,7 @@ const auditPayloadFieldLabels: Record<string, string> = {
   cancelled_subscription_id: '已取消订阅 ID', scheduled_subscription_id: '已排期订阅 ID',
   previous_assignment_id: '原分配 ID', new_assignment_id: '新分配 ID',
   previous_api_key_id: '原 Key ID', previous_masked_key: '原 Key（掩码）', masked_key: 'Key（掩码）',
-  window_type: '窗口类型', window_anchor: '窗口锚点', previous_window_start: '原窗口起点',
+  window_type: '窗口类型', window_anchor: '周期起点', previous_window_start: '原周期起点',
   observed_window_start: '观测窗口起点', assignment_segment_boundary: '分配区间边界',
   expected_version: '期望版本', current_version: '当前版本', actual_version: '实际版本', version: '版本', credit: '调整后额度',
   name: '名称', status: '状态', affected_employees: '受影响员工数', initial: '是否初始', keys_disabled: '已停用 Key 数',

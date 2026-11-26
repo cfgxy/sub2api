@@ -1681,15 +1681,34 @@ type EnterprisePoolStatus struct {
 type currentEnterpriseWeek struct {
 	SubscriptionID int64
 	Anchor         time.Time
+	StartsAt       time.Time
+	ExpiresAt      time.Time
+}
+
+// WeeklyResetAt uses the same legacy-anchor correction as the subscription
+// reset executor. Keeping the workbench on this helper prevents a display-only
+// reset time from drifting to midnight while the real rolling window resets at
+// StartsAt + seven days.
+func (week currentEnterpriseWeek) WeeklyResetAt() *time.Time {
+	anchor := week.Anchor
+	return (&platformservice.UserSubscription{
+		StartsAt:          week.StartsAt,
+		ExpiresAt:         week.ExpiresAt,
+		WeeklyWindowStart: &anchor,
+	}).WeeklyResetTime()
 }
 
 // resolveCurrentEnterpriseWeek identifies the authoritative current week.
-// Callers must not infer it from historical attribution rows: a new active
-// subscription may have the same anchor as an old one.
+// It reads the live upstream subscription fields rather than the immutable
+// enterprise observation/history rows: those rows are audit snapshots, not a
+// source for the next rolling reset. Callers must not infer it from historical
+// attribution rows either: a new active subscription may have the same anchor
+// as an old one.
 func (s *Service) resolveCurrentEnterpriseWeek(ctx context.Context, enterpriseID int64) (*currentEnterpriseWeek, error) {
 	var week currentEnterpriseWeek
 	err := s.db.QueryRowContext(ctx, `
-		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start
+		SELECT enterprise_subscription.id, upstream_subscription.weekly_window_start,
+		       upstream_subscription.starts_at, upstream_subscription.expires_at
 		FROM enterprises AS enterprise
 		JOIN enterprise_subscriptions AS enterprise_subscription
 		  ON enterprise_subscription.enterprise_id = enterprise.id
@@ -1698,7 +1717,11 @@ func (s *Service) resolveCurrentEnterpriseWeek(ctx context.Context, enterpriseID
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
 		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
 		 AND upstream_subscription.deleted_at IS NULL
-		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID).Scan(&week.SubscriptionID, &week.Anchor)
+		 AND upstream_subscription.status = 'active'
+		 AND upstream_subscription.starts_at <= CURRENT_TIMESTAMP
+		 AND upstream_subscription.expires_at > CURRENT_TIMESTAMP
+		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID).Scan(
+		&week.SubscriptionID, &week.Anchor, &week.StartsAt, &week.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -1706,6 +1729,8 @@ func (s *Service) resolveCurrentEnterpriseWeek(ctx context.Context, enterpriseID
 		return nil, err
 	}
 	week.Anchor = week.Anchor.UTC()
+	week.StartsAt = week.StartsAt.UTC()
+	week.ExpiresAt = week.ExpiresAt.UTC()
 	return &week, nil
 }
 

@@ -39,7 +39,7 @@
           <section class="grid grid-cols-1 gap-3 px-4 pt-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="企业额度概览">
             <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">{{ terms.pool }}</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ summary?.enterprise_pool_limit ?? '0' }}</p><p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ poolSourceLabel }}</p></div>
             <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">总池{{ terms.remaining }}</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ summary?.enterprise_pool_remaining ?? '0' }}</p><p v-if="summary?.enterprise_pool_exhausted" class="mt-1 text-xs text-red-600 dark:text-red-400">总池已耗尽</p></div>
-            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">筛选用量</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ summary?.total_usage_credit ?? '0' }}</p><p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ summary?.total_requests ?? 0 }} 次请求</p></div>
+            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">总池已用额度</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ summary?.enterprise_pool_used ?? '0' }}</p><p class="mt-1 text-xs text-gray-500 dark:text-dark-400">上游订阅权威实际已用额度</p></div>
             <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">个人{{ terms.overage }}员工数</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ overageEmployeeCount }}</p></div>
           </section>
           <div class="grid grid-cols-1 gap-4 px-4 lg:grid-cols-2">

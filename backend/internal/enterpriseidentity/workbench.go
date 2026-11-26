@@ -81,6 +81,8 @@ type WorkbenchSummary struct {
 	SubscriptionID             *int64                     `json:"subscription_id,omitempty"`
 	SubscriptionStatus         string                     `json:"subscription_status"`
 	SubscriptionPlan           string                     `json:"subscription_plan"`
+	SubscriptionExpiresAt      *time.Time                 `json:"subscription_expires_at,omitempty"`
+	WeeklyResetAt              *time.Time                 `json:"weekly_reset_at,omitempty"`
 	EnterprisePoolLimit        string                     `json:"enterprise_pool_limit"`
 	EnterprisePoolUsed         string                     `json:"enterprise_pool_used"`
 	EnterprisePoolRemaining    string                     `json:"enterprise_pool_remaining"`
@@ -337,14 +339,20 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 			return nil, err
 		}
 		if currentWeek == nil {
-			return result, nil
+			// The subscription is not eligible to provide a current pool (it may
+			// be expired or unavailable), but its expiry is still useful context.
+			// This read does not revive any historical usage or reset countdown.
+			return h.populateUnavailableSubscription(ctx, enterpriseID, result)
 		}
-		// 当前周解析是无筛选工作台的权威订阅范围。先写入响应，后续总池查询
-		// 仅补充额度状态，不能因两次查询之间的数据变化而擦除分配请求所需标识。
+		// 当前周解析是无筛选工作台的权威订阅范围。总池、到期时间和下次
+		// 周重置都从这个同一条上游订阅派生，不能回退到历史归因或观测快照。
 		subscriptionID := currentWeek.SubscriptionID
 		windowAnchor := currentWeek.Anchor
+		expiresAt := currentWeek.ExpiresAt
 		result.SubscriptionID = &subscriptionID
 		result.PoolWindowAnchor = &windowAnchor
+		result.SubscriptionExpiresAt = &expiresAt
+		result.WeeklyResetAt = currentWeek.WeeklyResetAt()
 	}
 	scope := buildWorkbenchUsageScope(enterpriseID, q, currentWeek)
 	if err := h.owner.service.db.QueryRowContext(ctx, `
@@ -532,6 +540,39 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		result.UsageTrend = append(result.UsageTrend, point)
 	}
 	return result, trendRows.Err()
+}
+
+func (h *WorkbenchHandler) populateUnavailableSubscription(ctx context.Context, enterpriseID int64, result *WorkbenchSummary) (*WorkbenchSummary, error) {
+	var plan, status sql.NullString
+	var expiresAt sql.NullTime
+	err := h.owner.service.db.QueryRowContext(ctx, `
+		SELECT COALESCE(subscription_group.name, ''), COALESCE(upstream_subscription.status, ''),
+		       upstream_subscription.expires_at
+		FROM enterprises AS enterprise
+		JOIN enterprise_subscriptions AS enterprise_subscription
+		  ON enterprise_subscription.enterprise_id = enterprise.id
+		 AND enterprise_subscription.status = 'active'
+		JOIN user_subscriptions AS upstream_subscription
+		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
+		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
+		 AND upstream_subscription.deleted_at IS NULL
+		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
+		WHERE enterprise.id = $1 AND enterprise.status = 'active'
+		ORDER BY upstream_subscription.expires_at DESC, enterprise_subscription.id DESC
+		LIMIT 1`, enterpriseID).Scan(&plan, &status, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result.SubscriptionPlan = plan.String
+	result.SubscriptionStatus = status.String
+	if expiresAt.Valid {
+		expires := expiresAt.Time.UTC()
+		result.SubscriptionExpiresAt = &expires
+	}
+	return result, nil
 }
 
 // buildEmployeeSummaryQueries 返回员工额度面板的列表与计数 SQL（含各自参数）。

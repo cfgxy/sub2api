@@ -10,13 +10,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func currentEnterpriseWeekRows(subscriptionID int64, anchor time.Time) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "weekly_window_start", "starts_at", "expires_at"}).
+		AddRow(subscriptionID, anchor, anchor.Add(-7*24*time.Hour), anchor.Add(30*24*time.Hour))
+}
+
 func TestGetEmployeeUsageReturnsEmptyStateWhenAllocationIsNotConfigured(t *testing.T) {
 	svc, mock := newMockService(t)
 	anchor := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM enterprise_employees`).WithArgs(int64(7), int64(22)).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(11), anchor))
+		WillReturnRows(currentEnterpriseWeekRows(int64(11), anchor))
 	mock.ExpectQuery(`(?s)SELECT COALESCE\(\(.*FROM enterprise_weekly_allocations`).WithArgs(int64(7), int64(11), int64(22), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"allocation", "actual_cost", "requests"}).AddRow("0.00000000", "0.00000000", int64(0)))
 
@@ -60,7 +65,7 @@ func TestListEmployeeUsageRejectsCrossEmployeeQueryByConstruction(t *testing.T) 
 	// 调用方只能传入服务端解析出的 enterpriseID/employeeID（来自认证上下文），
 	// 该测试确认这两个值原样落入 WHERE 子句参数，不接受调用方额外传入的越权标识。
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(11), anchor))
+		WillReturnRows(currentEnterpriseWeekRows(int64(11), anchor))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_usage_attributions AS attribution WHERE`).
 		WithArgs(int64(7), int64(22), int64(11), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
@@ -113,7 +118,7 @@ func TestListEmployeeUsageTrendReturnsRealAggregatesOnly(t *testing.T) {
 	svc, mock := newMockService(t)
 	day := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(11), day))
+		WillReturnRows(currentEnterpriseWeekRows(int64(11), day))
 	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).WithArgs(int64(7), int64(22), int64(11), day).
 		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "actual_cost"}).AddRow(day, int64(4), "3.20000000"))
 
@@ -129,7 +134,7 @@ func TestListEmployeeUsageTrendReturnsEmptyWhenNoAttributionRowsExistYet(t *test
 	svc, mock := newMockService(t)
 	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(11), anchor))
+		WillReturnRows(currentEnterpriseWeekRows(int64(11), anchor))
 	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).WithArgs(int64(7), int64(22), int64(11), anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "actual_cost"}))
 

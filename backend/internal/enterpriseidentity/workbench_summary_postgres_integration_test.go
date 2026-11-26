@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	postgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -79,7 +79,8 @@ func TestGetWorkbenchSummaryPostgreSQLResolvesPoolLimitAndOverageRecommendation(
 			window_type VARCHAR(10) NOT NULL,
 			window_anchor TIMESTAMPTZ NOT NULL,
 			employee_id BIGINT NOT NULL,
-			amount NUMERIC(20, 10) NOT NULL
+			amount NUMERIC(20, 10) NOT NULL,
+			version BIGINT NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE user_subscriptions (
 			id BIGSERIAL PRIMARY KEY,
@@ -87,6 +88,8 @@ func TestGetWorkbenchSummaryPostgreSQLResolvesPoolLimitAndOverageRecommendation(
 			group_id BIGINT,
 			deleted_at TIMESTAMPTZ,
 			status VARCHAR(20) NOT NULL DEFAULT 'active',
+			starts_at TIMESTAMPTZ NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL,
 			weekly_usage_usd DECIMAL(20, 10) NOT NULL DEFAULT 0,
 			weekly_window_start TIMESTAMPTZ
 		)`,
@@ -114,13 +117,15 @@ func TestGetWorkbenchSummaryPostgreSQLResolvesPoolLimitAndOverageRecommendation(
 		require.NoError(t, err)
 	}
 
-	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
-	observedAt := time.Date(2026, 9, 8, 10, 32, 0, 0, time.UTC)
+	anchor := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
+	startsAt := anchor.Add(-7 * 24 * time.Hour)
+	expiresAt := anchor.Add(30 * 24 * time.Hour)
+	observedAt := anchor.Add(10*time.Hour + 32*time.Minute)
 	_, err = db.ExecContext(ctx, `INSERT INTO enterprises (id, dedicated_upstream_user_id, status) VALUES (7, 900, 'active')`)
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO user_subscriptions (id, user_id, group_id, deleted_at, status, weekly_usage_usd, weekly_window_start)
-		VALUES (55, 900, 31, NULL, 'active', 220.0000000000, $1)`, anchor)
+		INSERT INTO user_subscriptions (id, user_id, group_id, deleted_at, status, starts_at, expires_at, weekly_usage_usd, weekly_window_start)
+		VALUES (55, 900, 31, NULL, 'active', $1, $2, 220.0000000000, $3)`, startsAt, expiresAt, anchor)
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `INSERT INTO groups (id, name, weekly_limit_usd) VALUES (31, 'Business', 550.00000000)`)
 	require.NoError(t, err)
@@ -163,6 +168,10 @@ func TestGetWorkbenchSummaryPostgreSQLResolvesPoolLimitAndOverageRecommendation(
 		require.Equal(t, "330.00000000", result.EnterprisePoolRemaining)
 		require.NotNil(t, result.SubscriptionID)
 		require.Equal(t, int64(13), *result.SubscriptionID)
+		require.NotNil(t, result.SubscriptionExpiresAt)
+		require.True(t, result.SubscriptionExpiresAt.UTC().Equal(expiresAt))
+		require.NotNil(t, result.WeeklyResetAt)
+		require.True(t, result.WeeklyResetAt.UTC().Equal(anchor.Add(7*24*time.Hour)))
 		require.NotNil(t, result.PoolWindowAnchor)
 		require.True(t, result.PoolWindowAnchor.UTC().Equal(anchor))
 		require.NotNil(t, result.PoolObservedAt)
@@ -177,15 +186,14 @@ func TestGetWorkbenchSummaryPostgreSQLResolvesPoolLimitAndOverageRecommendation(
 		}
 		zeroOverage, ok := byEmployee[22]
 		require.True(t, ok, "employee 22 (allocation 200 / usage 50) 应出现在员工摘要中")
-		// 锁定实测形态：GREATEST(负差值, 0) 取整数字面量分支时 text 输出为 "0"（dscale=0），
-		// 非零值输出为定长小数字符串（"50.0000000000"）——零值形态依赖类型推导，字符串比较不可靠，
-		// Recommendation 必须按数值语义判断；该断言同时防止未来把输出归一成定长形态后回退为字符串比较。
-		require.Equal(t, "0", zeroOverage.OverageCredit)
+		// GREATEST(负差值, 0) 的 text 形态随 NUMERIC 定标而变；本集成夹具
+		// 当前为 "0.00000000"。Recommendation 必须始终按数值而非字面量判断。
+		require.Equal(t, "0.00000000", zeroOverage.OverageCredit)
 		require.Equal(t, "当前额度分配范围内", zeroOverage.Recommendation)
 
 		overaged, ok := byEmployee[23]
 		require.True(t, ok, "employee 23 (allocation 100 / usage 150) 应出现在员工摘要中")
-		require.Equal(t, "50.0000000000", overaged.OverageCredit)
+		require.Equal(t, "50.00000000", overaged.OverageCredit)
 		require.Equal(t, "核对个人超用，并按业务需要调整额度分配", overaged.Recommendation)
 	})
 }

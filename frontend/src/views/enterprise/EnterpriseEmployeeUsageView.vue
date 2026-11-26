@@ -26,7 +26,7 @@
         <div class="mb-4">
           <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.usage.myQuotaTitle') }}</h2>
           <span class="text-xs text-gray-500 dark:text-dark-400">
-            {{ t('enterprise.usage.myQuotaWindow', { anchor: formatOptionalDate(usage?.window_anchor) }) }}
+            {{ t('enterprise.usage.myQuotaWindow') }}
           </span>
         </div>
         <div
@@ -185,7 +185,6 @@
       </div>
       <DataTable :columns="detailColumns" :data="records.items" :loading="detailLoading" :row-key="detailRowKey">
         <template #cell-request_at="{ row }">{{ formatDate(row.request_at) }}</template>
-        <template #cell-window_anchor="{ row }">{{ formatDate(row.window_anchor) }}</template>
         <template #empty>
           <p class="text-sm text-gray-500 dark:text-dark-400" data-testid="usage-detail-empty">
             {{ t('enterprise.usage.detailEmpty') }}
@@ -257,7 +256,6 @@ const detailColumns = computed<Column[]>(() => [
   { key: 'request_at', label: t('enterprise.common.requestAt') },
   { key: 'api_key_masked', label: t('enterprise.common.key') },
   { key: 'generation', label: t('enterprise.common.generation') },
-  { key: 'window_anchor', label: t('enterprise.common.windowAnchor') },
   { key: 'actual_cost', label: t('admin.enterprise.terms.actualCost') },
 ])
 const detailRowKey = (row: EnterpriseEmployeeUsageRecord) => `${row.request_at}-${row.api_key_masked}-${row.generation}`
@@ -268,7 +266,6 @@ const filterParams = (): Record<string, string> => {
     Object.entries({ start_at, end_at }).filter(([, value]) => value !== undefined && value !== ''),
   ) as Record<string, string>
 }
-const formatOptionalDate = (value?: string) => (value ? formatDate(value) : t('enterprise.common.notAvailable'))
 const trendLabel = (value: string) =>
   new Intl.DateTimeFormat(locale.value === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(value))
 const trendHeight = (value: number) =>

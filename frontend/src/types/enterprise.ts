@@ -189,6 +189,8 @@ export interface EnterpriseWorkbenchSummary {
   subscription_id?: number | null
   subscription_status: string
   subscription_plan: string
+  subscription_expires_at?: string
+  weekly_reset_at?: string
   enterprise_pool_limit: string
   enterprise_pool_used: string
   enterprise_pool_remaining: string
