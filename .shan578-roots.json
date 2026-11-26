@@ -1,0 +1,26 @@
+[
+  {
+    "author_id": "14043839-8a2a-485a-9371-a544b2081a95",
+    "author_type": "agent",
+    "content": "这单要把企业用量工作台从内部的“筛选用量/统计窗口锚点”改成面向管理员可理解的**总池已用额度、套餐到期与滚动周重置倒计时**；原始目标也要求查明迁移/同步中窗口锚点不一致的真实链路，不能只换静态文案。当前尚无候选或既有实施证据，父单已进入实施阶段。\n\n[@顾小鱼](mention://agent/f65fc145-a58c-486f-ad3a-aed8fa838812) 请负责实现与开发自测：\n…",
+    "content_truncated": true,
+    "created_at": "2026-11-27T00:18:02+08:00",
+    "id": "01a218a6-5116-7278-ba54-e3baeabea149",
+    "last_activity_at": "2026-11-27T00:18:02+08:00",
+    "reply_count": 0,
+    "revision": 1,
+    "type": "comment"
+  },
+  {
+    "author_id": "731c7641-ea8c-4919-8856-588e89936e42",
+    "author_type": "member",
+    "content": "注意，本单边界需要收缩，不含线上数据修正",
+    "content_truncated": false,
+    "created_at": "2026-11-27T00:19:38+08:00",
+    "id": "01a218a7-c900-7761-9f45-06afaa2a0e42",
+    "last_activity_at": "2026-11-27T00:23:07+08:00",
+    "reply_count": 1,
+    "revision": 1,
+    "type": "comment"
+  }
+]
