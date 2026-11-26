@@ -3,7 +3,7 @@
     <div class="page-heading">
       <div>
         <h1>品牌设置</h1>
-        <p>配置企业登录页品牌信息；未配置字段将逐项回退到 Sub2API 默认值。</p>
+        <p>配置企业登录页品牌信息；未配置字段将逐项回退到 {{ defaultBrand.enterprise_name }} 默认值。</p>
       </div>
       <div class="heading-actions">
         <el-button :disabled="loading || saving || uploading || restoring" @click="load">放弃更改</el-button>
@@ -39,7 +39,7 @@
               <small>未上传或图片加载失败时，回退平台默认背景。</small>
             </label>
             <el-button
-              v-if="brand.background_url !== '/logo.svg'"
+              v-if="brand.background_url !== defaultBrand.background_url"
               class="restore-btn"
               :loading="restoring"
               :disabled="loading || saving || uploading"
@@ -71,10 +71,10 @@
       </div>
       <div class="preview-panel">
         <div class="panel-head"><h2>登录页预览</h2><span class="tag">桌面端</span></div>
-        <div class="preview" :style="previewStyle">
+        <div class="preview" :class="{ 'painuoyun-default-background': isPainuoyun && usingDefaultBackground }" :style="previewStyle">
           <div class="preview-shade" />
           <div class="preview-copy">
-            <small>{{ brand.enterprise_name || 'Sub2API' }}</small>
+            <small>{{ brand.enterprise_name || defaultBrand.enterprise_name }}</small>
             <h2>{{ brand.title || '企业工作台' }}</h2>
             <strong>{{ brand.slogan || '安全、统一的企业访问入口' }}</strong>
             <p>{{ brand.body || '使用企业管理员或员工账号安全访问组织资源。' }}</p>
@@ -100,9 +100,11 @@ import { ElMessage } from 'element-plus'
 import { enterpriseAPI } from '@/api/enterprise'
 import { validateBrand, validateImageFile } from '@/features/enterprise/validation'
 import type { EnterpriseBrand } from '@/types/enterprise'
+import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME, replaceLegacyEnterpriseBrand } from '@/utils/enterpriseBranding'
 
+const isPainuoyun = isPainuoyunEnterpriseHost(window.location.hostname)
 const defaultBrand: EnterpriseBrand = {
-  enterprise_name: 'Sub2API',
+  enterprise_name: isPainuoyun ? PAINUOYUN_ENTERPRISE_NAME : 'Sub2API',
   title: '企业工作台',
   body: '使用企业管理员或员工账号安全访问组织资源。',
   slogan: '安全、统一的企业访问入口',
@@ -120,7 +122,10 @@ const validationError = ref('')
 const savedSummary = ref('')
 const brand = reactive<EnterpriseBrand>({ ...defaultBrand })
 const previewStyle = computed(() => {
-  const url = controlledBackgroundURLs.has(brand.background_url) ? brand.background_url : defaultBrand.background_url
+  if (isPainuoyun && brand.background_url !== '/api/v1/enterprise/brand/background') return {}
+  const url = controlledBackgroundURLs.has(brand.background_url)
+    ? brand.background_url
+    : defaultBrand.background_url
   const version = url === '/api/v1/enterprise/brand/background' && /^[a-f\d]{64}$/i.test(brand.background_sha256)
     ? `?v=${brand.background_sha256}`
     : ''
@@ -138,10 +143,10 @@ function customizedFieldCount() {
 }
 
 function applyBrand(response: EnterpriseBrand) {
-  brand.enterprise_name = response.enterprise_name?.trim() || defaultBrand.enterprise_name
-  brand.title = response.title?.trim() || defaultBrand.title
-  brand.body = response.body?.trim() || defaultBrand.body
-  brand.slogan = response.slogan?.trim() || defaultBrand.slogan
+  brand.enterprise_name = replaceLegacyEnterpriseBrand(response.enterprise_name?.trim() || defaultBrand.enterprise_name, isPainuoyun)
+  brand.title = replaceLegacyEnterpriseBrand(response.title?.trim() || defaultBrand.title, isPainuoyun)
+  brand.body = replaceLegacyEnterpriseBrand(response.body?.trim() || defaultBrand.body, isPainuoyun)
+  brand.slogan = replaceLegacyEnterpriseBrand(response.slogan?.trim() || defaultBrand.slogan, isPainuoyun)
   brand.background_url = controlledBackgroundURLs.has(response.background_url) ? response.background_url : defaultBrand.background_url
   brand.background_content_type = response.background_content_type || defaultBrand.background_content_type
   brand.background_sha256 = response.background_sha256 || defaultBrand.background_sha256
@@ -256,7 +261,7 @@ onMounted(load)
 .metadata{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin:14px 0 4px;color:#64748b;font-size:13px}
 .metadata code{grid-column:1/-1;overflow-wrap:anywhere}
 .field-fallback-hint{margin:14px 0 0;color:#94a3b8;font-size:13px}
-.preview{position:relative;aspect-ratio:16/10;border-radius:8px;background:#173f3d center/cover;color:white;overflow:hidden}
+.preview.painuoyun-default-background{background:radial-gradient(circle at 18% 14%,rgba(94,234,212,.5),transparent 28%),linear-gradient(135deg,#0f766e,#134e4a 58%,#0f172a)}
 .preview-shade{position:absolute;inset:0;background:rgba(9,31,31,.72)}
 .preview-copy{position:absolute;left:0;right:0;bottom:0;padding:28px}
 .preview-copy small{display:block;margin:0 0 8px;color:#a7f3d0}

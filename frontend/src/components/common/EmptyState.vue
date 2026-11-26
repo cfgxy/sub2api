@@ -1,7 +1,11 @@
 <template>
   <div class="empty-state">
+    <div v-if="isPainuoyunEnterprisePortal" class="mb-5 flex justify-center" aria-hidden="true">
+      <img src="/brand/painuoyun-empty-state.svg" class="h-24 w-48 object-contain" alt="" />
+    </div>
     <!-- Icon -->
     <div
+      v-else
       class="mb-5 flex h-20 w-20 items-center justify-center rounded-2xl bg-gray-100 dark:bg-dark-800"
     >
       <slot name="icon">
@@ -56,6 +60,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import Icon from '@/components/icons/Icon.vue'
+import { isPainuoyunEnterprisePortal as isPainuoyunEnterprisePortalForLocation } from '@/utils/enterpriseBranding'
 
 const { t } = useI18n()
 
@@ -75,6 +80,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const displayTitle = computed(() => props.title || t('common.noData'))
+const isPainuoyunEnterprisePortal = isPainuoyunEnterprisePortalForLocation(window.location.hostname, window.location.pathname)
 
 defineEmits(['action'])
 </script>

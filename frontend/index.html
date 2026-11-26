@@ -5,6 +5,32 @@
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sub2API - AI API Gateway</title>
+    <script>
+      (() => {
+        const host = window.location.hostname.trim().toLowerCase().replace(/\.$/, '')
+        const isEnterprisePortal = host.length > '.ainoriahub.com'.length
+          && host.endsWith('.ainoriahub.com')
+          && (window.location.pathname === '/enterprise' || window.location.pathname.startsWith('/enterprise/'))
+        if (!isEnterprisePortal) return
+
+        document.title = '派诺云 - 企业管理'
+        const icon = document.querySelector('link[rel="icon"]')
+        icon.href = '/brand/painuoyun-icon.svg'
+        icon.type = 'image/svg+xml'
+        for (const [rel, href, sizes] of [
+          ['icon', '/brand/favicon-32.png', '32x32'],
+          ['apple-touch-icon', '/brand/favicon-180.png', '180x180'],
+          ['manifest', '/brand/painuoyun.webmanifest', ''],
+        ]) {
+          const link = document.createElement('link')
+          link.rel = rel
+          link.href = href
+          if (sizes) link.sizes = sizes
+          if (rel === 'icon') link.type = 'image/png'
+          document.head.appendChild(link)
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

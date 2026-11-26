@@ -10,7 +10,7 @@
         </slot>
       </div>
       <div class="auth-panel"><slot /></div>
-      <div class="auth-footer"><slot name="footer" /><p>© {{ currentYear }} {{ siteName }}</p></div>
+      <div class="auth-footer"><slot name="footer" /><p>© {{ currentYear }} {{ footerSiteName }}</p></div>
     </div>
   </div>
 </template>
@@ -19,11 +19,15 @@
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
+import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
 
 const props = defineProps<{ enterprise?: boolean }>()
 
 const appStore = useAppStore()
 const siteName = computed(() => appStore.siteName || 'Sub2API')
+const footerSiteName = computed(() =>
+  props.enterprise && isPainuoyunEnterpriseHost(window.location.hostname) ? PAINUOYUN_ENTERPRISE_NAME : siteName.value,
+)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Subscription to API Conversion Platform')
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)

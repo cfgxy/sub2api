@@ -9,6 +9,7 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
+import { isPainuoyunEnterprisePortal } from '@/utils/enterpriseBranding'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 
@@ -21,7 +22,16 @@ const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 
+function isPainuoyunEnterpriseRoute(): boolean {
+  return isPainuoyunEnterprisePortal(window.location.hostname, route.path)
+}
+
 function updateDocumentTitle() {
+  if (isPainuoyunEnterpriseRoute()) {
+    document.title = resolveRouteDocumentTitle(route, '派诺云')
+    return
+  }
+
   const customMenuItems = [
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
     ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
@@ -33,9 +43,9 @@ function updateDocumentTitle() {
 
 // Watch for site settings changes and update favicon/title
 watch(
-  () => appStore.siteLogo,
-  (newLogo) => {
-    if (newLogo) {
+  [() => appStore.siteLogo, () => route.path],
+  ([newLogo]) => {
+    if (newLogo && !isPainuoyunEnterpriseRoute()) {
       updateFavicon(newLogo)
     }
   },
@@ -143,6 +153,7 @@ onMounted(async () => {
   window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
 
   if (route.path.startsWith('/enterprise')) {
+    updateDocumentTitle()
     return
   }
 

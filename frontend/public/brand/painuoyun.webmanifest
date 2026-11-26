@@ -1,0 +1,11 @@
+{
+  "name": "派诺云企业管理",
+  "short_name": "派诺云",
+  "icons": [
+    { "src": "/brand/favicon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/brand/favicon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#0F766E",
+  "background_color": "#F0FDFA",
+  "display": "standalone"
+}
