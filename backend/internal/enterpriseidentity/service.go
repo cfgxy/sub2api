@@ -1691,11 +1691,17 @@ type currentEnterpriseWeek struct {
 // StartsAt + seven days.
 func (week currentEnterpriseWeek) WeeklyResetAt() *time.Time {
 	anchor := week.Anchor
-	return (&platformservice.UserSubscription{
+	resetAt := (&platformservice.UserSubscription{
 		StartsAt:          week.StartsAt,
 		ExpiresAt:         week.ExpiresAt,
 		WeeklyWindowStart: &anchor,
 	}).WeeklyResetTime()
+	// The reset executor rejects a reset at expiry as well as after expiry;
+	// expose a countdown only for a reset that can actually execute.
+	if resetAt == nil || !resetAt.Before(week.ExpiresAt) {
+		return nil
+	}
+	return resetAt
 }
 
 // resolveCurrentEnterpriseWeek identifies the authoritative current week.
