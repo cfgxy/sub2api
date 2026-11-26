@@ -76,6 +76,7 @@ describe('EnterpriseDetailView 信息结构补齐', () => {
     await wrapper.get('[data-testid="enterprise-detail-tab-access"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="enterprise-detail-access"]').text()).toContain('admin@yunchuan.example.com')
+    expect(wrapper.get('[data-testid="enterprise-detail-access"]').text()).toContain('活动会话')
     expect(wrapper.find('[data-testid="enterprise-detail-overview"]').exists()).toBe(false)
 
     i18n.global.locale.value = 'en'

@@ -155,6 +155,7 @@
               </dd>
             </div>
             <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.common.activeSessions') }}</dt>
               <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ item.active_session_count }}</dd>
             </div>
             <div>
