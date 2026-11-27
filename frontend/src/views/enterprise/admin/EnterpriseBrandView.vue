@@ -3,7 +3,6 @@
     <div class="page-heading">
       <div>
         <h1>品牌设置</h1>
-        <p>配置企业登录页品牌信息；未配置字段将逐项回退到 {{ defaultBrand.enterprise_name }} 默认值。</p>
       </div>
       <div class="heading-actions">
         <el-button :disabled="loading || saving || uploading || restoring" @click="load">放弃更改</el-button>
@@ -67,7 +66,6 @@
           </el-form-item>
           <el-alert v-if="validationError" :title="validationError" type="error" :closable="false" data-testid="brand-validation-error" />
         </el-form>
-        <p class="field-fallback-hint">清空任一字段只会让该字段回退，不影响其他已保存内容。</p>
       </div>
       <div class="preview-panel">
         <div class="panel-head"><h2>登录页预览</h2><span class="tag">桌面端</span></div>
@@ -86,9 +84,6 @@
           <div><dt>正文上限</dt><dd>120 字符</dd></div>
           <div><dt>Slogan 上限</dt><dd>60 字符</dd></div>
         </dl>
-        <el-alert type="info" :closable="false" show-icon class="preview-note">
-          <template #default>{{ usingDefaultBackground ? '当前预览使用默认背景' : '当前预览使用企业自定义背景' }} · 新图片提交并校验成功后替换。</template>
-        </el-alert>
       </div>
     </div>
   </section>
@@ -260,7 +255,6 @@ onMounted(load)
 .restore-btn{margin-top:10px}
 .metadata{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin:14px 0 4px;color:#64748b;font-size:13px}
 .metadata code{grid-column:1/-1;overflow-wrap:anywhere}
-.field-fallback-hint{margin:14px 0 0;color:#94a3b8;font-size:13px}
 .preview{position:relative;aspect-ratio:16/10;border-radius:8px;background:#173f3d center/cover;color:white;overflow:hidden}
 .preview.painuoyun-default-background{background:radial-gradient(circle at 18% 14%,rgba(94,234,212,.5),transparent 28%),linear-gradient(135deg,#0f766e,#134e4a 58%,#0f172a)}
 .preview-shade{position:absolute;inset:0;background:rgba(9,31,31,.72)}
@@ -272,7 +266,6 @@ onMounted(load)
 .preview-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;margin:18px 0;font-size:13px}
 .preview-summary dt{color:#94a3b8}
 .preview-summary dd{margin:2px 0 0;color:#1e293b;font-weight:500}
-.preview-note{margin-top:4px}
 @media(max-width:900px){.brand-grid{grid-template-columns:1fr}}
 @media(max-width:640px){.page-heading{flex-direction:column}.heading-actions{width:100%}.heading-actions .el-button{flex:1}.metadata,.preview-summary{grid-template-columns:1fr}}
 </style>

@@ -3,7 +3,6 @@
     <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('enterprise.usage.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.usage.description') }}</p>
       </div>
       <button class="btn btn-secondary btn-md" :disabled="loading" data-testid="usage-refresh" @click="load">
         <Icon name="refresh" size="sm" :class="loading && 'animate-spin'" />
@@ -39,15 +38,15 @@
         <dl v-else class="grid grid-cols-2 gap-x-6 gap-y-4">
           <div>
             <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.terms.allocation') }}</dt>
-            <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ usage?.allocation ?? '0' }}</dd>
+            <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(usage?.allocation) }}</dd>
           </div>
           <div>
             <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.terms.actualCost') }}</dt>
-            <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ usage?.actual_cost ?? '0' }}</dd>
+            <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(usage?.actual_cost) }}</dd>
           </div>
           <div>
             <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.terms.remaining') }}</dt>
-            <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ usage?.remaining ?? '0' }}</dd>
+            <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(usage?.remaining) }}</dd>
           </div>
           <div>
             <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.terms.overage') }}</dt>
@@ -55,7 +54,7 @@
               class="mt-1 text-base font-semibold"
               :class="hasOverage ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
             >
-              {{ usage?.overage ?? '0' }}
+              {{ formatEnterpriseAmount(usage?.overage) }}
             </dd>
           </div>
           <div class="col-span-2">
@@ -81,11 +80,11 @@
           <dl class="grid grid-cols-2 gap-x-6 gap-y-4">
             <div>
               <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.usage.poolLimit') }}</dt>
-              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ enterprisePool?.pool_limit ?? '0' }}</dd>
+              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(enterprisePool?.pool_limit) }}</dd>
             </div>
             <div>
               <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.usage.poolUsed') }}</dt>
-              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ enterprisePool?.pool_used ?? '0' }}</dd>
+              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(enterprisePool?.pool_used) }}</dd>
             </div>
             <div class="col-span-2">
               <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.usage.poolRemaining') }}</dt>
@@ -93,7 +92,7 @@
                 class="mt-1 text-base font-semibold"
                 :class="enterprisePool?.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
               >
-                {{ enterprisePool?.pool_remaining ?? '0' }}
+                {{ formatEnterpriseAmount(enterprisePool?.pool_remaining) }}
               </dd>
             </div>
           </dl>
@@ -215,6 +214,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import type { Column } from '@/components/common/types'
 import { enterpriseAPI } from '@/api/enterprise'
 import { useAppStore } from '@/stores/app'
+import { formatEnterpriseAmount } from '@/utils/enterpriseAmounts'
 import { sourceStatusLabel } from '@/utils/enterpriseDisplay'
 import { formatDate } from '@/utils/format'
 import type { EnterpriseEmployeeUsageRecord, EnterpriseEmployeeUsageSummary, EnterpriseEnterprisePoolStatus, EnterpriseEmployeeUsageTrendPoint, EnterprisePaginated } from '@/types/enterprise'

@@ -13,17 +13,24 @@
     >
       <!-- Brand -->
       <div class="sidebar-header" :class="{ 'sidebar-header-collapsed': sidebarCollapsed }">
-        <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 text-sm font-bold text-white shadow-glow" :aria-label="isPainuoyun ? '派诺云' : undefined">
+        <div
+          v-if="sidebarCollapsed || !isPainuoyun"
+          data-testid="sidebar-brand-icon"
+          class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 text-sm font-bold text-white shadow-glow"
+          :aria-label="isPainuoyun ? '派诺云' : undefined"
+        >
           <img v-if="isPainuoyun" src="/brand/painuoyun-icon.svg" alt="" class="h-8 w-8" />
           <template v-else>S</template>
         </div>
         <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
           <template v-if="isPainuoyun">
-            <img src="/brand/painuoyun-logo-light.svg" alt="派诺云" class="h-8 w-auto dark:hidden" />
-            <img src="/brand/painuoyun-logo-dark.svg" alt="派诺云" class="hidden h-8 w-auto dark:block" />
+            <img v-if="!sidebarCollapsed" data-testid="sidebar-brand-wordmark" src="/brand/painuoyun-logo-light.svg" alt="派诺云" class="h-8 w-auto dark:hidden" />
+            <img v-if="!sidebarCollapsed" data-testid="sidebar-brand-wordmark" src="/brand/painuoyun-logo-dark.svg" alt="派诺云" class="hidden h-8 w-auto dark:block" />
           </template>
-          <span v-else class="sidebar-brand-title text-lg font-bold text-gray-900 dark:text-white">Sub2API</span>
-          <span class="sidebar-brand-title text-[10px] font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.shell.consoleTitle') }}</span>
+          <template v-else>
+            <span class="sidebar-brand-title text-lg font-bold text-gray-900 dark:text-white">Sub2API</span>
+            <span class="sidebar-brand-title text-[10px] font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.shell.consoleTitle') }}</span>
+          </template>
         </div>
       </div>
 

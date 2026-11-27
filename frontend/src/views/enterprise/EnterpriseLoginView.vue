@@ -4,9 +4,6 @@
       <header class="text-center">
         <p class="mb-1 text-xs font-semibold text-primary-600 dark:text-primary-400">企业登录</p>
         <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100">登录到您的工作区</h2>
-        <p class="mt-2 text-sm leading-6 text-gray-500 dark:text-dark-400">
-          管理员与员工使用同一企业账户入口，继续访问已获授权的 {{ serviceName }} 服务。
-        </p>
       </header>
 
       <p v-if="error" role="alert" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
@@ -51,7 +48,6 @@ import Icon from '@/components/icons/Icon.vue'
 import EnterpriseAuthShell from '@/components/enterprise/EnterpriseAuthShell.vue'
 import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
 import { enterpriseHome } from '@/router/enterpriseGuard'
-import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
 
 const auth = useEnterpriseAuthStore()
 const route = useRoute()
@@ -61,7 +57,6 @@ const loading = ref(false)
 const success = ref(false)
 const showPassword = ref(false)
 const error = ref('')
-const serviceName = isPainuoyunEnterpriseHost(window.location.hostname) ? PAINUOYUN_ENTERPRISE_NAME : 'Sub2API'
 
 function loginError(failure: unknown): string {
   const reason = (failure as { reason?: string } | null)?.reason

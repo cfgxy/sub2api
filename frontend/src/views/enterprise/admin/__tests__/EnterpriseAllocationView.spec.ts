@@ -86,9 +86,9 @@ describe('EnterpriseAllocationView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('2400')
-    expect(wrapper.text()).toContain('1980')
-    expect(wrapper.text()).toContain('420')
+    expect(wrapper.text()).toContain('2,400.00')
+    expect(wrapper.text()).toContain('1,980.00')
+    expect(wrapper.text()).toContain('420.00')
     expect(wrapper.text()).toContain('企业池已超分配')
     expect(wrapper.text()).toContain('a@example.com')
     expect(wrapper.text()).toContain('研发中心')

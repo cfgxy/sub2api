@@ -7,9 +7,6 @@
           {{ t('enterprise.workbench.eyebrow') }}
         </p>
         <h2 class="mt-1 text-xl font-bold text-gray-900 dark:text-white">{{ t('enterprise.workbench.title') }}</h2>
-        <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-          {{ t('enterprise.workbench.subtitle', { pool: terms.pool, allocation: terms.allocation }) }}
-        </p>
       </div>
       <button
         type="button"
@@ -60,7 +57,7 @@
         <div class="card p-4">
           <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ terms.pool }}</p>
           <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-            {{ summary?.enterprise_pool_limit || '0' }}
+            {{ formatEnterpriseAmount(summary?.enterprise_pool_limit) }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
             {{ t('enterprise.workbench.poolHint', { quota: terms.quota, source: poolSourceLabel }) }}{{ poolObservedAtLabel ? ` · ${poolObservedAtLabel}` : '' }}
@@ -72,7 +69,7 @@
             class="mt-2 truncate text-xl font-bold"
             :class="summary?.enterprise_pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
           >
-            {{ summary?.enterprise_pool_remaining || '0' }}
+            {{ formatEnterpriseAmount(summary?.enterprise_pool_remaining) }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
             {{ t(summary?.enterprise_pool_exhausted ? 'enterprise.workbench.poolExhaustedHint' : 'enterprise.workbench.poolRemainingHint') }}
@@ -81,7 +78,7 @@
         <div class="card p-4">
           <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('enterprise.workbench.totalPoolUsed') }}</p>
           <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-            {{ summary?.enterprise_pool_used || '0' }}
+            {{ formatEnterpriseAmount(summary?.enterprise_pool_used) }}
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
             {{ t('enterprise.workbench.totalPoolUsedHint') }}
@@ -190,7 +187,7 @@
                   {{ item.email }}
                 </span>
                 <span class="whitespace-nowrap text-gray-500 dark:text-dark-400">
-                  {{ item.usage_credit }} / {{ item.configured_credit }}
+                  {{ formatEnterpriseAmount(item.usage_credit) }} / {{ formatEnterpriseAmount(item.configured_credit) }}
                 </span>
               </div>
               <div
@@ -208,12 +205,12 @@
                 ></div>
               </div>
               <div class="mt-1.5 flex justify-between gap-3 text-xs text-gray-500 dark:text-dark-400">
-                <span>{{ terms.remaining }} {{ item.remaining_credit }}</span>
+                <span>{{ terms.remaining }} {{ formatEnterpriseAmount(item.remaining_credit) }}</span>
                 <span
                   v-if="isPositiveAmount(item.overage_credit)"
                   class="font-semibold text-red-600 dark:text-red-400"
                 >
-                  {{ terms.overage }} {{ item.overage_credit }}
+                  {{ terms.overage }} {{ formatEnterpriseAmount(item.overage_credit) }}
                 </span>
                 <span v-else class="truncate">{{ t('admin.enterprise.terms.withinAllocation') }}</span>
               </div>
@@ -285,9 +282,12 @@
             <span
               :class="isPositiveAmount(value) ? 'font-semibold text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
             >
-              {{ value }}
+              {{ formatEnterpriseAmount(value) }}
             </span>
           </template>
+          <template #cell-configured_credit="{ value }">{{ formatEnterpriseAmount(value) }}</template>
+          <template #cell-usage_credit="{ value }">{{ formatEnterpriseAmount(value) }}</template>
+          <template #cell-remaining_credit="{ value }">{{ formatEnterpriseAmount(value) }}</template>
           <template #cell-recommendation="{ row }">
             <span :class="isPositiveAmount(row.overage_credit) ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'">
               {{ isPositiveAmount(row.overage_credit) ? t('admin.enterprise.terms.reviewOverage') : t('admin.enterprise.terms.withinAllocation') }}
@@ -314,6 +314,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import EnterpriseUsageTrendChart from '@/components/charts/EnterpriseUsageTrendChart.vue'
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
+import { formatEnterpriseAmount } from '@/utils/enterpriseAmounts'
 import { auditActorLabel, auditEntityLabel, auditEventLabel, sourceStatusLabel, subscriptionStatusLabel } from '@/utils/enterpriseDisplay'
 import { subscriptionDaysHoursRemaining, subscriptionDaysRemaining } from '@/utils/subscriptionTime'
 import type { Column } from '@/components/common/types'

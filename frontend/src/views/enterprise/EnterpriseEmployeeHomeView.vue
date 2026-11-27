@@ -3,7 +3,6 @@
     <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('enterprise.home.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.home.description') }}</p>
       </div>
       <button class="btn btn-secondary btn-md" :disabled="loading" data-testid="home-refresh" @click="load">
         <Icon name="refresh" size="sm" :class="loading && 'animate-spin'" />
@@ -40,25 +39,25 @@
       <div v-if="usage" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           :title="t('admin.enterprise.terms.allocation')"
-          :value="usage.allocation"
+          :value="formatEnterpriseAmount(usage.allocation)"
           :icon="icons.allocation"
           icon-variant="primary"
         />
         <StatCard
           :title="t('admin.enterprise.terms.actualCost')"
-          :value="usage.actual_cost"
+          :value="formatEnterpriseAmount(usage.actual_cost)"
           :icon="icons.cost"
           icon-variant="success"
         />
         <StatCard
           :title="t('admin.enterprise.terms.remaining')"
-          :value="usage.remaining"
+          :value="formatEnterpriseAmount(usage.remaining)"
           :icon="icons.remaining"
           icon-variant="warning"
         />
         <StatCard
           :title="t('admin.enterprise.terms.overage')"
-          :value="usage.overage"
+          :value="formatEnterpriseAmount(usage.overage)"
           :icon="icons.overage"
           :icon-variant="hasOverage ? 'danger' : 'primary'"
         />
@@ -94,7 +93,7 @@
             <span class="absolute text-base font-bold text-gray-900 dark:text-white">{{ poolUsedPercentage }}%</span>
           </div>
           <div class="min-w-0 flex-1">
-            <strong class="block text-lg text-gray-900 dark:text-white">{{ pool.pool_used }} / {{ pool.pool_limit }}</strong>
+            <strong class="block text-lg text-gray-900 dark:text-white">{{ formatEnterpriseAmount(pool.pool_used) }} / {{ formatEnterpriseAmount(pool.pool_limit) }}</strong>
             <p
               class="mt-1 text-sm"
               :class="pool.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
@@ -107,7 +106,7 @@
               class="mt-1 block text-xs"
               :class="pool.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
             >
-              {{ t('enterprise.home.poolRemaining', { value: pool.pool_remaining }) }}
+              {{ t('enterprise.home.poolRemaining', { value: formatEnterpriseAmount(pool.pool_remaining) }) }}
             </small>
           </div>
         </div>
@@ -182,15 +181,15 @@
               {{ t('enterprise.home.reminderHeadline', { percentage: usagePercentage }) }}
             </b>
             <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              {{ t('enterprise.home.reminderRemaining', { value: usage.remaining }) }}
-              {{ hasOverage ? t('enterprise.home.reminderOverage', { value: usage.overage }) : t('enterprise.home.reminderNoOverage') }}
+              {{ t('enterprise.home.reminderRemaining', { value: formatEnterpriseAmount(usage.remaining) }) }}
+              {{ hasOverage ? t('enterprise.home.reminderOverage', { value: formatEnterpriseAmount(usage.overage) }) : t('enterprise.home.reminderNoOverage') }}
             </p>
             <div class="mt-3 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
               <i class="block h-full rounded-full bg-primary-500" :style="{ width: `${usagePercentage}%` }" />
             </div>
             <div class="mt-1.5 flex justify-between text-[11px] text-gray-500 dark:text-dark-400">
               <span>0</span>
-              <span>{{ usage.allocation }} {{ t('admin.enterprise.terms.allocation') }}</span>
+              <span>{{ formatEnterpriseAmount(usage.allocation) }} {{ t('admin.enterprise.terms.allocation') }}</span>
             </div>
           </template>
           <p v-else class="text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.home.usageUnavailable') }}</p>
@@ -223,6 +222,7 @@ import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import type { Column } from '@/components/common/types'
 import { enterpriseAPI } from '@/api/enterprise'
+import { formatEnterpriseAmount } from '@/utils/enterpriseAmounts'
 import { keyStatusLabel } from '@/utils/enterpriseDisplay'
 import { formatDate } from '@/utils/format'
 import type { EnterpriseEmployeeHome, EnterpriseEmployeeUsageSummary, EnterpriseEnterprisePoolStatus, EnterpriseEmployeeUsageTrendPoint, EnterpriseEmployeeUsageRecord } from '@/types/enterprise'
