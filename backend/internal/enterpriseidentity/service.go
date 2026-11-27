@@ -1685,23 +1685,17 @@ type currentEnterpriseWeek struct {
 	ExpiresAt      time.Time
 }
 
-// WeeklyResetAt uses the same legacy-anchor correction as the subscription
-// reset executor. Keeping the workbench on this helper prevents a display-only
-// reset time from drifting to midnight while the real rolling window resets at
-// StartsAt + seven days.
-func (week currentEnterpriseWeek) WeeklyResetAt() *time.Time {
+// WeeklyResetAt derives the next executable reset from the active upstream
+// subscription without writing its window. This matches the reset executor
+// when its persisted anchor is stale, while omitting the final incomplete
+// window at expiry.
+func (week currentEnterpriseWeek) WeeklyResetAt(now time.Time) *time.Time {
 	anchor := week.Anchor
-	resetAt := (&platformservice.UserSubscription{
+	return (&platformservice.UserSubscription{
 		StartsAt:          week.StartsAt,
 		ExpiresAt:         week.ExpiresAt,
 		WeeklyWindowStart: &anchor,
-	}).WeeklyResetTime()
-	// The reset executor rejects a reset at expiry as well as after expiry;
-	// expose a countdown only for a reset that can actually execute.
-	if resetAt == nil || !resetAt.Before(week.ExpiresAt) {
-		return nil
-	}
-	return resetAt
+	}).NextWeeklyResetTimeAt(now)
 }
 
 // resolveCurrentEnterpriseWeek identifies the authoritative current week.
