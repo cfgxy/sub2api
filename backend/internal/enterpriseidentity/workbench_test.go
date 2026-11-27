@@ -209,6 +209,7 @@ func TestGetSummaryOmitsWeeklyResetAtWhenSubscriptionExpiresAtResetBoundary(t *t
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
 	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	expiresAt := anchor.Add(7 * 24 * time.Hour)
+	service.now = func() time.Time { return anchor.Add(time.Hour) }
 	expectCurrentEnterpriseWeekWithDates(mock, 7, 55, anchor, anchor.Add(-7*24*time.Hour), expiresAt)
 
 	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
