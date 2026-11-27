@@ -312,6 +312,17 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
+		if cleanPath == "index.html" {
+			// index.html contains per-request CSP nonce placeholders. Serve it through
+			// the HTML renderer rather than the static file server for both / and
+			// an explicit /index.html request.
+			if tryServeOverrideFile(c, overrideDir, cleanPath) {
+				return
+			}
+			serveIndexHTML(c, distFS)
+			return
+		}
+
 		if file, err := distFS.Open(cleanPath); err == nil {
 			_ = file.Close()
 			// Try local override first

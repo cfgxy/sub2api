@@ -9,7 +9,7 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
-import { isPainuoyunEnterprisePortal } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterprisePortal, PAINUOYUN_ENTERPRISE_FAVICON } from '@/utils/enterpriseBranding'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 
@@ -45,7 +45,11 @@ function updateDocumentTitle() {
 watch(
   [() => appStore.siteLogo, () => route.path],
   ([newLogo]) => {
-    if (newLogo && !isPainuoyunEnterpriseRoute()) {
+    if (isPainuoyunEnterpriseRoute()) {
+      updateFavicon(PAINUOYUN_ENTERPRISE_FAVICON)
+      return
+    }
+    if (newLogo) {
       updateFavicon(newLogo)
     }
   },

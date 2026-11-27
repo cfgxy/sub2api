@@ -836,7 +836,7 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "<!doctype html>")
 	})
 
-	t.Run("matches_security_header_nonce_for_enterprise_spa_routes", func(t *testing.T) {
+	t.Run("matches_security_header_nonce_for_legacy_html_entrypoints", func(t *testing.T) {
 		router := gin.New()
 		router.Use(middleware.SecurityHeaders(config.CSPConfig{
 			Enabled: true,
@@ -844,24 +844,28 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 		}, nil))
 		router.Use(ServeEmbeddedFrontend())
 
-		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/enterprise/login", nil)
-		router.ServeHTTP(w, req)
+		for _, path := range []string{"/", "/index.html", "/enterprise/login"} {
+			t.Run(path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		csp := w.Header().Get("Content-Security-Policy")
-		const noncePrefix = "'nonce-"
-		start := strings.Index(csp, noncePrefix)
-		require.NotEqual(t, -1, start)
-		nonceStart := start + len(noncePrefix)
-		nonceEnd := nonceStart + strings.Index(csp[nonceStart:], "'")
-		require.Greater(t, nonceEnd, nonceStart)
-		nonce := csp[nonceStart:nonceEnd]
+				assert.Equal(t, http.StatusOK, w.Code)
+				csp := w.Header().Get("Content-Security-Policy")
+				const noncePrefix = "'nonce-"
+				start := strings.Index(csp, noncePrefix)
+				require.NotEqual(t, -1, start)
+				nonceStart := start + len(noncePrefix)
+				nonceEnd := nonceStart + strings.Index(csp[nonceStart:], "'")
+				require.Greater(t, nonceEnd, nonceStart)
+				nonce := csp[nonceStart:nonceEnd]
 
-		body := w.Body.String()
-		assert.NotContains(t, body, NonceHTMLPlaceholder)
-		assert.Contains(t, body, `<script id="enterprise-branding" nonce="`+nonce+`">`)
-		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+				body := w.Body.String()
+				assert.NotContains(t, body, NonceHTMLPlaceholder)
+				assert.Contains(t, body, `<script id="enterprise-branding" nonce="`+nonce+`">`)
+				assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			})
+		}
 	})
 
 	t.Run("serves_index_html_for_spa_routes", func(t *testing.T) {
