@@ -56,22 +56,34 @@
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
           </RouterLink>
 
-          <div v-if="auth.isAdmin" data-testid="system-settings-menu" class="mt-4 border-t border-gray-100 pt-3 dark:border-dark-800">
-            <div class="sidebar-section-title" :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-              <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">{{ t('enterprise.shell.nav.systemSettings') }}</span>
-            </div>
-            <RouterLink
-              v-for="item in systemNavigation"
-              :key="item.path"
-              :to="item.path"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              @click="handleMenuItemClick"
+          <div v-if="auth.isAdmin" class="mt-2">
+            <button
+              data-testid="system-settings-menu-toggle"
+              type="button"
+              class="sidebar-link mb-1 w-full"
+              :class="{ 'sidebar-link-active': isSystemSettingsRoute, 'sidebar-link-collapsed': sidebarCollapsed }"
+              :title="sidebarCollapsed ? t('enterprise.shell.nav.systemSettings') : undefined"
+              :aria-expanded="systemSettingsOpen"
+              @click="systemSettingsOpen = !systemSettingsOpen"
             >
-              <Icon :name="item.icon" size="md" class="flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </RouterLink>
+              <Icon name="cog" size="md" class="flex-shrink-0" />
+              <span class="sidebar-label flex-1 text-left" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('enterprise.shell.nav.systemSettings') }}</span>
+              <Icon v-if="!sidebarCollapsed" name="chevronDown" size="sm" class="flex-shrink-0 transition-transform" :class="{ 'rotate-180': systemSettingsOpen }" />
+            </button>
+            <div v-if="systemSettingsOpen" data-testid="system-settings-submenu" class="ml-3 border-l border-gray-100 pl-2 dark:border-dark-800">
+              <RouterLink
+                v-for="item in systemNavigation"
+                :key="item.path"
+                :to="item.path"
+                class="sidebar-link mb-1"
+                :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+                :title="sidebarCollapsed ? item.label : undefined"
+                @click="handleMenuItemClick"
+              >
+                <Icon :name="item.icon" size="md" class="flex-shrink-0" />
+                <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              </RouterLink>
+            </div>
           </div>
         </div>
       </nav>
@@ -205,7 +217,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
@@ -245,6 +257,12 @@ const systemNavigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/admin/brand', label: t('enterprise.shell.nav.brand'), icon: 'sparkles' as const },
   { path: '/enterprise/admin/allocation-settings', label: t('enterprise.shell.nav.systemSettings'), icon: 'cog' as const },
 ] : [])
+
+const isSystemSettingsRoute = computed(() => systemNavigation.value.some((item) => isActive(item.path)))
+const systemSettingsOpen = ref(isSystemSettingsRoute.value)
+watch(isSystemSettingsRoute, (active) => {
+  if (active) systemSettingsOpen.value = true
+})
 
 const pageTitle = computed(() => {
   const key = route.meta.titleKey
