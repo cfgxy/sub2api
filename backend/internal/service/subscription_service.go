@@ -42,12 +42,18 @@ var (
 	ErrAdjustWouldExpire           = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
 )
 
+type EnterpriseSubscriptionRefresher interface {
+	RefreshPlatformEnterpriseSubscriptionsForDedicatedUser(ctx context.Context, dedicatedUpstreamUserID, actorUserID int64) error
+}
+
 // SubscriptionService 订阅服务
 type SubscriptionService struct {
 	groupRepo           GroupRepository
 	userSubRepo         UserSubscriptionRepository
 	billingCacheService *BillingCacheService
 	entClient           *dbent.Client
+
+	enterpriseSubscriptionRefresher EnterpriseSubscriptionRefresher
 
 	// L1 缓存：加速中间件热路径的订阅查询
 	subCacheL1     *ristretto.Cache
@@ -199,10 +205,27 @@ type AssignSubscriptionInput struct {
 	Notes        string
 }
 
+func (s *SubscriptionService) SetEnterpriseSubscriptionRefresher(refresher EnterpriseSubscriptionRefresher) {
+	s.enterpriseSubscriptionRefresher = refresher
+}
+
+func (s *SubscriptionService) refreshEnterpriseSubscriptionMapping(ctx context.Context, userID, actorUserID int64) error {
+	if s.enterpriseSubscriptionRefresher == nil {
+		return nil
+	}
+	if err := s.enterpriseSubscriptionRefresher.RefreshPlatformEnterpriseSubscriptionsForDedicatedUser(ctx, userID, actorUserID); err != nil {
+		return fmt.Errorf("refresh enterprise subscription mapping: %w", err)
+	}
+	return nil
+}
+
 // AssignSubscription 分配订阅给用户（不允许重复分配）
 func (s *SubscriptionService) AssignSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
 	sub, _, err := s.assignSubscriptionWithReuse(ctx, input)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.refreshEnterpriseSubscriptionMapping(ctx, sub.UserID, input.AssignedBy); err != nil {
 		return nil, err
 	}
 	return sub, nil
@@ -215,7 +238,14 @@ func (s *SubscriptionService) AssignSubscription(ctx context.Context, input *Ass
 //
 // 如果没有订阅：创建新订阅
 func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error) {
-	return s.assignOrExtendSubscription(ctx, input, false)
+	sub, reused, err := s.assignOrExtendSubscription(ctx, input, false)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := s.refreshEnterpriseSubscriptionMapping(ctx, sub.UserID, input.AssignedBy); err != nil {
+		return nil, false, err
+	}
+	return sub, reused, nil
 }
 
 func (s *SubscriptionService) assignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput, deferCacheInvalidation bool) (*UserSubscription, bool, error) {
@@ -486,6 +516,10 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 		if err != nil {
 			result.FailedCount++
 			result.Errors = append(result.Errors, fmt.Sprintf("user %d: %v", userID, err))
+			result.Statuses[userID] = "failed"
+		} else if refreshErr := s.refreshEnterpriseSubscriptionMapping(ctx, sub.UserID, input.AssignedBy); refreshErr != nil {
+			result.FailedCount++
+			result.Errors = append(result.Errors, fmt.Sprintf("user %d: subscription assigned but enterprise mapping refresh failed: %v", userID, refreshErr))
 			result.Statuses[userID] = "failed"
 		} else {
 			result.SuccessCount++

@@ -334,7 +334,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	enterpriseidentityAPIKeyAuthCacheInvalidator := enterpriseidentity.ProvideAPIKeyAuthCacheInvalidator(apiKeyService)
 	enterpriseidentityService := enterpriseidentity.NewService(db, configConfig, emailService, imageStorageSettingService, enterpriseidentityAPIKeyAuthCacheInvalidator)
 	enterpriseRepository := repository.ProvideEnterpriseRepository(db, apiKeyService)
-	enterpriseidentityHandler := enterpriseidentity.ProvideHandler(enterpriseidentityService, enterpriseRepository, apiKeyService, gatewayService, redisClient)
+	enterpriseidentityHandler := enterpriseidentity.ProvideHandler(enterpriseidentityService, enterpriseRepository, apiKeyService, gatewayService, subscriptionService, redisClient)
 	enterpriseAllocationHandler := handler.NewEnterpriseAllocationHandler(enterpriseRepository)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
 	openAIQuotaAutoResetService := service.ProvideOpenAIQuotaAutoResetService(accountRepository, openAIQuotaService, rateLimitService, idempotencyCoordinator, auditLogService, settingService, leaderLockCache)
