@@ -141,6 +141,93 @@ func TestEnterpriseEmployeeUsageReservationConcurrentBoundaryAdmitsOnlyOne(t *te
 	require.Equal(t, 1, count)
 }
 
+func TestEnterpriseEmployeeWeeklyLimitSyncUsesCurrentSettledAttributionSegment(t *testing.T) {
+	ctx := context.Background()
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 99)
+	apiKeyRepo := NewAPIKeyRepository(integrationEntClient, integrationDB)
+	synchronizer, ok := apiKeyRepo.(interface {
+		SyncEnterpriseEmployeeWeeklyLimit(context.Context, int64, *service.EnterpriseUsageAttributionIdentity) (*service.EnterpriseEmployeeWeeklyLimitState, error)
+	})
+	require.True(t, ok)
+
+	var generation int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT generation FROM enterprise_key_assignments WHERE api_key_id = $1 AND status = 'active'
+	`, fixture.apiKeyID).Scan(&generation))
+	insertUsageAndAttribution := func(subscriptionID, upstreamSubscriptionID, apiKeyID, attributionGeneration int64, anchor time.Time, cost float64) {
+		t.Helper()
+		var usageLogID int64
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `
+			INSERT INTO usage_logs (user_id, api_key_id, account_id, subscription_id, model, actual_cost, created_at)
+			VALUES ($1, $2, $3, $4, 'settled-segment-test', $5, $6)
+			RETURNING id`, fixture.enterpriseUserID, apiKeyID, fixture.accountID, upstreamSubscriptionID, cost, anchor.Add(time.Hour)).Scan(&usageLogID))
+		_, err := integrationDB.ExecContext(ctx, `
+			INSERT INTO enterprise_usage_attributions (
+				enterprise_id, subscription_id, employee_id, api_key_id, usage_log_id,
+				assignment_generation, window_type, window_anchor, request_at, classification
+			) VALUES ($1, $2, $3, $4, $5, $6, 'week', $7, $8, 'employee')`,
+			fixture.enterpriseID, subscriptionID, fixture.employeeID, apiKeyID, usageLogID,
+			attributionGeneration, anchor, anchor.Add(time.Hour))
+		require.NoError(t, err)
+	}
+
+	// The live segment is the only settled usage eligible for the current
+	// employee admission state. It must replace the old api_keys snapshot.
+	insertUsageAndAttribution(fixture.subscriptionID, fixture.upstreamSubscriptionID, fixture.apiKeyID, generation, fixture.anchor, 1.25)
+
+	oldAnchor := fixture.anchor.Add(-7 * 24 * time.Hour)
+	_, err := integrationDB.ExecContext(ctx, `
+		INSERT INTO enterprise_subscription_windows (
+			enterprise_id, subscription_id, upstream_user_subscription_id,
+			observed_weekly_window_start, window_start, window_end
+		) VALUES ($1, $2, $3, $4::timestamptz, $4::timestamptz, $4::timestamptz + INTERVAL '7 days')`,
+		fixture.enterpriseID, fixture.subscriptionID, fixture.upstreamSubscriptionID, oldAnchor)
+	require.NoError(t, err)
+	insertUsageAndAttribution(fixture.subscriptionID, fixture.upstreamSubscriptionID, fixture.apiKeyID, generation, oldAnchor, 20)
+	insertUsageAndAttribution(fixture.subscriptionID, fixture.upstreamSubscriptionID, fixture.apiKeyID, generation-1, fixture.anchor, 30)
+
+	// Historical subscription usage may be attributed to the same employee/key,
+	// but must not become current-subscription employee admission usage.
+	var oldGroupID, oldUpstreamSubscriptionID, oldSubscriptionID int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		INSERT INTO groups (name, daily_limit_usd, weekly_limit_usd, monthly_limit_usd)
+		VALUES ($1, 10, 20, 30) RETURNING id`, fmt.Sprintf("historical-segment-%d", time.Now().UnixNano())).Scan(&oldGroupID))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		INSERT INTO user_subscriptions (
+			user_id, group_id, starts_at, expires_at, status,
+			daily_window_start, weekly_window_start, monthly_window_start
+		) VALUES ($1, $2, $3::timestamptz, $3::timestamptz + INTERVAL '1 day', 'expired', $3::timestamptz, $3::timestamptz, $3::timestamptz)
+		RETURNING id`, fixture.enterpriseUserID, oldGroupID, oldAnchor).Scan(&oldUpstreamSubscriptionID))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		INSERT INTO enterprise_subscriptions (
+			enterprise_id, upstream_user_subscription_id, status,
+			observed_weekly_window_start, activated_at, ended_at, actor_ref
+		) VALUES ($1, $2, 'ended', $3::timestamptz, $3::timestamptz, $3::timestamptz + INTERVAL '1 day', 'test:historical-subscription')
+		RETURNING id`, fixture.enterpriseID, oldUpstreamSubscriptionID, oldAnchor).Scan(&oldSubscriptionID))
+	_, err = integrationDB.ExecContext(ctx, `
+		INSERT INTO enterprise_subscription_windows (
+			enterprise_id, subscription_id, upstream_user_subscription_id,
+			observed_weekly_window_start, window_start, window_end
+		) VALUES ($1, $2, $3, $4::timestamptz, $4::timestamptz, $4::timestamptz + INTERVAL '7 days')`,
+		fixture.enterpriseID, oldSubscriptionID, oldUpstreamSubscriptionID, oldAnchor)
+	require.NoError(t, err)
+	insertUsageAndAttribution(oldSubscriptionID, oldUpstreamSubscriptionID, fixture.apiKeyID, generation, oldAnchor, 40)
+
+	employeeID := fixture.employeeID
+	state, err := synchronizer.SyncEnterpriseEmployeeWeeklyLimit(ctx, fixture.apiKeyID, &service.EnterpriseUsageAttributionIdentity{
+		EnterpriseID: fixture.enterpriseID, EnterpriseSubscriptionID: fixture.subscriptionID,
+		UpstreamSubscriptionID: fixture.upstreamSubscriptionID, EmployeeID: &employeeID,
+		AssignmentGeneration: generation, WeeklyWindowAnchor: &fixture.anchor,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 10, state.RateLimit7d, 0.000000001)
+	require.InDelta(t, 1.25, state.Usage7d, 0.000000001, "only current subscription/window/key-generation settled usage may admit the employee")
+
+	var persistedUsage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&persistedUsage))
+	require.InDelta(t, 1.25, persistedUsage, 0.000000001)
+}
+
 func TestEnterpriseEmployeeNewWeekInheritsAllocationForKeySyncAndReservation(t *testing.T) {
 	ctx := context.Background()
 	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 0)
