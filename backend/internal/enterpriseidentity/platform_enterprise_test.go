@@ -78,9 +78,9 @@ func TestRefreshPlatformEnterpriseSubscriptionsLinksCurrentUpstreamSubscription(
 	mock.ExpectQuery(`SELECT dedicated_upstream_user_id\s+FROM enterprises\s+WHERE id = \$1\s+FOR UPDATE`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(int64(99)))
-	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
+	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id, observed_weekly_window_start\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id", "observed_weekly_window_start"}))
 	mock.ExpectQuery(`(?s)SELECT subscription\.id, subscription\.weekly_window_start.*FROM user_subscriptions AS subscription.*subscription\.user_id = \$1.*FOR SHARE OF subscription`).
 		WithArgs(int64(99)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(42), anchor))
@@ -103,13 +103,14 @@ func TestRefreshPlatformEnterpriseSubscriptionsLinksCurrentUpstreamSubscription(
 
 func TestRefreshPlatformEnterpriseSubscriptionsEndsStaleRelationshipWhenNoCurrentSource(t *testing.T) {
 	svc, mock := newMockService(t)
+	anchor := time.Date(2026, 9, 26, 12, 30, 0, 0, time.UTC)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT dedicated_upstream_user_id\s+FROM enterprises\s+WHERE id = \$1\s+FOR UPDATE`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(int64(99)))
-	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
+	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id, observed_weekly_window_start\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id"}).AddRow(int64(88), int64(42)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id", "observed_weekly_window_start"}).AddRow(int64(88), int64(42), anchor))
 	mock.ExpectQuery(`(?s)SELECT subscription\.id, subscription\.weekly_window_start.*FROM user_subscriptions AS subscription.*subscription\.user_id = \$1.*FOR SHARE OF subscription`).
 		WithArgs(int64(99)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}))

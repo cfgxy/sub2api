@@ -19,6 +19,7 @@ type BulkSubscriptionActionInput struct {
 	Daily           bool    `json:"daily,omitempty"`
 	Weekly          bool    `json:"weekly,omitempty"`
 	Monthly         bool    `json:"monthly,omitempty"`
+	ActorUserID     int64   `json:"-"`
 }
 
 // Validate checks the entire request before any subscription is changed.
@@ -88,16 +89,16 @@ func (s *SubscriptionService) BulkSubscriptionAction(ctx context.Context, input 
 				var mutationErr error
 				switch input.Action {
 				case "extend":
-					changed, mutationErr = s.ExtendSubscription(txCtx, id, input.Days)
+					changed, mutationErr = s.ExtendSubscription(txCtx, id, input.Days, input.ActorUserID)
 				case "reset_quota":
 					changed, mutationErr = s.AdminResetQuota(txCtx, id, input.Daily, input.Weekly, input.Monthly)
 				case "revoke":
 					changed, mutationErr = s.userSubRepo.GetByID(txCtx, id)
 					if mutationErr == nil {
-						mutationErr = s.RevokeSubscription(txCtx, id)
+						mutationErr = s.RevokeSubscription(txCtx, id, input.ActorUserID)
 					}
 				case "restore":
-					changed, mutationErr = s.RestoreSubscription(txCtx, id)
+					changed, mutationErr = s.RestoreSubscription(txCtx, id, input.ActorUserID)
 				}
 				return mutationErr
 			})

@@ -667,12 +667,13 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 	}
 
 	var currentEnterpriseSubscriptionID, currentUpstreamSubscriptionID int64
+	var currentObservedWindowStart time.Time
 	currentErr := tx.QueryRowContext(ctx, `
-		SELECT id, upstream_user_subscription_id
+		SELECT id, upstream_user_subscription_id, observed_weekly_window_start
 		FROM enterprise_subscriptions
 		WHERE enterprise_id = $1 AND status = 'active'
 		FOR UPDATE
-	`, enterpriseID).Scan(&currentEnterpriseSubscriptionID, &currentUpstreamSubscriptionID)
+	`, enterpriseID).Scan(&currentEnterpriseSubscriptionID, &currentUpstreamSubscriptionID, &currentObservedWindowStart)
 	if currentErr != nil && !errors.Is(currentErr, sql.ErrNoRows) {
 		return nil, currentErr
 	}
@@ -705,7 +706,10 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 		result.UpstreamUserSubscriptionID = &sourceSubscriptionID
 	}
 
-	needsLink := sourceErr == nil && (currentErr != nil || currentUpstreamSubscriptionID != sourceSubscriptionID)
+	needsLink := sourceErr == nil && (currentErr != nil ||
+		currentUpstreamSubscriptionID != sourceSubscriptionID ||
+		!sourceAnchor.Valid ||
+		!currentObservedWindowStart.Equal(sourceAnchor.Time))
 	var observedWindowStart time.Time
 	if needsLink {
 		if sourceAnchor.Valid {
@@ -735,8 +739,11 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 		}
 	}
 
-	actor := fmt.Sprintf("platform_user:%d", actorUserID)
-	if currentErr == nil && (sourceErr != nil || currentUpstreamSubscriptionID != sourceSubscriptionID) {
+	actor := "system"
+	if actorUserID > 0 {
+		actor = fmt.Sprintf("platform_user:%d", actorUserID)
+	}
+	if currentErr == nil && (sourceErr != nil || needsLink) {
 		if _, err = tx.ExecContext(ctx, `
 			UPDATE enterprise_subscriptions
 			SET status = 'ended', ended_at = NOW(), actor_ref = $2, updated_at = NOW()

@@ -1024,13 +1024,17 @@ func TestExecuteSubscriptionFulfillmentRecoversCommittedAssignmentWithoutExtendi
 	groupRepo := &subscriptionGroupRepoStub{
 		group: &Group{ID: 7, Status: payment.EntityStatusActive, SubscriptionType: SubscriptionTypeSubscription},
 	}
+	refresher := &enterpriseSubscriptionRefresherStub{}
+	subscriptionSvc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	subscriptionSvc.SetEnterpriseSubscriptionRefresher(refresher)
 	svc := &PaymentService{
 		entClient:       client,
 		groupRepo:       groupRepo,
-		subscriptionSvc: NewSubscriptionService(groupRepo, subRepo, nil, nil, nil),
+		subscriptionSvc: subscriptionSvc,
 	}
 
 	require.NoError(t, svc.ExecuteSubscriptionFulfillment(ctx, order.ID))
+	require.Equal(t, [][2]int64{{order.UserID, 0}}, refresher.calls)
 	assertPaymentSubscriptionExpiry(t, subRepo, order, expiresAt)
 
 	assignmentAuditCount, err := client.PaymentAuditLog.Query().
@@ -1051,6 +1055,7 @@ func TestExecuteSubscriptionFulfillmentRecoversCommittedAssignmentWithoutExtendi
 		Save(ctx)
 	require.NoError(t, err)
 	require.NoError(t, svc.ExecuteSubscriptionFulfillment(ctx, order.ID))
+	require.Equal(t, [][2]int64{{order.UserID, 0}, {order.UserID, 0}}, refresher.calls)
 	assertPaymentSubscriptionExpiry(t, subRepo, order, expiresAt)
 
 	assignmentAuditCount, err = client.PaymentAuditLog.Query().

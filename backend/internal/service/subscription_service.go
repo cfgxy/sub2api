@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -14,6 +15,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/dgraph-io/ristretto"
 	"golang.org/x/sync/singleflight"
 )
@@ -219,13 +221,48 @@ func (s *SubscriptionService) refreshEnterpriseSubscriptionMapping(ctx context.C
 	return nil
 }
 
+func (s *SubscriptionService) refreshEnterpriseSubscriptionMappingAfterCommit(ctx context.Context, userID, actorUserID int64) error {
+	if s.enterpriseSubscriptionRefresher == nil {
+		return nil
+	}
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		tx.OnCommit(func(next dbent.Committer) dbent.Committer {
+			return dbent.CommitFunc(func(commitCtx context.Context, tx *dbent.Tx) error {
+				if err := next.Commit(commitCtx, tx); err != nil {
+					return err
+				}
+				if err := s.refreshCommittedEnterpriseSubscriptionMapping(ctx, userID, actorUserID); err != nil {
+					log.Printf("[SubscriptionService] committed subscription mutation but enterprise mapping refresh failed user_id=%d actor_user_id=%d error=%s", userID, actorUserID, logredact.RedactText(err.Error()))
+				}
+				return nil
+			})
+		})
+		return nil
+	}
+	return s.refreshCommittedEnterpriseSubscriptionMapping(ctx, userID, actorUserID)
+}
+
+func (s *SubscriptionService) refreshCommittedEnterpriseSubscriptionMapping(ctx context.Context, userID, actorUserID int64) error {
+	committedCtx := dbent.NewTxContext(context.WithoutCancel(ctx), nil)
+	refreshCtx, cancel := context.WithTimeout(committedCtx, 5*time.Second)
+	defer cancel()
+	return s.refreshEnterpriseSubscriptionMapping(refreshCtx, userID, actorUserID)
+}
+
+func subscriptionMutationActorUserID(actorUserIDs []int64) int64 {
+	if len(actorUserIDs) > 0 && actorUserIDs[0] > 0 {
+		return actorUserIDs[0]
+	}
+	return 0
+}
+
 // AssignSubscription 分配订阅给用户（不允许重复分配）
 func (s *SubscriptionService) AssignSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
 	sub, _, err := s.assignSubscriptionWithReuse(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.refreshEnterpriseSubscriptionMapping(ctx, sub.UserID, input.AssignedBy); err != nil {
+	if err := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, sub.UserID, input.AssignedBy); err != nil {
 		return nil, err
 	}
 	return sub, nil
@@ -242,7 +279,7 @@ func (s *SubscriptionService) AssignOrExtendSubscription(ctx context.Context, in
 	if err != nil {
 		return nil, false, err
 	}
-	if err := s.refreshEnterpriseSubscriptionMapping(ctx, sub.UserID, input.AssignedBy); err != nil {
+	if err := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, sub.UserID, input.AssignedBy); err != nil {
 		return nil, false, err
 	}
 	return sub, reused, nil
@@ -517,7 +554,7 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 			result.FailedCount++
 			result.Errors = append(result.Errors, fmt.Sprintf("user %d: %v", userID, err))
 			result.Statuses[userID] = "failed"
-		} else if refreshErr := s.refreshEnterpriseSubscriptionMapping(ctx, sub.UserID, input.AssignedBy); refreshErr != nil {
+		} else if refreshErr := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, sub.UserID, input.AssignedBy); refreshErr != nil {
 			result.FailedCount++
 			result.Errors = append(result.Errors, fmt.Sprintf("user %d: subscription assigned but enterprise mapping refresh failed: %v", userID, refreshErr))
 			result.Statuses[userID] = "failed"
@@ -631,7 +668,7 @@ func normalizeAssignValidityDays(days int) int {
 }
 
 // RevokeSubscription 撤销订阅
-func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscriptionID int64) error {
+func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscriptionID int64, actorUserIDs ...int64) error {
 	// 先获取订阅信息用于失效缓存
 	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
 	if err != nil {
@@ -642,15 +679,13 @@ func (s *SubscriptionService) RevokeSubscription(ctx context.Context, subscripti
 		return err
 	}
 
-	if err := s.invalidateSubscriptionCaches(sub.UserID, sub.GroupID); err != nil {
-		return err
-	}
-
-	return nil
+	cacheErr := s.invalidateSubscriptionCaches(sub.UserID, sub.GroupID)
+	refreshErr := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, sub.UserID, subscriptionMutationActorUserID(actorUserIDs))
+	return errors.Join(cacheErr, refreshErr)
 }
 
 // RestoreSubscription 恢复已撤销订阅
-func (s *SubscriptionService) RestoreSubscription(ctx context.Context, subscriptionID int64) (*UserSubscription, error) {
+func (s *SubscriptionService) RestoreSubscription(ctx context.Context, subscriptionID int64, actorUserIDs ...int64) (*UserSubscription, error) {
 	sub, err := s.userSubRepo.GetByIDIncludeDeleted(ctx, subscriptionID)
 	if err != nil {
 		return nil, err
@@ -678,14 +713,16 @@ func (s *SubscriptionService) RestoreSubscription(ctx context.Context, subscript
 		return nil, err
 	}
 
-	if err := s.invalidateSubscriptionCaches(restored.UserID, restored.GroupID); err != nil {
+	cacheErr := s.invalidateSubscriptionCaches(restored.UserID, restored.GroupID)
+	refreshErr := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, restored.UserID, subscriptionMutationActorUserID(actorUserIDs))
+	if err := errors.Join(cacheErr, refreshErr); err != nil {
 		return nil, err
 	}
 	return restored, nil
 }
 
 // ExtendSubscription 调整订阅时长（正数延长，负数缩短）
-func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscriptionID int64, days int) (*UserSubscription, error) {
+func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscriptionID int64, days int, actorUserIDs ...int64) (*UserSubscription, error) {
 	err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
 		// Lock the row before reading its expiry. Without this lock, concurrent
 		// adjustments can both calculate from the same stale expiry and lose one
@@ -763,6 +800,9 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 			defer cancel()
 			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
 		}()
+	}
+	if err := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, sub.UserID, subscriptionMutationActorUserID(actorUserIDs)); err != nil {
+		return nil, err
 	}
 
 	return sub, nil
