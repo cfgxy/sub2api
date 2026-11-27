@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1116,20 +1117,20 @@ func (r *apiKeyRepository) SyncEnterpriseEmployeeWeeklyLimit(
 		}
 		return nil, err
 	}
-	var assignedKeyID int64
+	var assignedKeyID, assignedGeneration int64
 	if err = tx.QueryRowContext(ctx, `
-		SELECT assignment.api_key_id
+		SELECT assignment.api_key_id, assignment.generation
 		FROM enterprise_key_assignments AS assignment
 		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
 		  AND assignment.upstream_user_subscription_id = $3 AND assignment.status = 'active'
 		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC
-		LIMIT 1 FOR UPDATE`, identity.EnterpriseID, *identity.EmployeeID, identity.UpstreamSubscriptionID).Scan(&assignedKeyID); err != nil {
+		LIMIT 1 FOR UPDATE`, identity.EnterpriseID, *identity.EmployeeID, identity.UpstreamSubscriptionID).Scan(&assignedKeyID, &assignedGeneration); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, service.ErrAPIKeyNotFound
 		}
 		return nil, err
 	}
-	if assignedKeyID != apiKeyID {
+	if assignedKeyID != apiKeyID || (identity.AssignmentGeneration > 0 && assignedGeneration != identity.AssignmentGeneration) {
 		return nil, service.ErrAPIKeyNotFound
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM api_keys WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, apiKeyID).Scan(&ignored); err != nil {
@@ -1173,23 +1174,39 @@ func (r *apiKeyRepository) SyncEnterpriseEmployeeWeeklyLimit(
 			return nil, err
 		}
 	}
-	state := &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: limit, WeeklyWindowAnchor: anchor}
+	var settledUsageText string
+	if err = tx.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(usage_log.actual_cost), 0)::NUMERIC(20,8)::text
+		FROM enterprise_usage_attributions AS attribution
+		JOIN usage_logs AS usage_log
+		  ON usage_log.id = attribution.usage_log_id
+		 AND usage_log.api_key_id = attribution.api_key_id
+		WHERE attribution.enterprise_id = $1
+		  AND attribution.subscription_id = $2
+		  AND attribution.employee_id = $3
+		  AND attribution.api_key_id = $4
+		  AND attribution.assignment_generation = $5
+		  AND attribution.window_type = 'week'
+		  AND attribution.window_anchor = $6
+		  AND attribution.classification = 'employee'`,
+		identity.EnterpriseID, identity.EnterpriseSubscriptionID, *identity.EmployeeID,
+		apiKeyID, assignedGeneration, anchor).Scan(&settledUsageText); err != nil {
+		return nil, err
+	}
+	settledUsage, err := strconv.ParseFloat(settledUsageText, 64)
+	if err != nil || settledUsage < 0 {
+		return nil, fmt.Errorf("invalid settled employee weekly usage %q: %w", settledUsageText, err)
+	}
+
+	state := &service.EnterpriseEmployeeWeeklyLimitState{RateLimit7d: limit, Usage7d: settledUsage, WeeklyWindowAnchor: anchor}
 	if err = tx.QueryRowContext(ctx, `
 		UPDATE api_keys
 		SET rate_limit_7d = $1,
-		    usage_7d = CASE
-		        WHEN window_7d_start = $2 THEN usage_7d
-		        WHEN window_7d_start IS NOT NULL AND EXISTS (
-		            SELECT 1 FROM enterprise_subscription_windows AS known_window
-		            WHERE known_window.upstream_user_subscription_id = $4
-		              AND known_window.observed_weekly_window_start = api_keys.window_7d_start
-		        ) THEN 0
-		        ELSE usage_7d
-		    END,
-		    window_7d_start = $2,
+		    usage_7d = $2,
+		    window_7d_start = $3,
 		    updated_at = NOW()
-		WHERE id = $3 AND deleted_at IS NULL
-		RETURNING usage_7d`, limit, anchor, apiKeyID, identity.UpstreamSubscriptionID).Scan(&state.Usage7d); err != nil {
+		WHERE id = $4 AND deleted_at IS NULL
+		RETURNING usage_7d`, limit, settledUsage, anchor, apiKeyID).Scan(&state.Usage7d); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, service.ErrAPIKeyNotFound
 		}
