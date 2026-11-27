@@ -362,6 +362,7 @@ func TestCreateEmployeeScopesSameEmailByEnterprise(t *testing.T) {
 	svc, mock := newMockService(t)
 	query := regexp.QuoteMeta("INSERT INTO enterprise_employees") + ".*"
 	mock.ExpectBegin()
+	expectEnterpriseEmployeeSeatCount(mock, 1, 2, 0)
 	mock.ExpectQuery(query).WithArgs(int64(1), "same@example.com", sqlmock.AnyArg(), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password", "version"}).
 			AddRow(10, "same@example.com", "active", nil, true, 1))
@@ -369,6 +370,7 @@ func TestCreateEmployeeScopesSameEmailByEnterprise(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	mock.ExpectBegin()
+	expectEnterpriseEmployeeSeatCount(mock, 2, 2, 0)
 	mock.ExpectQuery(query).WithArgs(int64(2), "same@example.com", sqlmock.AnyArg(), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password", "version"}).
 			AddRow(20, "same@example.com", "active", nil, true, 1))
@@ -609,6 +611,7 @@ func TestTerminateEmployeeReleasesEmailForNewEmployeeID(t *testing.T) {
 	require.NoError(t, svc.TerminateEmployee(ctx, 1, 10))
 
 	mock.ExpectBegin()
+	expectEnterpriseEmployeeSeatCount(mock, 1, 1, 0)
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO enterprise_employees")+".*").WithArgs(int64(1), "rehire@example.com", sqlmock.AnyArg(), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password", "version"}).AddRow(11, "rehire@example.com", "active", nil, true, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.created", "employee", int64(11), sqlmock.AnyArg(), "admin:42").
@@ -692,8 +695,8 @@ func TestGetEmployeeReturnsNotFoundForMissingOrForeignEmployee(t *testing.T) {
 func TestUpdateEmployeeSucceedsWhenVersionMatchesAndBumpsIt(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
-		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(3))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT status, version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "version"}).AddRow("active", 3))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE enterprise_employees SET status = $1, department_id = $2")).
 		WithArgs("active", (*int64)(nil), int64(1), int64(10), int64(3)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -709,8 +712,8 @@ func TestUpdateEmployeeSucceedsWhenVersionMatchesAndBumpsIt(t *testing.T) {
 func TestUpdateEmployeeRejectsStaleVersionWithoutMutatingOrRevoking(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
-		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(5))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT status, version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "version"}).AddRow("active", 5))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO enterprise_audit_events")).WithArgs(int64(1), "employee.update_rejected", "employee", int64(10), sqlmock.AnyArg(), "admin:42").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -727,8 +730,8 @@ func TestUpdateEmployeeReturnsDepartmentInvalidWhenDepartmentRejectsUpdate(t *te
 	svc, mock := newMockService(t)
 	dept := int64(77)
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
-		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(3))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT status, version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "version"}).AddRow("active", 3))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE enterprise_employees SET status = $1, department_id = $2")).
 		WithArgs("active", &dept, int64(1), int64(10), int64(3)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -743,8 +746,8 @@ func TestUpdateEmployeeReturnsDepartmentInvalidWhenDepartmentRejectsUpdate(t *te
 func TestUpdateEmployeeAttributesAuditEventToActorFromContext(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
-		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT status, version FROM enterprise_employees")).WithArgs(int64(1), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "version"}).AddRow("active", 1))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE enterprise_employees SET status = $1, department_id = $2")).
 		WithArgs("active", (*int64)(nil), int64(1), int64(10), int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 1))

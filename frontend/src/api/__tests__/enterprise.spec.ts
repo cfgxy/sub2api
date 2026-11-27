@@ -77,6 +77,29 @@ describe('enterprise API password handling', () => {
     expect(JSON.stringify(localStorage)).not.toContain('one-time-password')
   })
 
+  it('preserves structured seat metadata from employee creation failures', async () => {
+    const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError('seat full', 'ERR_BAD_REQUEST', config, undefined, {
+        data: {
+          code: 409,
+          reason: 'ENTERPRISE_EMPLOYEE_SEAT_LIMIT_REACHED',
+          message: 'enterprise employee seats are full',
+          metadata: { active_employee_count: '2', seat_count: '1', seat_overage: '1' },
+        },
+        status: 409,
+        statusText: 'Conflict',
+        headers: {},
+        config,
+      })
+    })
+
+    await expect(enterpriseClient.post('/enterprise/admin/employees', {}, { adapter })).rejects.toEqual(expect.objectContaining({
+      status: 409,
+      reason: 'ENTERPRISE_EMPLOYEE_SEAT_LIMIT_REACHED',
+      metadata: { active_employee_count: '2', seat_count: '1', seat_overage: '1' },
+    }))
+  })
+
   it('sends the first password change without a current-password field', async () => {
     const post = vi.spyOn(enterpriseClient, 'post').mockResolvedValue({ data: { success: true } })
 

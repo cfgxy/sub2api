@@ -140,6 +140,7 @@ func TestCreateEmployeeAcceptsEightCharacterInitialPassword(t *testing.T) {
 	ctx := WithAuditActor(context.Background(), "enterprise_test")
 
 	mock.ExpectBegin()
+	expectEnterpriseEmployeeSeatCount(mock, 1, 1, 0)
 	mock.ExpectQuery(`^INSERT INTO enterprise_employees`).
 		WithArgs(int64(1), "emp@example.com", sqlmock.AnyArg(), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "current_email", "status", "department_id", "must_change_password", "version"}).

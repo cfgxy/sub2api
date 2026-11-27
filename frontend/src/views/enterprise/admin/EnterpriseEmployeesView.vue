@@ -135,6 +135,13 @@
       <p class="rounded-lg bg-yellow-50 p-3 text-sm text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400">
         初始密码仅在创建成功后的交付卡片中显示一次，请立即复制并通过安全渠道交付员工。
       </p>
+      <p
+        v-if="createErrors.form"
+        class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300"
+        data-testid="employee-seat-limit-error"
+      >
+        {{ createErrors.form }}
+      </p>
       <Input
         id="create-email"
         v-model="createForm.email"
@@ -326,7 +333,7 @@ const departmentOptions = computed(() =>
 )
 
 const createForm = reactive({ email: '', initial_password: '', department_id: null as number | null })
-const createErrors = reactive({ email: '', initial_password: '' })
+const createErrors = reactive({ email: '', initial_password: '', form: '' })
 
 const INITIAL_PASSWORD_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
 function generateInitialPassword(): string {
@@ -409,8 +416,10 @@ function resetCreate() {
   createForm.department_id = null
   createErrors.email = ''
   createErrors.initial_password = ''
+  createErrors.form = ''
 }
 function validateCreate(): boolean {
+  createErrors.form = ''
   createErrors.email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(createForm.email) ? '' : '请输入有效邮箱'
   createErrors.initial_password = validatePassword(createForm.initial_password) || ''
   return !createErrors.email && !createErrors.initial_password
@@ -428,7 +437,11 @@ async function createEmployee() {
     appStore.showSuccess('员工已创建')
     await load()
   } catch (error) {
-    if ((error as { status?: number })?.status === 409) {
+    const requestError = error as { status?: number; reason?: string; metadata?: Record<string, string> }
+    if (requestError.reason === 'ENTERPRISE_EMPLOYEE_SEAT_LIMIT_REACHED') {
+      createErrors.form = employeeSeatLimitMessage(requestError)
+      appStore.showError(createErrors.form)
+    } else if (requestError.status === 409) {
       createErrors.email = '该邮箱已被使用，请更换邮箱'
       appStore.showError('该邮箱已被使用，请更换邮箱')
     } else {
@@ -449,6 +462,13 @@ async function handleEmployeeVersionConflict(error: unknown) {
   if (!isEnterpriseEmployeeVersionConflict(error)) throw error
   appStore.showWarning('该员工已被其他管理员修改，已刷新为最新数据，请重新操作。')
   await load()
+}
+
+function employeeSeatLimitMessage(error: { metadata?: Record<string, string> }): string {
+  const used = Number.parseInt(error.metadata?.active_employee_count || '', 10)
+  const total = Number.parseInt(error.metadata?.seat_count || '', 10)
+  const occupancy = Number.isFinite(used) && Number.isFinite(total) ? `已占用 ${used} / ${total}。` : ''
+  return `员工席位已满：${occupancy}请先停用或终止不再使用的员工，或联系平台管理员增加席位。`
 }
 
 async function saveEmployee() {
@@ -527,6 +547,10 @@ async function setStatus(row: EnterpriseEmployee, status: 'active' | 'disabled')
     appStore.showSuccess(status === 'active' ? '员工已恢复' : '员工已停用')
     await load()
   } catch (error) {
+    if ((error as { reason?: string })?.reason === 'ENTERPRISE_EMPLOYEE_SEAT_LIMIT_REACHED') {
+      appStore.showError(employeeSeatLimitMessage(error as { metadata?: Record<string, string> }))
+      return
+    }
     await handleEmployeeVersionConflict(error)
   }
 }

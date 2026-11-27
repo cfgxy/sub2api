@@ -26,6 +26,63 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func TestEnterprise252UpgradesPublished248SeatsFromActiveEmployees(t *testing.T) {
+	ctx := context.Background()
+	db := newIndependentMigrationDatabase(t, ctx)
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "247_scoped_admin_api_keys.sql")))
+
+	var userID, enterpriseID int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO users (email, password_hash, concurrency)
+		VALUES ($1, 'test', 9) RETURNING id
+	`, fmt.Sprintf("seat-backfill-%d@example.com", time.Now().UnixNano())).Scan(&userID))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host, status)
+		VALUES ('Seat backfill', $1, $1, $2, 'active') RETURNING id
+	`, userID, fmt.Sprintf("seat-backfill-%d.example.com", time.Now().UnixNano())).Scan(&enterpriseID))
+	for index := 0; index < 2; index++ {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, status)
+			VALUES ($1, $2, $2, 'test', 'active')
+		`, enterpriseID, fmt.Sprintf("active-%d-%d@example.com", index, time.Now().UnixNano()))
+		require.NoError(t, err)
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, status, disabled_at)
+		VALUES ($1, $2, $2, 'test', 'disabled', NOW())
+	`, enterpriseID, fmt.Sprintf("disabled-%d@example.com", time.Now().UnixNano()))
+	require.NoError(t, err)
+
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "248_enterprise_employee_key_seats.sql")))
+	var seatCount, concurrency int
+	var published248Checksum string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT checksum FROM schema_migrations
+		WHERE filename = '248_enterprise_employee_key_seats.sql'
+	`).Scan(&published248Checksum))
+	require.Equal(t, "03ac763a73592022a4859392d949859bf1feced83155cbc55c99524a9e0f0bdf", published248Checksum)
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT enterprise.seat_count, user_record.concurrency
+		FROM enterprises AS enterprise
+		JOIN users AS user_record ON user_record.id = enterprise.dedicated_upstream_user_id
+		WHERE enterprise.id = $1
+	`, enterpriseID).Scan(&seatCount, &concurrency))
+	require.Equal(t, 1, seatCount, "published 248 used active API keys and must remain immutable")
+	require.Equal(t, 1, concurrency)
+
+	// Re-run the complete migration sequence so the runner verifies the recorded 248
+	// checksum before applying the employee-based correction in 252.
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "252_enterprise_active_employee_seats.sql")))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT enterprise.seat_count, user_record.concurrency
+		FROM enterprises AS enterprise
+		JOIN users AS user_record ON user_record.id = enterprise.dedicated_upstream_user_id
+		WHERE enterprise.id = $1
+	`, enterpriseID).Scan(&seatCount, &concurrency))
+	require.Equal(t, 2, seatCount)
+	require.Equal(t, 2, concurrency)
+}
+
 func TestEnterprise237MigratesNonEmptyLegacyAttribution(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
