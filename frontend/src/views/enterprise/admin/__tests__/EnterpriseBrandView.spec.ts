@@ -27,10 +27,10 @@ const defaultBrand = {
 
 const originalLocation = window.location
 
-async function mountBrandView(hostname = originalLocation.hostname) {
+async function mountBrandView(hostname = originalLocation.hostname, pathname = '/enterprise/admin/brand') {
   Object.defineProperty(window, 'location', {
     configurable: true,
-    value: { ...originalLocation, hostname },
+    value: { ...originalLocation, hostname, pathname },
   })
   vi.resetModules()
   const { default: EnterpriseBrandView } = await import('../EnterpriseBrandView.vue')
@@ -91,7 +91,7 @@ describe('EnterpriseBrandView', () => {
     wrapper.unmount()
   })
 
-  it('submits API-backed custom copy unchanged when another setting is saved on a 派诺云 host', async () => {
+  it('submits API-backed custom copy unchanged when another setting is saved on an enterprise route', async () => {
     const storedBrand = {
       ...defaultBrand,
       enterprise_name: 'Acme Sub2API 团队',

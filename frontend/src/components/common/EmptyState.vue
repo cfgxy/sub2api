@@ -80,7 +80,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const displayTitle = computed(() => props.title || t('common.noData'))
-const isPainuoyunEnterprisePortal = isPainuoyunEnterprisePortalForLocation(window.location.hostname, window.location.pathname)
+const isPainuoyunEnterprisePortal = isPainuoyunEnterprisePortalForLocation(window.location.pathname)
 
 defineEmits(['action'])
 </script>

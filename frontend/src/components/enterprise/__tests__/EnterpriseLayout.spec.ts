@@ -14,13 +14,13 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
-const { isPainuoyunEnterpriseHost } = vi.hoisted(() => ({
-  isPainuoyunEnterpriseHost: vi.fn(),
+const { isPainuoyunEnterprisePortal } = vi.hoisted(() => ({
+  isPainuoyunEnterprisePortal: vi.fn(),
 }))
 
 vi.mock('@/utils/enterpriseBranding', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/enterpriseBranding')>()),
-  isPainuoyunEnterpriseHost,
+  isPainuoyunEnterprisePortal,
 }))
 
 const CJK = /[\u3400-\u9fff\uff00-\uffef]/
@@ -71,7 +71,7 @@ async function mountShellOnHome(role: EnterprisePrincipal['role']) {
 }
 
 beforeEach(() => {
-  isPainuoyunEnterpriseHost.mockReturnValue(false)
+  isPainuoyunEnterprisePortal.mockReturnValue(false)
   enterpriseTestLocale.value = 'zh'
   localStorage.clear()
   document.documentElement.classList.remove('dark')
@@ -92,7 +92,7 @@ beforeEach(() => {
 
 describe('EnterpriseLayout（L1 外壳重制）', () => {
   it('派诺云展开态只渲染一套字标，折叠后只保留可辨识图标', async () => {
-    isPainuoyunEnterpriseHost.mockReturnValue(true)
+    isPainuoyunEnterprisePortal.mockReturnValue(true)
     const { wrapper, app } = mountShell('enterprise_admin')
 
     expect(wrapper.findAll('[data-testid="sidebar-brand-wordmark"]')).toHaveLength(2)
@@ -105,7 +105,7 @@ describe('EnterpriseLayout（L1 外壳重制）', () => {
     wrapper.unmount()
   })
 
-  it('非企业主机保持既有 Sub2API 侧栏品牌', () => {
+  it('非企业路径保持既有 Sub2API 侧栏品牌', () => {
     const { wrapper } = mountShell('enterprise_admin')
     expect(wrapper.text()).toContain('Sub2API')
     expect(wrapper.find('[data-testid="sidebar-brand-wordmark"]').exists()).toBe(false)

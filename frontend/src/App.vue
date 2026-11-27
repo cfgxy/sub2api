@@ -23,7 +23,7 @@ const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 
 function isPainuoyunEnterpriseRoute(): boolean {
-  return isPainuoyunEnterprisePortal(window.location.hostname, route.path)
+  return isPainuoyunEnterprisePortal(route.path)
 }
 
 function updateDocumentTitle() {

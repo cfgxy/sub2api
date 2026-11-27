@@ -49,7 +49,7 @@ async function bootstrap() {
   appStore.initFromInjectedConfig()
 
   // Set document title immediately after config is loaded
-  const isPainuoyunEnterprise = isPainuoyunEnterprisePortal(window.location.hostname, window.location.pathname)
+  const isPainuoyunEnterprise = isPainuoyunEnterprisePortal(window.location.pathname)
   if (!isPainuoyunEnterprise && appStore.siteName && appStore.siteName !== 'Sub2API') {
     document.title = `${appStore.siteName} - AI API Gateway`
   }

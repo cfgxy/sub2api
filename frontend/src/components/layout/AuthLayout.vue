@@ -19,14 +19,14 @@
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
-import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterprisePortal, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
 
 const props = defineProps<{ enterprise?: boolean }>()
 
 const appStore = useAppStore()
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const footerSiteName = computed(() =>
-  props.enterprise && isPainuoyunEnterpriseHost(window.location.hostname) ? PAINUOYUN_ENTERPRISE_NAME : siteName.value,
+  props.enterprise && isPainuoyunEnterprisePortal(window.location.pathname) ? PAINUOYUN_ENTERPRISE_NAME : siteName.value,
 )
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Subscription to API Conversion Platform')

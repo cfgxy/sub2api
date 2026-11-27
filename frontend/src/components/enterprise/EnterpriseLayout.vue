@@ -193,14 +193,14 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseAuthStore } from '@/stores/enterpriseAuth'
-import { isPainuoyunEnterpriseHost } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterprisePortal } from '@/utils/enterpriseBranding'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const auth = useEnterpriseAuthStore()
-const isPainuoyun = isPainuoyunEnterpriseHost(window.location.hostname)
+const isPainuoyun = isPainuoyunEnterprisePortal(window.location.pathname)
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)

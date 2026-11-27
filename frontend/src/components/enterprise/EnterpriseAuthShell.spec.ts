@@ -32,10 +32,10 @@ const brandResponse = {
 
 const originalLocation = window.location
 
-async function mountShell(hostname = originalLocation.hostname) {
+async function mountShell(hostname = originalLocation.hostname, pathname = '/enterprise/login') {
   Object.defineProperty(window, 'location', {
     configurable: true,
-    value: { ...originalLocation, hostname },
+    value: { ...originalLocation, hostname, pathname },
   })
   vi.resetModules()
   const { default: EnterpriseAuthShell } = await import('./EnterpriseAuthShell.vue')
@@ -75,12 +75,12 @@ describe('EnterpriseAuthShell brand background', () => {
     await flushPromises()
 
     const style = wrapper.get('.auth-background').attributes('style') || ''
-    expect(style).toContain('url("/logo.svg")')
+    expect(wrapper.get('.auth-background').classes()).toContain('painuoyun-default-background')
     expect(style).not.toContain('/api/v1/enterprise/brand/background')
     wrapper.unmount()
   })
 
-  it('renders custom API-backed copy verbatim on a 派诺云 host', async () => {
+  it('renders custom API-backed copy verbatim on an enterprise route', async () => {
     getBrand.mockResolvedValue({
       ...brandResponse,
       enterprise_name: 'Acme Sub2API 团队',

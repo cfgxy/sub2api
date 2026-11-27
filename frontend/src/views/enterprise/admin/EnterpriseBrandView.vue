@@ -95,9 +95,9 @@ import { ElMessage } from 'element-plus'
 import { enterpriseAPI } from '@/api/enterprise'
 import { validateBrand, validateImageFile } from '@/features/enterprise/validation'
 import type { EnterpriseBrand } from '@/types/enterprise'
-import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterprisePortal, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
 
-const isPainuoyun = isPainuoyunEnterpriseHost(window.location.hostname)
+const isPainuoyun = isPainuoyunEnterprisePortal(window.location.pathname)
 const defaultBrand: EnterpriseBrand = {
   enterprise_name: isPainuoyun ? PAINUOYUN_ENTERPRISE_NAME : 'Sub2API',
   title: '企业工作台',

@@ -53,7 +53,7 @@ import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import Icon from '@/components/icons/Icon.vue'
 import EnterpriseAuthShell from '@/components/enterprise/EnterpriseAuthShell.vue'
-import { isPainuoyunEnterpriseHost } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterprisePortal } from '@/utils/enterpriseBranding'
 
 type StateTone = 'session' | 'warning' | 'danger' | 'access'
 type StateKey = 'session-expired' | 'employee-disabled' | 'enterprise-disabled' | 'source-unavailable' | 'forbidden' | 'not-found' | 'cross-enterprise' | 'reset-link-invalid'
@@ -81,6 +81,6 @@ const toneStyles: Record<StateTone, { panel: string; icon: string; code: string;
 
 const activeState = computed(() => states.find((state) => state.key === route.query.state) || states[0])
 const showPainuoyunEmptyState = computed(() =>
-  isPainuoyunEnterpriseHost(window.location.hostname) && activeState.value.key === 'source-unavailable',
+  isPainuoyunEnterprisePortal(route.path) && activeState.value.key === 'source-unavailable',
 )
 </script>

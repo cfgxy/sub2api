@@ -36,13 +36,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { enterpriseAPI } from '@/api/enterprise'
-import { isPainuoyunEnterpriseHost, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
+import { isPainuoyunEnterprisePortal, PAINUOYUN_ENTERPRISE_NAME } from '@/utils/enterpriseBranding'
 import AuthLayout from '@/components/layout/AuthLayout.vue'
 import type { EnterpriseBrand } from '@/types/enterprise'
 
 defineProps<{ authLayout?: boolean }>()
 
-const isPainuoyun = isPainuoyunEnterpriseHost(window.location.hostname)
+const isPainuoyun = isPainuoyunEnterprisePortal(window.location.pathname)
 const defaultBrand: EnterpriseBrand = {
   enterprise_name: isPainuoyun ? PAINUOYUN_ENTERPRISE_NAME : 'Sub2API',
   title: '企业工作台',
