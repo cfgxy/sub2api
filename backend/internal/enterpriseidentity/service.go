@@ -625,6 +625,23 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 	return items, rows.Err()
 }
 
+func (s *Service) RefreshPlatformEnterpriseSubscriptionsForDedicatedUser(ctx context.Context, dedicatedUpstreamUserID, actorUserID int64) error {
+	var enterpriseID int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM enterprises
+		WHERE dedicated_upstream_user_id = $1 AND status = 'active'
+	`, dedicatedUpstreamUserID).Scan(&enterpriseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = s.RefreshPlatformEnterpriseSubscriptions(ctx, enterpriseID, actorUserID)
+	return err
+}
+
 func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, enterpriseID, actorUserID int64) (*SubscriptionRefreshResult, error) {
 	if enterpriseID <= 0 {
 		return nil, errInvalidEnterpriseInput
@@ -770,6 +787,11 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
+	}
+	if result.Action != "unchanged" {
+		if invalidator, ok := s.authCacheInvalidator.(APIKeyAuthCacheUserInvalidator); ok {
+			invalidator.InvalidateAuthCacheByUserID(ctx, dedicatedUpstreamUserID)
+		}
 	}
 	return result, nil
 }
