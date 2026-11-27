@@ -1,4 +1,5 @@
-# main 构建完成后自动更新 FDE www.v2；stable 的 PR 合并只更新 AWS 主站下次启动镜像，不重启服务。
+# main 构建完成后自动更新 FDE www.v2；stable 的 PR 合并构建后自动更新 AWS 主站。
+# 发布版本由 Git tag 全局串行分配，确保应用版本、Docker tag 和生产 .env 引用完全一致。
 name: docker-image
 
 on:
@@ -7,11 +8,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: docker-image-${{ github.ref_name }}
+  # 同一日的 ent 版本号跨 main/stable 共用一个递增序列，必须全局串行。
+  group: sub2api-package-version-all-branches
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -19,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.image.outputs.ref }}
+      digest: ${{ steps.image.outputs.digest }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
@@ -27,19 +30,46 @@ jobs:
 
       - id: version
         env:
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
           SOURCE_BRANCH: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
           case "$SOURCE_BRANCH" in
             main|stable) EDITION=ent ;;
             offcial-base) EDITION=ob ;;
             *) echo '只允许打包 main、stable 或 offcial-base'; exit 1 ;;
           esac
-          test "$RUN_ATTEMPT" -lt 1000
-          SEQUENCE=$((RUN_ID * 1000 + RUN_ATTEMPT))
-          VERSION=$(python3 backend/scripts/package-version.py --edition "$EDITION" --sequence "$SEQUENCE" --output build-info.json)
-          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # 版本格式与正式交付一致：v上游版本-ent.YYYYMMDD-N。Git tag 是
+          # 跨 runner 持久的当日序列账本；全局 concurrency 消除 main/stable 竞态。
+          BUILT_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          BUILD_DATE=${BUILT_AT:0:10}
+          BUILD_DATE=${BUILD_DATE//-/}
+          UPSTREAM=$(bash backend/scripts/resolve-version.sh | sed 's/^v//')
+          PREFIX="v${UPSTREAM}-${EDITION}.${BUILD_DATE}-"
+          max=0
+          while read -r _ ref; do
+            tag=${ref#refs/tags/}
+            [[ "$tag" == "$PREFIX"* ]] || continue
+            sequence=${tag#"$PREFIX"}
+            [[ "$sequence" =~ ^[1-9][0-9]*$ ]] || continue
+            if (( sequence > max )); then
+              max=$sequence
+            fi
+          done < <(git ls-remote --tags --refs origin "${PREFIX}*")
+          SEQUENCE=$((max + 1))
+
+          VERSION=$(python3 backend/scripts/package-version.py \
+            --edition "$EDITION" --upstream "$UPSTREAM" --built-at "$BUILT_AT" \
+            --source-sha "$SOURCE_SHA" --sequence "$SEQUENCE" --output build-info.json)
+          TAG="v${VERSION}"
+          [[ "$TAG" == "${PREFIX}${SEQUENCE}" ]] || { echo '版本格式校验失败' >&2; exit 1; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" "$SOURCE_SHA" -m "Sub2API package ${TAG}"
+          git push origin "refs/tags/${TAG}"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           python3 -c 'import json, os; d=json.load(open("build-info.json")); f=open(os.environ["GITHUB_OUTPUT"], "a"); f.write("date=" + d["built_at"] + "\nupstream=" + d["upstream_version"] + "\n")'
 
@@ -80,7 +110,8 @@ jobs:
         run: |
           digest=$(docker buildx imagetools inspect "$IMAGE_TAG" --format '{{.Manifest.Digest}}')
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          echo "ref=ghcr.io/cfgxy/sub2api@$digest" >> "$GITHUB_OUTPUT"
+          echo "ref=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "digest=ghcr.io/cfgxy/sub2api@$digest" >> "$GITHUB_OUTPUT"
 
   deploy-fde-v2:
     needs: build
@@ -100,7 +131,7 @@ jobs:
         env:
           FDE_HOST: ${{ secrets.FDE_V2_DEPLOY_HOST }}
           FDE_USER: ${{ secrets.FDE_V2_DEPLOY_USER }}
-          IMAGE: ${{ needs.build.outputs.image }}
+          IMAGE: ${{ needs.build.outputs.digest }}
           VERSION: ${{ needs.build.outputs.version }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
@@ -108,7 +139,7 @@ jobs:
           ssh "$FDE_USER@$FDE_HOST" "chmod 700 /tmp/deploy-fde-v2-${GITHUB_RUN_ID}.sh && GITHUB_RUN_ID=${GITHUB_RUN_ID} /tmp/deploy-fde-v2-${GITHUB_RUN_ID}.sh '$IMAGE' '$SOURCE_SHA' '$VERSION' && rm -f /tmp/deploy-fde-v2-${GITHUB_RUN_ID}.sh"
           curl --fail --silent --show-error --connect-timeout 10 --max-time 30 https://www.v2.apinoria.com/health | grep -q '"status":"ok"'
 
-  stage-aws-sg:
+  deploy-aws-sg:
     needs: build
     if: github.ref_name == 'stable' && github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -122,11 +153,13 @@ jobs:
         env:
           AWS_HOST: ${{ secrets.AWS_SG_DEPLOY_HOST }}
         run: ssh-keyscan -H "$AWS_HOST" >> ~/.ssh/known_hosts
-      - name: Stage immutable image only; do not restart www.apinoria.com
+      - name: Deploy versioned stable image and verify www.apinoria.com
         env:
           AWS_HOST: ${{ secrets.AWS_SG_DEPLOY_HOST }}
           AWS_USER: ${{ secrets.AWS_SG_DEPLOY_USER }}
           IMAGE: ${{ needs.build.outputs.image }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
-          scp .github/scripts/stage-aws-sg-image.sh "$AWS_USER@$AWS_HOST:/tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh"
-          ssh "$AWS_USER@$AWS_HOST" "chmod 700 /tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh && GITHUB_RUN_ID=${GITHUB_RUN_ID} /tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh '$IMAGE' && rm -f /tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh"
+          scp .github/scripts/deploy-aws-sg-stable.sh "$AWS_USER@$AWS_HOST:/tmp/deploy-aws-sg-${GITHUB_RUN_ID}.sh"
+          ssh "$AWS_USER@$AWS_HOST" "chmod 700 /tmp/deploy-aws-sg-${GITHUB_RUN_ID}.sh && GITHUB_RUN_ID=${GITHUB_RUN_ID} /tmp/deploy-aws-sg-${GITHUB_RUN_ID}.sh '$IMAGE' '$SOURCE_SHA' '$VERSION' && rm -f /tmp/deploy-aws-sg-${GITHUB_RUN_ID}.sh"
