@@ -18,6 +18,7 @@ vi.mock('@/api/enterprise', () => ({ enterpriseAPI: { getCurrentKey }, fetchEnte
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard }) }))
 
 const FULL_KEY = `sk-guide-${'a1b2c3d4'.repeat(4)}`
+const ENTERPRISE_ORIGIN = window.location.origin
 const employeeKey = (overrides: Record<string, unknown> = {}) => ({
   id: 3, masked_key: 'sk-gui...c3d4', key: FULL_KEY, name: 'Enterprise employee key', status: 'active',
   quota: 25, quota_used: 1, rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0,
@@ -75,13 +76,13 @@ describe('EnterpriseKeyGuideView', () => {
     wrapper.unmount()
   })
 
-  it('shows the enterprise API domain without exposing the personal domain', async () => {
+  it('uses the current enterprise portal origin for API setup', async () => {
     const wrapper = mountView()
     await flushPromises()
-    expect(wrapper.get('[data-testid="guide-base-url-openai"]').text()).toBe('https://api.ainoriahub.com/v1')
-    expect(wrapper.get('[data-testid="guide-base-url-anthropic"]').text()).toBe('https://api.ainoriahub.com')
+    expect(wrapper.get('[data-testid="guide-base-url-openai"]').text()).toBe(`${ENTERPRISE_ORIGIN}/v1`)
+    expect(wrapper.get('[data-testid="guide-base-url-anthropic"]').text()).toBe(ENTERPRISE_ORIGIN)
     await wrapper.get('[data-testid="guide-copy-base-url-openai"]').trigger('click')
-    expect(copyToClipboard).toHaveBeenCalledWith('https://api.ainoriahub.com/v1', expect.any(String))
+    expect(copyToClipboard).toHaveBeenCalledWith(`${ENTERPRISE_ORIGIN}/v1`, expect.any(String))
     wrapper.unmount()
   })
 
@@ -90,12 +91,12 @@ describe('EnterpriseKeyGuideView', () => {
     await flushPromises()
     const options = wrapper.findAll('[data-testid="guide-model-option"]')
     expect(options).toHaveLength(2)
-    expect(wrapper.get('[data-testid="guide-example-code"]').text()).toContain('https://api.ainoriahub.com/v1/chat/completions')
+    expect(wrapper.get('[data-testid="guide-example-code"]').text()).toContain(`${ENTERPRISE_ORIGIN}/v1/chat/completions`)
     expect(wrapper.get('[data-testid="guide-example-code"]').text()).toContain('gpt-guide')
 
     await options[1].setValue(true)
     const example = wrapper.get('[data-testid="guide-example-code"]').text()
-    expect(example).toContain('https://api.ainoriahub.com/v1/messages')
+    expect(example).toContain(`${ENTERPRISE_ORIGIN}/v1/messages`)
     expect(example).not.toContain('/v1/v1')
     expect(example).toContain('claude-guide')
 
@@ -163,7 +164,7 @@ describe('EnterpriseKeyGuideView', () => {
     const ccsUri = String(open.mock.calls[1][0])
     expect(ccsUri.startsWith('ccswitch://v1/import?')).toBe(true)
     expect(new URL(ccsUri).searchParams.get('model')).toBe('claude-guide')
-    expect(new URL(ccsUri).searchParams.get('endpoint')).toBe('https://api.ainoriahub.com')
+    expect(new URL(ccsUri).searchParams.get('endpoint')).toBe(ENTERPRISE_ORIGIN)
 
     expect(JSON.stringify(logs.map((spy) => spy.mock.calls))).not.toContain(FULL_KEY)
     expect(JSON.stringify(localStorage)).not.toContain(FULL_KEY)
