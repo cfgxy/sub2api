@@ -36,80 +36,76 @@
         {{ t('enterprise.home.sourceUnavailable') }}
       </div>
 
-      <div v-if="usage" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          :title="t('admin.enterprise.terms.allocation')"
-          :value="formatEnterpriseAmount(usage.allocation)"
-          :icon="icons.allocation"
-          icon-variant="primary"
-        />
-        <StatCard
-          :title="t('admin.enterprise.terms.actualCost')"
-          :value="formatEnterpriseAmount(usage.actual_cost)"
-          :icon="icons.cost"
-          icon-variant="success"
-        />
-        <StatCard
-          :title="t('admin.enterprise.terms.remaining')"
-          :value="formatEnterpriseAmount(usage.remaining)"
-          :icon="icons.remaining"
-          icon-variant="warning"
-        />
-        <StatCard
-          :title="t('admin.enterprise.terms.overage')"
-          :value="formatEnterpriseAmount(usage.overage)"
-          :icon="icons.overage"
-          :icon-variant="hasOverage ? 'danger' : 'primary'"
-        />
-      </div>
-      <EmptyState v-else :title="t('enterprise.home.usageUnavailable')" description="" data-testid="home-usage-empty" />
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-2" data-testid="home-quota-comparison">
+        <article class="card card-body">
+          <div class="mb-4">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.personalQuotaTitle') }}</h2>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.quotaWindow') }}</p>
+          </div>
+          <div
+            v-if="usage?.source_status !== 'available'"
+            class="grid h-32 place-items-center text-center text-sm text-gray-500 dark:text-dark-400"
+            data-testid="home-personal-quota-unavailable"
+          >
+            {{ unavailableMessage(usage?.unavailable_reason) }}
+          </div>
+          <dl v-else class="grid grid-cols-3 gap-x-4 gap-y-4">
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.personalQuota') }}</dt>
+              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(usage.allocation) }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.used') }}</dt>
+              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(usage.actual_cost) }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.available') }}</dt>
+              <dd class="mt-1 text-base font-semibold" :class="personalAvailable ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400'">
+                {{ formatEnterpriseAmount(usage.remaining) }}
+              </dd>
+            </div>
+          </dl>
+        </article>
 
-      <div class="card card-body">
-        <h2 class="mb-4 text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.poolTitle') }}</h2>
-        <p
-          v-if="pool?.source_status === 'unavailable'"
-          class="text-sm text-gray-500 dark:text-dark-400"
-          data-testid="home-pool-unavailable"
-        >
-          {{ t('enterprise.home.poolUnavailable') }}
-        </p>
-        <div v-else-if="pool" class="flex flex-col gap-6 sm:flex-row sm:items-center">
-          <div class="relative grid h-24 w-24 flex-none place-items-center rounded-full bg-gray-100 dark:bg-dark-800">
-            <svg class="h-24 w-24 -rotate-90" viewBox="0 0 96 96" aria-hidden="true">
-              <circle class="text-gray-200 dark:text-dark-700" cx="48" cy="48" r="42" fill="none" stroke="currentColor" stroke-width="8" />
-              <circle
-                class="text-primary-500"
-                cx="48"
-                cy="48"
-                r="42"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="8"
-                stroke-linecap="round"
-                :stroke-dasharray="poolCircumference"
-                :stroke-dashoffset="poolDashOffset"
-              />
-            </svg>
-            <span class="absolute text-base font-bold text-gray-900 dark:text-white">{{ poolUsedPercentage }}%</span>
+        <article class="card card-body">
+          <div class="mb-4">
+            <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.poolTitle') }}</h2>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.quotaWindow') }}</p>
           </div>
-          <div class="min-w-0 flex-1">
-            <strong class="block text-lg text-gray-900 dark:text-white">{{ formatEnterpriseAmount(pool.pool_used) }} / {{ formatEnterpriseAmount(pool.pool_limit) }}</strong>
-            <p
-              class="mt-1 text-sm"
-              :class="pool.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
-            >
-              {{ pool.pool_exhausted
-                ? t('enterprise.home.poolExhausted')
-                : t('enterprise.home.poolHealthy', { percentage: poolUsedPercentage }) }}
-            </p>
-            <small
-              class="mt-1 block text-xs"
-              :class="pool.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
-            >
-              {{ t('enterprise.home.poolRemaining', { value: formatEnterpriseAmount(pool.pool_remaining) }) }}
-            </small>
+          <div
+            v-if="pool?.source_status !== 'available'"
+            class="grid h-32 place-items-center text-center text-sm text-gray-500 dark:text-dark-400"
+            data-testid="home-pool-unavailable"
+          >
+            {{ unavailableMessage(pool?.unavailable_reason) }}
           </div>
-        </div>
+          <dl v-else class="grid grid-cols-3 gap-x-4 gap-y-4">
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.poolLimit') }}</dt>
+              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(pool.pool_limit) }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.used') }}</dt>
+              <dd class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(pool.pool_used) }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-dark-400">{{ t('enterprise.home.available') }}</dt>
+              <dd class="mt-1 text-base font-semibold" :class="pool.pool_exhausted ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'">
+                {{ formatEnterpriseAmount(pool.pool_remaining) }}
+              </dd>
+            </div>
+          </dl>
+        </article>
+      </div>
+
+      <div
+        v-if="quotaStatus"
+        class="card card-body text-sm"
+        :class="quotaStatus.tone"
+        role="status"
+        data-testid="home-quota-status"
+      >
+        {{ quotaStatus.message }}
       </div>
 
       <div class="card card-body">
@@ -176,7 +172,7 @@
             <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('enterprise.home.reminderTitle') }}</h2>
             <span class="badge" :class="reminderBadgeClass">{{ reminderLabel }}</span>
           </div>
-          <template v-if="usage">
+          <template v-if="usage?.source_status === 'available'">
             <b class="block text-base text-gray-900 dark:text-white">
               {{ t('enterprise.home.reminderHeadline', { percentage: usagePercentage }) }}
             </b>
@@ -192,7 +188,7 @@
               <span>{{ formatEnterpriseAmount(usage.allocation) }} {{ t('admin.enterprise.terms.allocation') }}</span>
             </div>
           </template>
-          <p v-else class="text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.home.usageUnavailable') }}</p>
+          <p v-else class="text-sm text-gray-500 dark:text-dark-400">{{ unavailableMessage(usage?.unavailable_reason) }}</p>
         </div>
       </div>
 
@@ -212,14 +208,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, markRaw, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import Icon from '@/components/icons/Icon.vue'
 import DataTable from '@/components/common/DataTable.vue'
-import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import StatCard from '@/components/common/StatCard.vue'
 import type { Column } from '@/components/common/types'
 import { enterpriseAPI } from '@/api/enterprise'
 import { formatEnterpriseAmount } from '@/utils/enterpriseAmounts'
@@ -240,14 +234,33 @@ const recentTrend = ref<EnterpriseEmployeeUsageTrendPoint[]>([])
 const recentCalls = ref<EnterpriseEmployeeUsageRecord[]>([])
 const recentCallsState = ref<SourceState>('loading')
 
-// 指标卡图标：与 EnterpriseLayout 同一套 h() 包装惯例，避免在页面内自建图标组件
-type IconName = InstanceType<typeof Icon>['$props']['name']
-const iconOf = (name: IconName) => markRaw({ render: () => h(Icon, { name, size: 'md' }) })
-const icons = {
-  allocation: iconOf('bolt'),
-  cost: iconOf('dollar'),
-  remaining: iconOf('chartBar'),
-  overage: iconOf('exclamationTriangle'),
+// This home view only renders the two authoritative values when their
+// backend-provided weekly anchors match. It does not use client-side cache as
+// a fallback for quota information.
+const personalAvailable = computed(() => Number(usage.value?.remaining ?? 0) > 0)
+const poolAvailable = computed(() => pool.value?.pool_exhausted === false && Number(pool.value?.pool_remaining ?? 0) > 0)
+const quotaStatus = computed(() => {
+  const reason = usage.value?.unavailable_reason || pool.value?.unavailable_reason
+  if (usage.value?.source_status !== 'available' || pool.value?.source_status !== 'available') {
+    return { tone: 'border-yellow-200 text-yellow-700 dark:border-yellow-900/50 dark:text-yellow-500', message: unavailableMessage(reason) }
+  }
+  if (!poolAvailable.value && personalAvailable.value) {
+    return { tone: 'border-red-200 text-red-600 dark:border-red-900/50 dark:text-red-400', message: t('enterprise.home.statusEnterpriseExhausted') }
+  }
+  if (poolAvailable.value && !personalAvailable.value) {
+    return { tone: 'border-yellow-200 text-yellow-700 dark:border-yellow-900/50 dark:text-yellow-500', message: t('enterprise.home.statusPersonalExhausted') }
+  }
+  if (!poolAvailable.value && !personalAvailable.value) {
+    return { tone: 'border-red-200 text-red-600 dark:border-red-900/50 dark:text-red-400', message: t('enterprise.home.statusBothExhausted') }
+  }
+  return { tone: 'border-green-200 text-green-700 dark:border-green-900/50 dark:text-green-400', message: t('enterprise.home.statusAvailable') }
+})
+
+function unavailableMessage(reason?: string) {
+  if (reason === 'subscription_expired') return t('enterprise.home.subscriptionExpired')
+  if (reason === 'no_active_subscription') return t('enterprise.home.noActiveSubscription')
+  if (reason === 'window_mismatch') return t('enterprise.home.windowMismatch')
+  return t('enterprise.home.dataUnavailable')
 }
 
 const recentColumns = computed<Column[]>(() => [
@@ -266,16 +279,6 @@ const hasOverage = computed(() => {
   const value = usage.value?.overage
   return value !== undefined && Number(value) > 0
 })
-
-const poolUsedPercentage = computed(() => {
-  if (!pool.value) return 0
-  const limit = Number(pool.value.pool_limit)
-  const used = Number(pool.value.pool_used)
-  if (!limit) return 0
-  return Math.min(100, Math.round((used / limit) * 100))
-})
-const poolCircumference = 2 * Math.PI * 42
-const poolDashOffset = computed(() => poolCircumference * (1 - poolUsedPercentage.value / 100))
 
 const usagePercentage = computed(() => {
   if (!usage.value) return 0

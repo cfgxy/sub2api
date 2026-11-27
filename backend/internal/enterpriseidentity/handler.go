@@ -753,11 +753,7 @@ func (h *Handler) employeeHome(c *gin.Context) {
 	if !ok {
 		return
 	}
-	usage, err := h.service.GetEmployeeUsage(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
-	if response.ErrorFrom(c, err) {
-		return
-	}
-	pool, err := h.service.GetEnterprisePoolStatus(c.Request.Context(), claims.EnterpriseID)
+	usage, pool, err := h.employeeQuotaSnapshot(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
 	if response.ErrorFrom(c, err) {
 		return
 	}
@@ -781,15 +777,36 @@ func (h *Handler) employeeUsage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	usage, err := h.service.GetEmployeeUsage(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
-	if response.ErrorFrom(c, err) {
-		return
-	}
-	pool, err := h.service.GetEnterprisePoolStatus(c.Request.Context(), claims.EnterpriseID)
+	usage, pool, err := h.employeeQuotaSnapshot(c.Request.Context(), claims.EnterpriseID, claims.PrincipalID)
 	if response.ErrorFrom(c, err) {
 		return
 	}
 	response.Success(c, gin.H{"usage": usage, "enterprise_pool": pool})
+}
+
+// employeeQuotaSnapshot keeps employee and enterprise figures tied to one
+// authoritative weekly anchor. The endpoint deliberately derives both tenant
+// and employee scope from authentication claims; callers cannot choose either.
+func (h *Handler) employeeQuotaSnapshot(ctx context.Context, enterpriseID, employeeID int64) (*EmployeeUsageSummary, *EnterprisePoolStatus, error) {
+	usage, err := h.service.GetEmployeeUsage(ctx, enterpriseID, employeeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	pool, err := h.service.GetEnterprisePoolStatus(ctx, enterpriseID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if usage.SourceStatus == "unavailable" && usage.UnavailableReason == "" {
+		usage.UnavailableReason = pool.UnavailableReason
+	}
+	if usage.SourceStatus == "available" && pool.SourceStatus == "available" &&
+		(usage.WindowAnchor == nil || pool.WindowAnchor == nil || !usage.WindowAnchor.Equal(*pool.WindowAnchor)) {
+		// A reset between the two reads must not be presented as one coherent
+		// balance. Hide both figures until the next refresh returns one window.
+		usage.SourceStatus, usage.UnavailableReason = "unavailable", "window_mismatch"
+		pool.SourceStatus, pool.UnavailableReason = "unavailable", "window_mismatch"
+	}
+	return usage, pool, nil
 }
 
 func (h *Handler) employeeUsageDetails(c *gin.Context) {

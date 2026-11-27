@@ -57,6 +57,7 @@ export interface EnterpriseEmployeeUsageSummary {
   window_type: 'week'
   window_anchor?: string
   source_status: 'available' | 'unavailable'
+  unavailable_reason?: 'subscription_expired' | 'no_active_subscription' | 'data_unavailable' | 'window_mismatch'
   allocation: string
   actual_cost: string
   remaining: string
@@ -74,6 +75,7 @@ export interface EnterpriseEmployeeUsageRecord {
 
 export interface EnterpriseEnterprisePoolStatus {
   source_status: 'available' | 'unavailable'
+  unavailable_reason?: 'subscription_expired' | 'no_active_subscription' | 'data_unavailable' | 'window_mismatch'
   pool_limit: string
   pool_used: string
   pool_remaining: string

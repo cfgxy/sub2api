@@ -312,15 +312,16 @@ type EmployeeDetail struct {
 }
 
 type EmployeeUsageSummary struct {
-	SubscriptionID *int64     `json:"subscription_id,omitempty"`
-	WindowType     string     `json:"window_type"`
-	WindowAnchor   *time.Time `json:"window_anchor,omitempty"`
-	SourceStatus   string     `json:"source_status"`
-	Allocation     string     `json:"allocation"`
-	ActualCost     string     `json:"actual_cost"`
-	Remaining      string     `json:"remaining"`
-	Overage        string     `json:"overage"`
-	Requests       int64      `json:"requests"`
+	SubscriptionID    *int64     `json:"subscription_id,omitempty"`
+	WindowType        string     `json:"window_type"`
+	WindowAnchor      *time.Time `json:"window_anchor,omitempty"`
+	SourceStatus      string     `json:"source_status"`
+	UnavailableReason string     `json:"unavailable_reason,omitempty"`
+	Allocation        string     `json:"allocation"`
+	ActualCost        string     `json:"actual_cost"`
+	Remaining         string     `json:"remaining"`
+	Overage           string     `json:"overage"`
+	Requests          int64      `json:"requests"`
 }
 
 type EmployeeUsageRecord struct {
@@ -1779,12 +1780,13 @@ func (s *Service) GetEmployee(ctx context.Context, enterpriseID, employeeID int6
 // groups.weekly_limit_usd join used by the admin workbench summary
 // (SHAN-267 fixed GetEmployeeUsage's copy on origin/main).
 type EnterprisePoolStatus struct {
-	SourceStatus  string     `json:"source_status"`
-	PoolLimit     string     `json:"pool_limit"`
-	PoolUsed      string     `json:"pool_used"`
-	PoolRemaining string     `json:"pool_remaining"`
-	PoolExhausted bool       `json:"pool_exhausted"`
-	WindowAnchor  *time.Time `json:"window_anchor,omitempty"`
+	SourceStatus      string     `json:"source_status"`
+	UnavailableReason string     `json:"unavailable_reason,omitempty"`
+	PoolLimit         string     `json:"pool_limit"`
+	PoolUsed          string     `json:"pool_used"`
+	PoolRemaining     string     `json:"pool_remaining"`
+	PoolExhausted     bool       `json:"pool_exhausted"`
+	WindowAnchor      *time.Time `json:"window_anchor,omitempty"`
 }
 
 type currentEnterpriseWeek struct {
@@ -1845,32 +1847,47 @@ func (s *Service) resolveCurrentEnterpriseWeek(ctx context.Context, enterpriseID
 
 func (s *Service) GetEnterprisePoolStatus(ctx context.Context, enterpriseID int64) (*EnterprisePoolStatus, error) {
 	result := &EnterprisePoolStatus{SourceStatus: "unavailable", PoolLimit: "0", PoolUsed: "0", PoolRemaining: "0"}
-	var poolStatus sql.NullString
+	var poolStatus, unavailableReason sql.NullString
 	var poolLimit, poolUsed, poolRemaining sql.NullString
 	var poolExhausted sql.NullBool
 	var poolAnchor sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT CASE WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL
-		            OR subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0
-		       THEN 'unavailable' ELSE 'available' END,
+		SELECT CASE WHEN enterprise_subscription.id IS NOT NULL
+		                 AND upstream_subscription.id IS NOT NULL
+		                 AND upstream_subscription.deleted_at IS NULL
+		                 AND upstream_subscription.status = 'active'
+		                 AND upstream_subscription.starts_at <= CURRENT_TIMESTAMP
+		                 AND upstream_subscription.expires_at > CURRENT_TIMESTAMP
+		                 AND subscription_group.weekly_limit_usd IS NOT NULL
+		                 AND subscription_group.weekly_limit_usd > 0
+		            THEN 'available' ELSE 'unavailable' END,
 		       COALESCE(CASE WHEN subscription_group.weekly_limit_usd > 0 THEN subscription_group.weekly_limit_usd END, 0)::NUMERIC(20,8)::text,
 		       COALESCE(upstream_subscription.weekly_usage_usd, 0)::NUMERIC(20,8)::text,
 		       CASE WHEN subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0 THEN '0'
 		            ELSE GREATEST(subscription_group.weekly_limit_usd - COALESCE(upstream_subscription.weekly_usage_usd, 0), 0)::NUMERIC(20,8)::text END,
 		       (subscription_group.weekly_limit_usd IS NOT NULL AND subscription_group.weekly_limit_usd > 0
 		        AND COALESCE(upstream_subscription.weekly_usage_usd, 0) >= subscription_group.weekly_limit_usd),
-		       upstream_subscription.weekly_window_start
+		       upstream_subscription.weekly_window_start,
+		       CASE
+		         WHEN enterprise_subscription.id IS NULL OR upstream_subscription.id IS NULL
+		           OR upstream_subscription.deleted_at IS NOT NULL
+		           OR upstream_subscription.status <> 'active'
+		           OR upstream_subscription.starts_at > CURRENT_TIMESTAMP THEN 'no_active_subscription'
+		         WHEN upstream_subscription.expires_at <= CURRENT_TIMESTAMP THEN 'subscription_expired'
+		         WHEN subscription_group.weekly_limit_usd IS NULL OR subscription_group.weekly_limit_usd <= 0 THEN 'data_unavailable'
+		         ELSE NULL
+		       END
 		FROM enterprises AS enterprise
 		LEFT JOIN enterprise_subscriptions AS enterprise_subscription
 		  ON enterprise_subscription.enterprise_id = enterprise.id AND enterprise_subscription.status = 'active'
 		LEFT JOIN user_subscriptions AS upstream_subscription
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
 		 AND upstream_subscription.user_id = enterprise.dedicated_upstream_user_id
-		 AND upstream_subscription.deleted_at IS NULL
 		LEFT JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
 		WHERE enterprise.id = $1 AND enterprise.status = 'active'`, enterpriseID).Scan(
-		&poolStatus, &poolLimit, &poolUsed, &poolRemaining, &poolExhausted, &poolAnchor)
+		&poolStatus, &poolLimit, &poolUsed, &poolRemaining, &poolExhausted, &poolAnchor, &unavailableReason)
 	if errors.Is(err, sql.ErrNoRows) {
+		result.UnavailableReason = "data_unavailable"
 		return result, nil
 	}
 	if err != nil {
@@ -1878,6 +1895,9 @@ func (s *Service) GetEnterprisePoolStatus(ctx context.Context, enterpriseID int6
 	}
 	if poolStatus.Valid {
 		result.SourceStatus = poolStatus.String
+	}
+	if unavailableReason.Valid {
+		result.UnavailableReason = unavailableReason.String
 	}
 	if poolLimit.Valid {
 		result.PoolLimit = poolLimit.String
