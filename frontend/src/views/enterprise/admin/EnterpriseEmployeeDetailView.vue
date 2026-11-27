@@ -120,7 +120,7 @@
             <div class="card p-4">
               <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ terms.actualCost }}</p>
               <p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">
-                {{ usageSummary?.total_usage_credit ?? '0' }}
+                {{ formatEnterpriseAmount(usageSummary?.total_usage_credit) }}
               </p>
             </div>
             <div class="card p-4">
@@ -333,6 +333,7 @@ import {
   isEnterpriseEmployeeVersionConflict,
   isEnterpriseKeyMutationStateConflict
 } from '@/api/enterprise'
+import { formatEnterpriseAmount } from '@/utils/enterpriseAmounts'
 import { auditActorLabel, auditEventLabel, employeeStatusLabel, keyStatusLabel, windowTypeLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type {
@@ -407,10 +408,11 @@ const tabs = [
 
 const employeeStatusText = (value: string) => employeeStatusLabel(value, t)
 const keyStatusText = (value: string) => keyStatusLabel(value, t)
-const employeeConfiguredCredit = computed(
-  () =>
+const employeeConfiguredCredit = computed(() =>
+  formatEnterpriseAmount(
     usageSummary.value?.employee_summaries?.find((item) => item.employee_id === employeeId.value)
-      ?.configured_credit ?? '0'
+      ?.configured_credit,
+  ),
 )
 const avatarLetter = computed(() => detail.value?.email?.[0]?.toUpperCase() || '?')
 const formatDate = (value?: string) =>
@@ -440,7 +442,7 @@ const keyRows = computed(() => {
   return [
     { label: 'Key', value: key.masked_key, mono: true },
     { label: '状态', value: keyStatusText(key.status), mono: false },
-    { label: terms.value.quota, value: `${key.quota_used} / ${key.quota}`, mono: false },
+    { label: terms.value.quota, value: `${formatEnterpriseAmount(key.quota_used)} / ${formatEnterpriseAmount(key.quota)}`, mono: false },
     {
       label: '限流（5h / 1d / 7d）',
       value: `${key.usage_5h}/${key.rate_limit_5h} · ${key.usage_1d}/${key.rate_limit_1d} · ${key.usage_7d}/${key.rate_limit_7d}`,

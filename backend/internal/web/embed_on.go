@@ -165,16 +165,18 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 
 	settings, err := s.settings.GetPublicSettingsForInjection(ctx)
 	if err != nil {
-		// Fallback: serve without injection
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		// Fallback: preserve request-specific nonce for all inline scripts.
+		content := replaceNoncePlaceholder(s.baseHTML, nonce)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 		c.Abort()
 		return
 	}
 
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {
-		// Fallback: serve without injection
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		// Fallback: preserve request-specific nonce for all inline scripts.
+		content := replaceNoncePlaceholder(s.baseHTML, nonce)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 		c.Abort()
 		return
 	}
@@ -310,6 +312,17 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
+		if cleanPath == "index.html" {
+			// index.html contains per-request CSP nonce placeholders. Serve it through
+			// the HTML renderer rather than the static file server for both / and
+			// an explicit /index.html request.
+			if tryServeOverrideFile(c, overrideDir, cleanPath) {
+				return
+			}
+			serveIndexHTML(c, distFS)
+			return
+		}
+
 		if file, err := distFS.Open(cleanPath); err == nil {
 			_ = file.Close()
 			// Try local override first
@@ -393,6 +406,11 @@ func serveIndexHTML(c *gin.Context, fsys fs.FS) {
 		return
 	}
 
+	// SecurityHeaders creates a per-request nonce. The legacy frontend path is
+	// still used by the setup server, so it must render inline scripts with that
+	// same nonce rather than serving the build-time placeholder.
+	content = replaceNoncePlaceholder(content, middleware.GetNonceFromContext(c))
+	c.Header("Cache-Control", "no-store")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 	c.Abort()
 }

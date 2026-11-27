@@ -304,6 +304,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		// Nonce placeholder should be replaced
 		assert.NotContains(t, body, NonceHTMLPlaceholder)
 		assert.Contains(t, body, `nonce="`+testNonce+`"`)
+		assert.Contains(t, body, `<script id="enterprise-branding" nonce="`+testNonce+`">`)
 	})
 
 	t.Run("caches_html_content", func(t *testing.T) {
@@ -394,6 +395,8 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			require.NotEqual(t, -1, nonceStart)
 			nonce := strings.SplitN(csp[nonceStart+len("'nonce-"):], "'", 2)[0]
 			assert.Contains(t, w.Body.String(), `nonce="`+nonce+`"`)
+			assert.Contains(t, w.Body.String(), `<script id="enterprise-branding" nonce="`+nonce+`">`)
+			assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
 		}
 		assert.NotEqual(t, responses[0].Header().Get("Content-Security-Policy"), responses[1].Header().Get("Content-Security-Policy"))
 	})
@@ -434,10 +437,32 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 
 		server.serveIndexHTML(c)
 
-		// Should still return 200 with base HTML
+		// Fallback must still replace all inline-script nonce placeholders.
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
 		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		assert.Contains(t, w.Body.String(), `<script id="enterprise-branding" nonce="nonce123">`)
+		assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
+	})
+
+	t.Run("fallback_on_settings_serialization_error_preserves_nonce", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: make(chan int),
+		}
+
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		c.Set(middleware.CSPNonceKey, "serialization-nonce")
+
+		server.serveIndexHTML(c)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `<script id="enterprise-branding" nonce="serialization-nonce">`)
+		assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
 	})
 }
 
@@ -809,6 +834,38 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
 		assert.Contains(t, w.Body.String(), "<!doctype html>")
+	})
+
+	t.Run("matches_security_header_nonce_for_legacy_html_entrypoints", func(t *testing.T) {
+		router := gin.New()
+		router.Use(middleware.SecurityHeaders(config.CSPConfig{
+			Enabled: true,
+			Policy:  "default-src 'self'; script-src 'self' __CSP_NONCE__",
+		}, nil))
+		router.Use(ServeEmbeddedFrontend())
+
+		for _, path := range []string{"/", "/index.html", "/enterprise/login"} {
+			t.Run(path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				router.ServeHTTP(w, req)
+
+				assert.Equal(t, http.StatusOK, w.Code)
+				csp := w.Header().Get("Content-Security-Policy")
+				const noncePrefix = "'nonce-"
+				start := strings.Index(csp, noncePrefix)
+				require.NotEqual(t, -1, start)
+				nonceStart := start + len(noncePrefix)
+				nonceEnd := nonceStart + strings.Index(csp[nonceStart:], "'")
+				require.Greater(t, nonceEnd, nonceStart)
+				nonce := csp[nonceStart:nonceEnd]
+
+				body := w.Body.String()
+				assert.NotContains(t, body, NonceHTMLPlaceholder)
+				assert.Contains(t, body, `<script id="enterprise-branding" nonce="`+nonce+`">`)
+				assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			})
+		}
 	})
 
 	t.Run("serves_index_html_for_spa_routes", func(t *testing.T) {

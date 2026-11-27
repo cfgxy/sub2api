@@ -14,6 +14,15 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: (await import('@/views/admin/__tests__/enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
+const { isPainuoyunEnterprisePortal } = vi.hoisted(() => ({
+  isPainuoyunEnterprisePortal: vi.fn(),
+}))
+
+vi.mock('@/utils/enterpriseBranding', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/enterpriseBranding')>()),
+  isPainuoyunEnterprisePortal,
+}))
+
 const CJK = /[\u3400-\u9fff\uff00-\uffef]/
 const Empty = { template: '<div />' }
 
@@ -62,6 +71,7 @@ async function mountShellOnHome(role: EnterprisePrincipal['role']) {
 }
 
 beforeEach(() => {
+  isPainuoyunEnterprisePortal.mockReturnValue(false)
   enterpriseTestLocale.value = 'zh'
   localStorage.clear()
   document.documentElement.classList.remove('dark')
@@ -81,6 +91,27 @@ beforeEach(() => {
 })
 
 describe('EnterpriseLayout（L1 外壳重制）', () => {
+  it('派诺云展开态只渲染一套字标，折叠后只保留可辨识图标', async () => {
+    isPainuoyunEnterprisePortal.mockReturnValue(true)
+    const { wrapper, app } = mountShell('enterprise_admin')
+
+    expect(wrapper.findAll('[data-testid="sidebar-brand-wordmark"]')).toHaveLength(2)
+    expect(wrapper.find('[data-testid="sidebar-brand-icon"]').exists()).toBe(false)
+
+    app.sidebarCollapsed = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('[data-testid="sidebar-brand-wordmark"]')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="sidebar-brand-icon"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('非企业路径保持既有 Sub2API 侧栏品牌', () => {
+    const { wrapper } = mountShell('enterprise_admin')
+    expect(wrapper.text()).toContain('Sub2API')
+    expect(wrapper.find('[data-testid="sidebar-brand-wordmark"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('管理员侧边栏渲染 9 项导航，员工渲染 5 项', () => {
     const admin = mountShell('enterprise_admin')
     expect(admin.wrapper.findAll('nav a')).toHaveLength(9)

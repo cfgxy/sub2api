@@ -7,9 +7,6 @@
             企业管理 / 组织
           </p>
           <h2 class="mt-1 text-xl font-bold text-gray-900 dark:text-white">员工</h2>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            管理员工状态、所属部门和初始登录凭据；企业邮箱是员工的唯一身份标识。
-          </p>
         </div>
         <button type="button" class="btn btn-primary w-full sm:w-auto" @click="openCreate">
           <Icon name="plus" size="md" class="mr-2" />

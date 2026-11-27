@@ -76,6 +76,26 @@ describe('EnterpriseEmployeeUsageView', () => {
     wrapper.unmount()
   })
 
+  it('rounds overview figures while retaining full precision in the usage-detail table', async () => {
+    getEmployeeUsage.mockResolvedValue({
+      usage: { ...baseUsage, allocation: '12.34567890', actual_cost: '2.99999999', remaining: '9.34567890', overage: '0.00499999' },
+      enterprise_pool: { ...basePool, pool_limit: '100.12345678', pool_used: '30.98765432', pool_remaining: '69.13580246' },
+    })
+    listEmployeeUsage.mockResolvedValue({
+      items: [{ ...baseRecord, actual_cost: '0.00000001' }], total: 1, page: 1, page_size: 20, pages: 1,
+    })
+
+    const wrapper = mount(EnterpriseEmployeeUsageView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('12.35')
+    expect(wrapper.text()).toContain('100.12')
+    expect(wrapper.text()).not.toContain('12.34567890')
+    expect(wrapper.text()).not.toContain('100.12345678')
+    expect(wrapper.text()).toContain('0.00000001')
+    wrapper.unmount()
+  })
+
   it('marks personal and enterprise-pool sections unavailable separately instead of showing zeros as real data', async () => {
     getEmployeeUsage.mockResolvedValue({
       usage: { ...baseUsage, source_status: 'unavailable', allocation: '0', actual_cost: '0', remaining: '0', overage: '0', requests: 0 },
