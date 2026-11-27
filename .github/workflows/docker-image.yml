@@ -1,13 +1,13 @@
-# 两个版本分支在外层分配打包标识，多架构构建复用同一事实清单。
+# main 构建完成后自动更新 FDE www.v2；stable 的 PR 合并只更新 AWS 主站下次启动镜像，不重启服务。
 name: docker-image
 
 on:
   push:
-    branches: [main, offcial-base]
+    branches: [main, stable, offcial-base]
   workflow_dispatch:
 
 concurrency:
-  group: docker-image
+  group: docker-image-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -17,6 +17,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,9 +32,9 @@ jobs:
           SOURCE_BRANCH: ${{ github.ref_name }}
         run: |
           case "$SOURCE_BRANCH" in
-            main) EDITION=ent ;;
+            main|stable) EDITION=ent ;;
             offcial-base) EDITION=ob ;;
-            *) echo '只允许打包 main 或 offcial-base'; exit 1 ;;
+            *) echo '只允许打包 main、stable 或 offcial-base'; exit 1 ;;
           esac
           test "$RUN_ATTEMPT" -lt 1000
           SEQUENCE=$((RUN_ID * 1000 + RUN_ATTEMPT))
@@ -46,9 +49,7 @@ jobs:
           path: build-info.json
 
       - uses: docker/setup-qemu-action@v3
-
       - uses: docker/setup-buildx-action@v3
-
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -71,3 +72,61 @@ jobs:
             UPSTREAM_VERSION=${{ steps.version.outputs.upstream }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - id: image
+        name: Resolve immutable image digest
+        env:
+          IMAGE_TAG: ghcr.io/cfgxy/sub2api:${{ steps.version.outputs.tag }}
+        run: |
+          digest=$(docker buildx imagetools inspect "$IMAGE_TAG" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "ref=ghcr.io/cfgxy/sub2api@$digest" >> "$GITHUB_OUTPUT"
+
+  deploy-fde-v2:
+    needs: build
+    if: github.ref_name == 'main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: fde-v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.FDE_V2_DEPLOY_SSH_KEY }}
+      - name: Trust FDE host key
+        env:
+          FDE_HOST: ${{ secrets.FDE_V2_DEPLOY_HOST }}
+        run: ssh-keyscan -H "$FDE_HOST" >> ~/.ssh/known_hosts
+      - name: Deploy immutable main image and verify www.v2
+        env:
+          FDE_HOST: ${{ secrets.FDE_V2_DEPLOY_HOST }}
+          FDE_USER: ${{ secrets.FDE_V2_DEPLOY_USER }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          scp .github/scripts/deploy-fde-v2.sh "$FDE_USER@$FDE_HOST:/tmp/deploy-fde-v2-${GITHUB_RUN_ID}.sh"
+          ssh "$FDE_USER@$FDE_HOST" "chmod 700 /tmp/deploy-fde-v2-${GITHUB_RUN_ID}.sh && GITHUB_RUN_ID=${GITHUB_RUN_ID} /tmp/deploy-fde-v2-${GITHUB_RUN_ID}.sh '$IMAGE' '$SOURCE_SHA' '$VERSION' && rm -f /tmp/deploy-fde-v2-${GITHUB_RUN_ID}.sh"
+          curl --fail --silent --show-error --connect-timeout 10 --max-time 30 https://www.v2.apinoria.com/health | grep -q '"status":"ok"'
+
+  stage-aws-sg:
+    needs: build
+    if: github.ref_name == 'stable' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: aws-sg-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.AWS_SG_DEPLOY_SSH_KEY }}
+      - name: Trust AWS production host key
+        env:
+          AWS_HOST: ${{ secrets.AWS_SG_DEPLOY_HOST }}
+        run: ssh-keyscan -H "$AWS_HOST" >> ~/.ssh/known_hosts
+      - name: Stage immutable image only; do not restart www.apinoria.com
+        env:
+          AWS_HOST: ${{ secrets.AWS_SG_DEPLOY_HOST }}
+          AWS_USER: ${{ secrets.AWS_SG_DEPLOY_USER }}
+          IMAGE: ${{ needs.build.outputs.image }}
+        run: |
+          scp .github/scripts/stage-aws-sg-image.sh "$AWS_USER@$AWS_HOST:/tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh"
+          ssh "$AWS_USER@$AWS_HOST" "chmod 700 /tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh && GITHUB_RUN_ID=${GITHUB_RUN_ID} /tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh '$IMAGE' && rm -f /tmp/stage-aws-sg-image-${GITHUB_RUN_ID}.sh"
