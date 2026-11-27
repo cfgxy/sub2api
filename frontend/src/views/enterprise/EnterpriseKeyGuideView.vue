@@ -222,7 +222,8 @@ const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 
 const exampleKinds: EnterpriseGuideExampleKind[] = ['curl', 'python', 'javascript']
-const enterpriseAPIBaseURL = 'https://api.ainoriahub.com'
+// 企业 API 与企业门户同源，确保不同租户使用其自身已验证的域名。
+const enterpriseAPIBaseURL = window.location.origin
 const errorItems = ['unauthorized', 'forbidden', 'rateLimited'] as const
 
 const key = ref<EnterpriseEmployeeKey | null>(null)
