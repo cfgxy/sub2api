@@ -31,6 +31,13 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 
 ---
 
+## CI 部署分支约定
+
+- `main` 的 PR 合并会构建多架构 GHCR 镜像，并以不可变 digest 自动部署到 FDE `www.v2`；流水线回读 `/health`，部署失败保留上一容器用于回退。
+- `stable` 从已验证的 `main` 切出。合并到 `stable` 会构建并拉取不可变镜像到 AWS 主站，仅更新 `.env` 中的 `SUB2API_IMAGE` 作为下次启动指针，**不会执行 `docker compose up -d`、重启或切换线上容器**。
+
+---
+
 ## Apple container Deployment
 
 Apple-silicon Macs running macOS 26 can run the complete Sub2API, PostgreSQL, and Redis stack with Apple `container` 1.1.0 or newer:
