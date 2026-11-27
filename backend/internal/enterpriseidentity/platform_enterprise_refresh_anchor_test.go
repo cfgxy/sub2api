@@ -19,9 +19,9 @@ func TestRefreshPlatformEnterpriseSubscriptionsInitializesMissingAnchor(t *testi
 	mock.ExpectQuery(`SELECT dedicated_upstream_user_id\s+FROM enterprises\s+WHERE id = \$1\s+FOR UPDATE`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(int64(99)))
-	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
+	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id, observed_weekly_window_start\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id", "observed_weekly_window_start"}))
 	mock.ExpectQuery(`(?s)SELECT subscription\.id, subscription\.weekly_window_start.*FROM user_subscriptions AS subscription.*subscription\.user_id = \$1.*FOR SHARE OF subscription`).
 		WithArgs(int64(99)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(42), nil))
@@ -53,9 +53,9 @@ func TestRefreshPlatformEnterpriseSubscriptionsReadsAnchorAfterConditionalUpdate
 	mock.ExpectQuery(`SELECT dedicated_upstream_user_id\s+FROM enterprises\s+WHERE id = \$1\s+FOR UPDATE`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(int64(99)))
-	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
+	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id, observed_weekly_window_start\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id", "observed_weekly_window_start"}))
 	mock.ExpectQuery(`(?s)SELECT subscription\.id, subscription\.weekly_window_start.*FROM user_subscriptions AS subscription.*subscription\.user_id = \$1.*FOR SHARE OF subscription`).
 		WithArgs(int64(99)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(42), nil))
@@ -78,5 +78,40 @@ func TestRefreshPlatformEnterpriseSubscriptionsReadsAnchorAfterConditionalUpdate
 	require.NoError(t, err)
 	require.Equal(t, "linked", result.Action)
 	require.EqualValues(t, 88, *result.EnterpriseSubscriptionID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRefreshPlatformEnterpriseSubscriptionsRelinksSameSubscriptionAfterWindowRollover(t *testing.T) {
+	svc, mock := newMockService(t)
+	oldAnchor := time.Date(2026, 9, 25, 12, 30, 0, 0, time.UTC)
+	newAnchor := oldAnchor.AddDate(0, 0, 7)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT dedicated_upstream_user_id\s+FROM enterprises\s+WHERE id = \$1\s+FOR UPDATE`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"dedicated_upstream_user_id"}).AddRow(int64(99)))
+	mock.ExpectQuery(`SELECT id, upstream_user_subscription_id, observed_weekly_window_start\s+FROM enterprise_subscriptions\s+WHERE enterprise_id = \$1 AND status = 'active'\s+FOR UPDATE`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "upstream_user_subscription_id", "observed_weekly_window_start"}).
+			AddRow(int64(88), int64(42), oldAnchor))
+	mock.ExpectQuery(`(?s)SELECT subscription\.id, subscription\.weekly_window_start.*FROM user_subscriptions AS subscription.*subscription\.user_id = \$1.*FOR SHARE OF subscription`).
+		WithArgs(int64(99)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(42), newAnchor))
+	mock.ExpectExec(`(?s)UPDATE enterprise_subscriptions.*SET status = 'ended'.*WHERE id = \$1 AND status = 'active'`).
+		WithArgs(int64(88), "system").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`(?s)INSERT INTO enterprise_subscriptions.*RETURNING id`).
+		WithArgs(int64(7), int64(42), newAnchor, "system").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(89)))
+	mock.ExpectExec(`(?s)INSERT INTO enterprise_audit_events.*subscription\.refreshed`).
+		WithArgs(int64(7), int64(89), sqlmock.AnyArg(), "system").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := svc.RefreshPlatformEnterpriseSubscriptions(context.Background(), 7, 0)
+
+	require.NoError(t, err)
+	require.Equal(t, "linked", result.Action)
+	require.EqualValues(t, 42, *result.UpstreamUserSubscriptionID)
+	require.EqualValues(t, 89, *result.EnterpriseSubscriptionID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

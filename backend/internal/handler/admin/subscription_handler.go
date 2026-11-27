@@ -199,6 +199,7 @@ func (h *SubscriptionHandler) BulkAction(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	req.ActorUserID = getAdminIDFromContext(c)
 	executeAdminIdempotentJSONWithTimeout(c, "admin.subscriptions.bulk-action", req, service.DefaultWriteIdempotencyTTL(), 2*time.Minute, func(ctx context.Context) (any, error) {
 		return h.subscriptionService.BulkSubscriptionAction(ctx, &req)
 	})
@@ -227,7 +228,7 @@ func (h *SubscriptionHandler) Extend(c *gin.Context) {
 		Body:           req,
 	}
 	executeAdminIdempotentJSONWithResponse(c, "admin.subscriptions.extend", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		subscription, execErr := h.subscriptionService.ExtendSubscription(ctx, subscriptionID, req.Days)
+		subscription, execErr := h.subscriptionService.ExtendSubscription(ctx, subscriptionID, req.Days, getAdminIDFromContext(c))
 		if execErr != nil {
 			return nil, execErr
 		}
@@ -259,7 +260,7 @@ func (h *SubscriptionHandler) ResetQuota(c *gin.Context) {
 		response.BadRequest(c, "At least one of 'daily', 'weekly', or 'monthly' must be true")
 		return
 	}
-	sub, err := h.subscriptionService.AdminResetQuota(c.Request.Context(), subscriptionID, req.Daily, req.Weekly, req.Monthly)
+	sub, err := h.subscriptionService.AdminResetQuota(c.Request.Context(), subscriptionID, req.Daily, req.Weekly, req.Monthly, getAdminIDFromContext(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -277,7 +278,7 @@ func (h *SubscriptionHandler) Revoke(c *gin.Context) {
 		return
 	}
 
-	err = h.subscriptionService.RevokeSubscription(c.Request.Context(), subscriptionID)
+	err = h.subscriptionService.RevokeSubscription(c.Request.Context(), subscriptionID, getAdminIDFromContext(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -295,7 +296,7 @@ func (h *SubscriptionHandler) Restore(c *gin.Context) {
 		return
 	}
 
-	subscription, err := h.subscriptionService.RestoreSubscription(c.Request.Context(), subscriptionID)
+	subscription, err := h.subscriptionService.RestoreSubscription(c.Request.Context(), subscriptionID, getAdminIDFromContext(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

@@ -138,3 +138,54 @@ func TestBulkSubscriptionAction_RollsBackPostWriteFailureBeforeRetry(t *testing.
 		})
 	}
 }
+
+func TestBulkResetQuotaWeeklyRefreshesEnterpriseMappingOnlyAfterCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		postReadFailure bool
+		refreshErr      error
+		wantSuccess     int
+		wantCalls       int
+	}{
+		{name: "commit", wantSuccess: 1, wantCalls: 1},
+		{name: "rollback", postReadFailure: true},
+		{name: "committed refresh failure does not roll back reset", refreshErr: errors.New("enterprise mapping unavailable"), wantSuccess: 1, wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sqlDB, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, sqlDB)))
+			t.Cleanup(func() { _ = client.Close() })
+			repo := &transactionalBulkSubscriptionRepo{
+				committed:       UserSubscription{ID: 1, UserID: 42, GroupID: 20, Status: SubscriptionStatusActive, ExpiresAt: time.Now().AddDate(0, 0, 30)},
+				pending:         make(map[*dbent.Tx]*UserSubscription),
+				reads:           make(map[*dbent.Tx]int),
+				postReadFailure: tc.postReadFailure,
+			}
+			refresher := &enterpriseSubscriptionRefresherStub{err: tc.refreshErr}
+			svc := NewSubscriptionService(nil, repo, nil, client, nil)
+			t.Cleanup(svc.Stop)
+			svc.SetEnterpriseSubscriptionRefresher(refresher)
+
+			mock.ExpectBegin()
+			if tc.postReadFailure {
+				mock.ExpectRollback()
+			} else {
+				mock.ExpectCommit()
+			}
+			result, err := svc.BulkSubscriptionAction(context.Background(), &BulkSubscriptionActionInput{
+				SubscriptionIDs: []int64{1}, Action: "reset_quota", Weekly: true, ActorUserID: 9,
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantSuccess, result.SuccessCount)
+			require.Len(t, refresher.calls, tc.wantCalls)
+			if tc.wantCalls > 0 {
+				require.Equal(t, [2]int64{42, 9}, refresher.calls[0])
+				require.NotNil(t, repo.committed.WeeklyWindowStart)
+			} else {
+				require.Nil(t, repo.committed.WeeklyWindowStart, "a rolled-back reset must not refresh the enterprise mapping")
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

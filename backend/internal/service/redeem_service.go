@@ -747,6 +747,9 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 
 	// 失效缓存
 	s.subscriptionService.InvalidateSubCache(userID, groupID)
+	if err := s.subscriptionService.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, userID, 0); err != nil {
+		return fmt.Errorf("schedule enterprise subscription mapping refresh: %w", err)
+	}
 
 	return nil
 }

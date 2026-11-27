@@ -674,6 +674,9 @@ func (s *PaymentService) ensurePaymentSubscriptionAssigned(ctx context.Context, 
 	} else {
 		slog.Info("subscription already assigned for order, skipping", "orderID", o.ID, "groupID", groupID)
 	}
+	if err := s.subscriptionSvc.refreshEnterpriseSubscriptionMappingAfterCommit(txCtx, o.UserID, 0); err != nil {
+		return fmt.Errorf("schedule enterprise subscription mapping refresh: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit subscription fulfillment tx: %w", err)
