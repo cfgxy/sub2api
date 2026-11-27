@@ -66,6 +66,16 @@ describe('EnterpriseEmployeeUsageView', () => {
     wrapper.unmount()
   })
 
+  it('does not expose the internal weekly window anchor in employee-facing copy or table columns', async () => {
+    const wrapper = mount(EnterpriseEmployeeUsageView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('额度用量按当前套餐周期统计')
+    expect(wrapper.text()).not.toContain('每周窗口')
+    expect(wrapper.text()).not.toContain('窗口锚点')
+    wrapper.unmount()
+  })
+
   it('marks personal and enterprise-pool sections unavailable separately instead of showing zeros as real data', async () => {
     getEmployeeUsage.mockResolvedValue({
       usage: { ...baseUsage, source_status: 'unavailable', allocation: '0', actual_cost: '0', remaining: '0', overage: '0', requests: 0 },

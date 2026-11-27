@@ -42,11 +42,41 @@ describe('EnterpriseWorkbenchView', () => {
     })
     getWorkbenchSummary.mockResolvedValue({
       total_usage_credit: '2.75', total_requests: 1, employee_count: 1, active_employee_count: 1,
-      subscription_status: 'active', subscription_plan: 'Business', enterprise_pool_limit: '100', enterprise_pool_used: '2.75', enterprise_pool_remaining: '97.25', enterprise_pool_exhausted: false, pool_source_status: 'available', pool_source: 'upstream subscription', pool_window_type: 'week', pool_window_anchor: new Date().toISOString(),
+      subscription_status: 'active', subscription_plan: 'Business', subscription_expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(), weekly_reset_at: new Date(Date.now() + 34 * 60 * 60 * 1000).toISOString(), enterprise_pool_limit: '100', enterprise_pool_used: '42.50', enterprise_pool_remaining: '57.50', enterprise_pool_exhausted: false, pool_source_status: 'available', pool_source: 'upstream subscription', pool_window_type: 'week', pool_window_anchor: new Date().toISOString(),
       employee_summaries: [{ employee_id: 22, email: 'employee@example.com', requests: 1, configured_credit: '12.50', usage_credit: '2.75', remaining_credit: '9.75', overage_credit: '0', recommendation: '当前额度范围内' }], usage_trend: [],
     })
     listDepartments.mockResolvedValue([])
     listEmployees.mockResolvedValue([])
+  })
+
+  it('shows authoritative total-pool usage and subscription timing instead of internal weekly anchor text', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('总池已用额度')
+    expect(text).toContain('42.50')
+    expect(text).toContain('套餐到期')
+    expect(text).toMatch(/\d+d \d+h 后重置/)
+    expect(text).not.toContain('统计窗口：每周')
+    expect(text).not.toContain('窗口锚点')
+    wrapper.unmount()
+  })
+
+  it('keeps expiry context but hides reset countdown when the upstream subscription is expired', async () => {
+    getWorkbenchSummary.mockResolvedValueOnce({
+      total_usage_credit: '0', total_requests: 0, employee_count: 0, active_employee_count: 0,
+      subscription_status: 'active', subscription_plan: 'Business', subscription_expires_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      enterprise_pool_limit: '0', enterprise_pool_used: '0', enterprise_pool_remaining: '0', enterprise_pool_exhausted: false,
+      pool_source_status: 'unavailable', employee_summaries: [], usage_trend: [],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已到期')
+    expect(wrapper.text()).toContain('周重置时间暂不可用')
+    expect(wrapper.text()).not.toMatch(/\d+d \d+h 后重置/)
+    wrapper.unmount()
   })
 
   it('uses weekly as the explicit MVP query and renders the employee allocation overview', async () => {
@@ -124,7 +154,7 @@ describe('EnterpriseWorkbenchView', () => {
         listWorkbenchAuditEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 5, pages: 0 })
         getWorkbenchSummary.mockResolvedValue({
           total_usage_credit: '0', total_requests: 0, employee_count: 0, active_employee_count: 0,
-          subscription_status: 'active', subscription_plan: 'Business', enterprise_pool_limit: '100', enterprise_pool_used: '100',
+          subscription_status: 'active', subscription_plan: 'Business', subscription_expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(), weekly_reset_at: new Date(Date.now() + 34 * 60 * 60 * 1000).toISOString(), enterprise_pool_limit: '100', enterprise_pool_used: '100',
           enterprise_pool_remaining: '0', enterprise_pool_exhausted: true, pool_source_status: 'available', pool_window_type: 'week',
           pool_window_anchor: new Date().toISOString(), pool_observed_at: new Date().toISOString(),
           scheduled_subscription_since: new Date().toISOString(), scheduled_subscription_plan: '',

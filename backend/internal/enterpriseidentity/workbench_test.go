@@ -12,9 +12,14 @@ import (
 )
 
 func expectCurrentEnterpriseWeek(mock sqlmock.Sqlmock, enterpriseID, subscriptionID int64, anchor time.Time) {
+	expectCurrentEnterpriseWeekWithDates(mock, enterpriseID, subscriptionID, anchor, anchor.Add(-7*24*time.Hour), anchor.Add(30*24*time.Hour))
+}
+
+func expectCurrentEnterpriseWeekWithDates(mock sqlmock.Sqlmock, enterpriseID, subscriptionID int64, anchor, startsAt, expiresAt time.Time) {
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).
 		WithArgs(enterpriseID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(subscriptionID, anchor))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start", "starts_at", "expires_at"}).
+			AddRow(subscriptionID, anchor, startsAt, expiresAt))
 }
 
 func TestParseWorkbenchQueryValidatesScopeAndPagination(t *testing.T) {
@@ -183,6 +188,10 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	require.Equal(t, "available", result.PoolSourceStatus)
 	require.NotNil(t, result.SubscriptionID)
 	require.Equal(t, int64(55), *result.SubscriptionID)
+	require.NotNil(t, result.SubscriptionExpiresAt)
+	require.Equal(t, anchor.Add(30*24*time.Hour), *result.SubscriptionExpiresAt)
+	require.NotNil(t, result.WeeklyResetAt)
+	require.Equal(t, anchor.Add(7*24*time.Hour), *result.WeeklyResetAt)
 	require.NotNil(t, result.PoolWindowAnchor)
 	require.Equal(t, anchor, *result.PoolWindowAnchor,
 		"无筛选摘要必须返回规范当前周，而非随后总池查询中可能变化的窗口")
@@ -191,6 +200,49 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	require.Empty(t, result.ScheduledSubscriptionPlan)
 	require.Nil(t, result.ScheduledSubscriptionSince)
 	require.Len(t, result.UsageTrend, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetSummaryOmitsWeeklyResetAtWhenSubscriptionExpiresAtResetBoundary(t *testing.T) {
+	service, mock := newMockService(t)
+	handler := &WorkbenchHandler{owner: &Handler{service: service}}
+	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	expiresAt := anchor.Add(7 * 24 * time.Hour)
+	expectCurrentEnterpriseWeekWithDates(mock, 7, 55, anchor, anchor.Add(-7*24*time.Hour), expiresAt)
+
+	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
+		WithArgs(int64(7), int64(55), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"total_usage_credit", "total_requests"}).AddRow("2.75", int64(3)))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM enterprise_employees`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT COUNT\(\*\)`).
+		WithArgs(int64(7), int64(55), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery(`(?s)WITH employee_window_usage AS .*SELECT employee\.id, COALESCE\(employee\.current_email, employee\.email, ''\)`).
+		WithArgs(int64(7), int64(55), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"employee_id", "email", "department_id", "requests", "configured_credit", "usage_credit", "remaining_credit", "overage_credit"}).
+			AddRow(int64(22), "employee@example.com", int64(3), int64(3), "12.50", "2.75", "9.75", "0"))
+	mock.ExpectQuery(`(?s)SELECT enterprise_subscription\.id, CASE WHEN enterprise_subscription\.id IS NULL.*enterprise_subscription\.id = \$2`).
+		WithArgs(int64(7), int64(55)).
+		WillReturnRows(sqlmock.NewRows([]string{"subscription_id", "source_status", "plan", "subscription_status", "pool_limit", "pool_used", "pool_remaining", "pool_exhausted", "pool_anchor"}).
+			AddRow(int64(55), "available", "Business", "active", "100", "2.75", "97.25", false, anchor))
+	mock.ExpectQuery(`(?s)SELECT observed_at\s+FROM enterprise_subscription_windows`).
+		WithArgs(int64(7), int64(55)).
+		WillReturnRows(sqlmock.NewRows([]string{"observed_at"}))
+	mock.ExpectQuery(`(?s)FROM enterprise_subscriptions AS enterprise_subscription.*status = 'scheduled'`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"plan", "created_at"}))
+	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
+		WithArgs(int64(7), int64(55), anchor).
+		WillReturnRows(sqlmock.NewRows([]string{"at", "requests", "usage_credit"}))
+
+	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
+	require.NoError(t, err)
+	require.NotNil(t, result.SubscriptionExpiresAt)
+	require.Equal(t, expiresAt, *result.SubscriptionExpiresAt)
+	require.Nil(t, result.WeeklyResetAt,
+		"the final incomplete week has no executable reset, so the API must omit its countdown")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -247,6 +299,9 @@ func TestGetSummarySurfacesScheduledSubscription(t *testing.T) {
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(subscription_group\.name, ''\), COALESCE\(upstream_subscription\.status, ''\).*FROM enterprises AS enterprise`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"plan", "status", "expires_at"}))
 
 	result, err := handler.getSummary(t.Context(), 7, workbenchQuery{})
 	require.NoError(t, err)
@@ -255,6 +310,48 @@ func TestGetSummarySurfacesScheduledSubscription(t *testing.T) {
 	require.Equal(t, "unavailable", result.PoolSourceStatus)
 	require.Empty(t, result.ScheduledSubscriptionPlan)
 	require.Nil(t, result.ScheduledSubscriptionSince)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetSummaryReportsExpiredSubscriptionWithoutReusingItsPool(t *testing.T) {
+	service, mock := newMockService(t)
+	expiresAt := time.Date(2026, 11, 26, 10, 30, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start", "starts_at", "expires_at"}))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(subscription_group\.name, ''\), COALESCE\(upstream_subscription\.status, ''\).*FROM enterprises AS enterprise`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"plan", "status", "expires_at"}).
+			AddRow("Business", "active", expiresAt))
+
+	result, err := (&WorkbenchHandler{owner: &Handler{service: service}}).getSummary(t.Context(), 7, workbenchQuery{})
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", result.PoolSourceStatus)
+	require.Equal(t, "Business", result.SubscriptionPlan)
+	require.NotNil(t, result.SubscriptionExpiresAt)
+	require.Equal(t, expiresAt, *result.SubscriptionExpiresAt)
+	require.Nil(t, result.WeeklyResetAt, "an expired subscription must not yield a reset countdown")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestResolveCurrentEnterpriseWeekUsesLiveSubscriptionAndCanonicalResetTime(t *testing.T) {
+	service, mock := newMockService(t)
+	startsAt := time.Date(2026, 7, 31, 13, 37, 6, 0, time.UTC)
+	legacyAnchor := time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC)
+	expiresAt := startsAt.AddDate(0, 0, 30)
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start", "starts_at", "expires_at"}).
+			AddRow(int64(55), legacyAnchor, startsAt, expiresAt))
+
+	week, err := service.resolveCurrentEnterpriseWeek(t.Context(), 7)
+	require.NoError(t, err)
+	require.NotNil(t, week)
+	require.Equal(t, expiresAt, week.ExpiresAt)
+	resetAt := week.WeeklyResetAt()
+	require.NotNil(t, resetAt)
+	require.Equal(t, startsAt.Add(7*24*time.Hour), *resetAt,
+		"展示的重置时间必须与实际滚动窗口的 legacy 锚点修正一致")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
