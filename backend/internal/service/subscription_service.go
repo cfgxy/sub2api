@@ -958,7 +958,7 @@ func (s *SubscriptionService) checkAndActivateWindowAt(ctx context.Context, sub 
 }
 
 // AdminResetQuota manually resets the daily, weekly, and/or monthly usage windows.
-func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionID int64, resetDaily, resetWeekly, resetMonthly bool) (*UserSubscription, error) {
+func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionID int64, resetDaily, resetWeekly, resetMonthly bool, actorUserIDs ...int64) (*UserSubscription, error) {
 	if !resetDaily && !resetWeekly && !resetMonthly {
 		return nil, ErrInvalidInput
 	}
@@ -971,6 +971,14 @@ func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionI
 	// 周/月窗口保持锚定重置时刻（期限对齐滚动窗口语义）。
 	if err := s.userSubRepo.ResetUsageWindows(ctx, sub.ID, resetDaily, resetWeekly, resetMonthly, timezone.StartOfDay(now), now); err != nil {
 		return nil, err
+	}
+	// A weekly reset changes the anchor used to attribute enterprise consumption.
+	// Defer its mapping refresh until the enclosing transaction commits so it never
+	// observes a transient window or recreates a mapping for a rolled-back reset.
+	if resetWeekly {
+		if err := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, sub.UserID, subscriptionMutationActorUserID(actorUserIDs)); err != nil {
+			return nil, err
+		}
 	}
 	// Invalidate L1 ristretto cache. Ristretto's Del() is asynchronous by design,
 	// so call Wait() immediately after to flush pending operations and guarantee

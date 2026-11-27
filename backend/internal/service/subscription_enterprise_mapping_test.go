@@ -187,6 +187,22 @@ func (r *enterpriseMappingMutationRepo) UpdateNotes(_ context.Context, id int64,
 	return nil
 }
 
+func (r *enterpriseMappingMutationRepo) ResetUsageWindows(_ context.Context, id int64, resetDaily, resetWeekly, resetMonthly bool, dailyStart, periodicStart time.Time) error {
+	if r.sub.ID != id {
+		return ErrSubscriptionNotFound
+	}
+	if resetDaily {
+		r.sub.DailyUsageUSD, r.sub.DailyWindowStart = 0, &dailyStart
+	}
+	if resetWeekly {
+		r.sub.WeeklyUsageUSD, r.sub.WeeklyWindowStart = 0, &periodicStart
+	}
+	if resetMonthly {
+		r.sub.MonthlyUsageUSD, r.sub.MonthlyWindowStart = 0, &periodicStart
+	}
+	return nil
+}
+
 func TestSubscriptionStateChangesRefreshEnterpriseMapping(t *testing.T) {
 	now := time.Now()
 	for _, tc := range []struct {
@@ -225,4 +241,65 @@ func TestSubscriptionStateChangesRefreshEnterpriseMapping(t *testing.T) {
 			require.Equal(t, [][2]int64{{42, tc.wantActor}}, refresher.calls)
 		})
 	}
+}
+
+func TestAdminResetQuotaWeeklyRefreshesEnterpriseMappingAfterOuterTransactionCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		commit     bool
+		refreshErr error
+		wantCalls  int
+	}{
+		{name: "commit", commit: true, wantCalls: 1},
+		{name: "rollback", wantCalls: 0},
+		{name: "committed refresh failure does not roll back reset", commit: true, refreshErr: errors.New("database unavailable"), wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			t.Cleanup(func() { _ = client.Close() })
+			mock.ExpectBegin()
+			tx, err := client.Tx(context.Background())
+			require.NoError(t, err)
+
+			repo := &enterpriseMappingMutationRepo{sub: UserSubscription{ID: 1, UserID: 42, GroupID: 7, Status: SubscriptionStatusActive, ExpiresAt: time.Now().AddDate(0, 0, 30)}}
+			refresher := &enterpriseSubscriptionRefresherStub{err: tc.refreshErr}
+			subscriptions := NewSubscriptionService(nil, repo, nil, client, nil)
+			t.Cleanup(subscriptions.Stop)
+			subscriptions.SetEnterpriseSubscriptionRefresher(refresher)
+
+			_, err = subscriptions.AdminResetQuota(dbent.NewTxContext(context.Background(), tx), 1, false, true, false, 9)
+			require.NoError(t, err)
+			require.Empty(t, refresher.calls, "refresh must not observe the uncommitted weekly anchor")
+
+			if tc.commit {
+				mock.ExpectCommit()
+				require.NoError(t, tx.Commit())
+			} else {
+				mock.ExpectRollback()
+				require.NoError(t, tx.Rollback())
+			}
+			require.Len(t, refresher.calls, tc.wantCalls)
+			if tc.wantCalls > 0 {
+				require.Equal(t, [2]int64{42, 9}, refresher.calls[0])
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestAdminResetQuotaWeeklyReportsDirectRefreshFailure(t *testing.T) {
+	repo := &enterpriseMappingMutationRepo{sub: UserSubscription{ID: 1, UserID: 42, GroupID: 7, Status: SubscriptionStatusActive, ExpiresAt: time.Now().AddDate(0, 0, 30)}}
+	refreshErr := errors.New("enterprise mapping unavailable")
+	refresher := &enterpriseSubscriptionRefresherStub{err: refreshErr}
+	subscriptions := NewSubscriptionService(nil, repo, nil, nil, nil)
+	t.Cleanup(subscriptions.Stop)
+	subscriptions.SetEnterpriseSubscriptionRefresher(refresher)
+
+	_, err := subscriptions.AdminResetQuota(context.Background(), 1, false, true, false, 9)
+
+	require.ErrorIs(t, err, refreshErr)
+	require.Equal(t, [][2]int64{{42, 9}}, refresher.calls)
+	require.NotNil(t, repo.sub.WeeklyWindowStart, "the already-applied direct reset remains diagnosable rather than being misreported as rolled back")
 }

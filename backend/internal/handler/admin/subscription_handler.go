@@ -260,7 +260,7 @@ func (h *SubscriptionHandler) ResetQuota(c *gin.Context) {
 		response.BadRequest(c, "At least one of 'daily', 'weekly', or 'monthly' must be true")
 		return
 	}
-	sub, err := h.subscriptionService.AdminResetQuota(c.Request.Context(), subscriptionID, req.Daily, req.Weekly, req.Monthly)
+	sub, err := h.subscriptionService.AdminResetQuota(c.Request.Context(), subscriptionID, req.Daily, req.Weekly, req.Monthly, getAdminIDFromContext(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
