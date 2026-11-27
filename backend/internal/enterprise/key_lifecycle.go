@@ -23,6 +23,7 @@ var (
 	ErrEmployeeKeyIdempotency     = infraerrors.Conflict("ENTERPRISE_KEY_IDEMPOTENCY_CONFLICT", "idempotency key was already used with a different request")
 	ErrEmployeeKeyUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "ENTERPRISE_KEY_UNAVAILABLE", "enterprise employee key service is unavailable")
 	ErrEmployeeKeyProvisionLimit  = infraerrors.TooManyRequests("ENTERPRISE_KEY_PROVISION_LIMIT", "enterprise employee key provision limit reached")
+	ErrEnterpriseSeatLimit        = infraerrors.Conflict("ENTERPRISE_SEAT_LIMIT_REACHED", "enterprise seat limit reached; revoke or disable an active employee key, or increase seats")
 )
 
 const (
@@ -305,12 +306,30 @@ func (r *Repository) mutateEmployeeKey(ctx context.Context, operation string, pa
 		if hasCurrent {
 			return nil, ErrEmployeeKeyAlreadyActive
 		}
+		if err := enforceEnterpriseSeatLimit(ctx, tx, params.EnterpriseID); err != nil {
+			return nil, err
+		}
 		previous, err = lockLatestEmployeeKey(ctx, tx, params.EnterpriseID, params.EmployeeID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			previous = employeeKeyRow{}
+		} else {
+			boundary, boundaryErr := employeeKeyBoundary(ctx, tx)
+			if boundaryErr != nil {
+				return nil, boundaryErr
+			}
+			replaced, replaceErr := endInactiveEmployeeKeyAssignment(ctx, tx, params.EnterpriseID, params.EmployeeID, previous, boundary)
+			if replaceErr != nil {
+				return nil, replaceErr
+			}
+			if replaced {
+				// A key that is expired, quota-exhausted, disabled, or deleted is
+				// historical state. Start a fresh key instead of inheriting its
+				// terminal quota or expiry constraints.
+				previous = employeeKeyRow{}
+			}
 		}
 	} else {
 		if !hasCurrent {
@@ -426,6 +445,28 @@ func lockEmployeeKeyIdempotency(ctx context.Context, tx *sql.Tx, params Employee
 	return resultID.Int64, true, nil
 }
 
+func enforceEnterpriseSeatLimit(ctx context.Context, tx *sql.Tx, enterpriseID int64) error {
+	var seatCount, activeKeyCount int
+	// The caller already holds the enterprise row FOR UPDATE. That lock makes
+	// this count-and-insert decision serial for one enterprise while preserving
+	// isolation between different enterprises.
+	if err := tx.QueryRowContext(ctx, `
+		SELECT e.seat_count,
+		       COUNT(assignment.id) FILTER (WHERE `+employeeKeyEffectivePredicate+`)
+		FROM enterprises AS e
+		LEFT JOIN enterprise_key_assignments AS assignment
+		  ON assignment.enterprise_id = e.id
+		LEFT JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
+		WHERE e.id = $1
+		GROUP BY e.seat_count`, enterpriseID).Scan(&seatCount, &activeKeyCount); err != nil {
+		return err
+	}
+	if activeKeyCount >= seatCount {
+		return ErrEnterpriseSeatLimit
+	}
+	return nil
+}
+
 func enforceEmployeeKeyProvisionLimit(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) error {
 	var count int
 	if err := tx.QueryRowContext(ctx, `
@@ -444,6 +485,13 @@ func enforceEmployeeKeyProvisionLimit(ctx context.Context, tx *sql.Tx, enterpris
 	return nil
 }
 
+const employeeKeyEffectivePredicate = `
+	assignment.status = 'active'
+	AND api_key.status = 'active'
+	AND api_key.deleted_at IS NULL
+	AND (api_key.expires_at IS NULL OR api_key.expires_at > statement_timestamp())
+	AND (api_key.quota <= 0 OR api_key.quota_used < api_key.quota)`
+
 const employeeKeySelect = `
 	SELECT api_key.id, api_key.key, api_key.name, api_key.status,
 	       api_key.quota, api_key.quota_used, api_key.group_id, api_key.expires_at,
@@ -460,7 +508,7 @@ const employeeKeySelect = `
 func lockCurrentEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) (employeeKeyRow, error) {
 	return scanEmployeeKey(tx.QueryRowContext(ctx, employeeKeySelect+`
 		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
-		  AND assignment.status = 'active' AND api_key.deleted_at IS NULL
+		  AND `+employeeKeyEffectivePredicate+`
 		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC LIMIT 1
 		FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID))
 }
@@ -468,8 +516,31 @@ func lockCurrentEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, emplo
 func readCurrentEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) (employeeKeyRow, error) {
 	return scanEmployeeKey(tx.QueryRowContext(ctx, employeeKeySelect+`
 		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
-		  AND assignment.status = 'active' AND api_key.deleted_at IS NULL
+		  AND `+employeeKeyEffectivePredicate+`
 		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC LIMIT 1`, enterpriseID, employeeID))
+}
+
+// endInactiveEmployeeKeyAssignment releases an assignment only when its key has
+// the same ineffective state excluded from seat counting. This makes the
+// lifecycle's create gate and the seat count use one authoritative predicate.
+func endInactiveEmployeeKeyAssignment(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64, key employeeKeyRow, boundary time.Time) (bool, error) {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE enterprise_key_assignments AS assignment
+		SET status = 'ended', ended_at = $4, actor_ref = 'system:inactive-key-replacement', updated_at = $4
+		FROM api_keys AS api_key
+		WHERE assignment.id = $3
+		  AND assignment.enterprise_id = $1 AND assignment.employee_id = $2
+		  AND assignment.api_key_id = api_key.id
+		  AND assignment.status = 'active'
+		  AND NOT (`+employeeKeyEffectivePredicate+`)`, enterpriseID, employeeID, key.AssignmentID, boundary)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
 }
 
 func lockEmployeeKeyCredential(ctx context.Context, tx *sql.Tx, credential string) error {
@@ -484,7 +555,6 @@ func lockEmployeeKeyCredential(ctx context.Context, tx *sql.Tx, credential strin
 func lockLatestEmployeeKey(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) (employeeKeyRow, error) {
 	return scanEmployeeKey(tx.QueryRowContext(ctx, employeeKeySelect+`
 		WHERE assignment.enterprise_id = $1 AND assignment.employee_id = $2
-		  AND assignment.status <> 'active'
 		ORDER BY assignment.generation DESC, assignment.assigned_at DESC, assignment.id DESC LIMIT 1
 		FOR UPDATE OF assignment, api_key`, enterpriseID, employeeID))
 }

@@ -32,6 +32,7 @@ const (
 	employeeKeyAuditReasonKeyConflict        = "key_conflict"
 	employeeKeyAuditReasonIdempotency        = "idempotency_conflict"
 	employeeKeyAuditReasonProvisionLimit     = "provision_limit"
+	employeeKeyAuditReasonSeatLimit          = "seat_limit"
 	employeeKeyAuditReasonServiceUnavailable = "service_unavailable"
 	employeeKeyAuditReasonNoAvailableResult  = "no_available_result"
 	employeeKeyAuditReasonPermissionDenied   = "permission_denied"
@@ -414,6 +415,7 @@ type platformEnterpriseRequest struct {
 	Name                  string `json:"name" binding:"required"`
 	Host                  string `json:"portal_host" binding:"required"`
 	DedicatedUpstreamUser int64  `json:"dedicated_upstream_user_id" binding:"required"`
+	SeatCount             int    `json:"seat_count" binding:"required,min=1,max=10000"`
 	Reason                string `json:"reason" binding:"required"`
 }
 
@@ -545,6 +547,29 @@ func (h *Handler) UpdatePlatformEnterpriseHost(c *gin.Context) {
 		return
 	}
 	if response.ErrorFrom(c, h.service.UpdateEnterpriseHost(c.Request.Context(), id, subject.UserID, req.Host, req.Reason)) {
+		return
+	}
+	response.Success(c, gin.H{"success": true})
+}
+
+func (h *Handler) UpdatePlatformEnterpriseSeats(c *gin.Context) {
+	subject, ok := servermiddleware.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		SeatCount int    `json:"seat_count" binding:"required,min=1,max=10000"`
+		Reason    string `json:"reason" binding:"required"`
+	}
+	if !bind(c, &req) {
+		return
+	}
+	if response.ErrorFrom(c, h.service.UpdateEnterpriseSeats(c.Request.Context(), id, subject.UserID, req.SeatCount, req.Reason)) {
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -984,6 +1009,8 @@ func employeeKeyRejectedAuditReason(err error) string {
 		return employeeKeyAuditReasonIdempotency
 	case errors.Is(err, enterprise.ErrEmployeeKeyProvisionLimit):
 		return employeeKeyAuditReasonProvisionLimit
+	case errors.Is(err, enterprise.ErrEnterpriseSeatLimit):
+		return employeeKeyAuditReasonSeatLimit
 	case errors.Is(err, enterprise.ErrEmployeeKeyUnavailable):
 		return employeeKeyAuditReasonServiceUnavailable
 	default:

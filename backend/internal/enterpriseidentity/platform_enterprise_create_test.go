@@ -18,8 +18,9 @@ func TestCreateEnterpriseRequiresActiveUpstreamUserAndSubscription(t *testing.T)
 		WillReturnRows(sqlmock.NewRows([]string{"email", "status"}).AddRow("owner@example.com", "active"))
 	mock.ExpectQuery(`SELECT subscription\.id, subscription\.weekly_window_start`).WithArgs(int64(99)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(5), anchor))
-	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com").
+	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "dedicated", "status", "created_at"}).AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)))
+	mock.ExpectExec(`UPDATE users SET concurrency`).WithArgs(int64(99), 1).WillReturnResult(sqlmock.NewResult(99, 1))
 	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), sqlmock.AnyArg(), "platform_user:1").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`INSERT INTO enterprise_subscriptions`).WithArgs(int64(7), int64(5), sqlmock.AnyArg(), "platform_user:1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(11)))
@@ -68,8 +69,9 @@ func TestCreateEnterpriseRollsBackActivationWhenSubscriptionInsertFails(t *testi
 		WillReturnRows(sqlmock.NewRows([]string{"email", "status"}).AddRow("owner@example.com", "active"))
 	mock.ExpectQuery(`SELECT subscription\.id, subscription\.weekly_window_start`).WithArgs(int64(99)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}).AddRow(int64(5), anchor))
-	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com").
+	mock.ExpectQuery(`INSERT INTO enterprises`).WithArgs("Acme", int64(99), "acme.example.com", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "host", "dedicated", "status", "created_at"}).AddRow(int64(7), "Acme", "acme.example.com", int64(99), "active", time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)))
+	mock.ExpectExec(`UPDATE users SET concurrency`).WithArgs(int64(99), 1).WillReturnResult(sqlmock.NewResult(99, 1))
 	mock.ExpectExec(`INSERT INTO enterprise_audit_events`).WithArgs(int64(7), sqlmock.AnyArg(), "platform_user:1").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`INSERT INTO enterprise_subscriptions`).WithArgs(int64(7), int64(5), sqlmock.AnyArg(), "platform_user:1").
 		WillReturnError(sql.ErrTxDone)

@@ -229,6 +229,25 @@ describe('EnterpriseCreateView 搜索选人', () => {
     expect(wrapper.vm.userOptions).toEqual([])
   })
 
+  it('提交明确席位数并拒绝超范围输入', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.vm.searchUsers('member')
+    await flushPromises()
+    fillForm(wrapper.vm.form)
+    wrapper.vm.selectUser(9)
+    wrapper.vm.form.seat_count = 3
+    create.mockResolvedValueOnce({ id: 7, dedicated_upstream_user_id: 9 })
+    await wrapper.vm.submit()
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ seat_count: 3, dedicated_upstream_user_id: 9 }))
+
+    create.mockClear()
+    wrapper.vm.form.seat_count = 10001
+    await wrapper.vm.submit()
+    expect(create).not.toHaveBeenCalled()
+    expect(wrapper.vm.errors.seat_count).toBe('请输入 1–10000 的 Key 席位数')
+  })
+
   it('创建失败时只提示固定文案，不回显后端原始错误或内部标识', async () => {
     const backendTrace = 'INTERNAL-TRACE-ID-51cd · pg: duplicate key value violates unique constraint "enterprises_portal_host_key"'
     create.mockRejectedValueOnce(new Error(backendTrace))

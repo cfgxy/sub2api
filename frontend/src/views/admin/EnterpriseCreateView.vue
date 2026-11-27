@@ -75,6 +75,18 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.accountDescription') }}</p>
               </div>
             </div>
+            <div data-testid="enterprise-create-seats">
+              <Input
+                v-model.number="form.seat_count"
+                type="number"
+                min="1"
+                max="10000"
+                :label="t('admin.enterprise.common.seats')"
+                :error="errors.seat_count"
+                required
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.enterprise.create.seatsDescription') }}</p>
+            </div>
             <div data-testid="enterprise-create-account">
               <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-dark-200">
                 {{ t('admin.enterprise.create.dedicatedAccount') }}
@@ -189,8 +201,8 @@ const existingEnterprises = ref<PlatformEnterprise[]>([])
 const candidates = ref<AdminUser[]>([])
 const selectedUser = ref<AdminUser>()
 let searchSequence = 0
-const form = reactive<{ name: string; portal_host: string; dedicated_upstream_user_id: number | ''; reason: string }>({ name: '', portal_host: '', dedicated_upstream_user_id: '', reason: '' })
-const errors = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: '', reason: '' })
+const form = reactive<{ name: string; portal_host: string; dedicated_upstream_user_id: number | ''; seat_count: number; reason: string }>({ name: '', portal_host: '', dedicated_upstream_user_id: '', seat_count: 1, reason: '' })
+const errors = reactive({ name: '', portal_host: '', dedicated_upstream_user_id: '', seat_count: '', reason: '' })
 const userOptions = computed(() => candidates.value.filter((user) => Number.isInteger(user.id) && user.id > 0).map((user) => ({ user, reason: ineligibleReason(user) })))
 const accountOptions = computed<SelectOption[]>(() => userOptions.value.map((option) => ({
   value: option.user.id,
@@ -255,6 +267,7 @@ function validate() {
     ? t('admin.enterprise.create.hostRequired')
     : /^[a-z0-9.-]+$/.test(form.portal_host.trim()) ? '' : t('admin.enterprise.create.hostInvalid')
   errors.dedicated_upstream_user_id = Number(form.dedicated_upstream_user_id) >= 1 ? '' : t('admin.enterprise.create.accountRequired')
+  errors.seat_count = Number.isInteger(form.seat_count) && form.seat_count >= 1 && form.seat_count <= 10000 ? '' : t('admin.enterprise.create.seatsInvalid')
   errors.reason = form.reason.trim() ? '' : t('admin.enterprise.create.reasonRequired')
   return !Object.values(errors).some(Boolean)
 }

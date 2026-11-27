@@ -36,6 +36,14 @@ type enterpriseFixture struct {
 
 type enterpriseNoopAuthCacheInvalidator struct{}
 
+func setEnterpriseFixtureSeatCount(t *testing.T, ctx context.Context, fixture enterpriseFixture, seatCount int) {
+	t.Helper()
+	_, err := integrationDB.ExecContext(ctx, `UPDATE enterprises SET seat_count = $2 WHERE id = $1`, fixture.enterpriseID, seatCount)
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, `UPDATE users SET concurrency = $2 WHERE id = $1`, fixture.enterpriseUserID, seatCount)
+	require.NoError(t, err)
+}
+
 func (enterpriseNoopAuthCacheInvalidator) InvalidateAuthCacheByKey(context.Context, string) {}
 
 func TestEnterpriseSchemaConstraints(t *testing.T) {

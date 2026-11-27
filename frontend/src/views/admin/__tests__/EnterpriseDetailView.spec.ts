@@ -11,13 +11,14 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: (await import('./enterpriseTestI18n')).useEnterpriseTestI18n,
 }))
 
-const { get, refreshSubscriptions } = vi.hoisted(() => ({
+const { get, refreshSubscriptions, updateSeats } = vi.hoisted(() => ({
   get: vi.fn(),
   refreshSubscriptions: vi.fn(),
+  updateSeats: vi.fn(),
 }))
 
 vi.mock('@/api/enterprisePlatform', () => ({
-  enterprisePlatformAPI: { get, disable: vi.fn(), refreshSubscriptions },
+  enterprisePlatformAPI: { get, disable: vi.fn(), refreshSubscriptions, updateSeats },
 }))
 
 vi.mock('vue-router', () => ({
@@ -75,6 +76,7 @@ describe('EnterpriseDetailView 信息结构补齐', () => {
     await wrapper.get('[data-testid="enterprise-detail-tab-access"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[data-testid="enterprise-detail-access"]').text()).toContain('admin@yunchuan.example.com')
+    expect(wrapper.get('[data-testid="enterprise-detail-access"]').text()).toContain('活动会话')
     expect(wrapper.find('[data-testid="enterprise-detail-overview"]').exists()).toBe(false)
 
     i18n.global.locale.value = 'en'
@@ -82,6 +84,31 @@ describe('EnterpriseDetailView 信息结构补齐', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Active Keys')
     expect(wrapper.text()).not.toContain('活动 Key')
+  })
+
+  it('席位编辑同步提交原因，并重读服务端席位占用与主账号并发', async () => {
+    const enterprise = {
+      id: 7, name: '云川数据', portal_host: 'yunchuan.example.com', status: 'active',
+      created_at: '2026-01-05T08:00:00Z', admin_email: '', dedicated_upstream_user_id: 9,
+      employee_count: 3, active_employee_count: 2, active_session_count: 0, active_key_count: 2,
+      seat_count: 2, seat_usage: 2, seat_overage: 0, dedicated_upstream_user_concurrency: 2, subscriptions: [],
+    }
+    get.mockResolvedValueOnce(enterprise).mockResolvedValueOnce({ ...enterprise, seat_count: 3, dedicated_upstream_user_concurrency: 3 })
+    updateSeats.mockResolvedValueOnce({ success: true })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="enterprise-detail-tab-access"]').trigger('click')
+    await flushPromises()
+    const inputs = wrapper.get('[data-testid="enterprise-detail-access"]').findAll('input')
+    await inputs[0].setValue('3')
+    await inputs[1].setValue('renewal')
+    await wrapper.get('[data-testid="enterprise-detail-update-seats"]').trigger('click')
+    await flushPromises()
+
+    expect(updateSeats).toHaveBeenCalledWith(7, 3, 'renewal')
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('已占用 2 / 3')
+    expect(wrapper.text()).toContain('3')
   })
 
   it('订阅状态与有效期均显示为本地化文案，未知值不暴露原枚举', async () => {

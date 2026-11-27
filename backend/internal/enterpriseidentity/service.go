@@ -46,6 +46,9 @@ const (
 	minPasswordLength                       = 8
 	initialPasswordLength                   = 12
 	initialPasswordCharset                  = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+	minEnterpriseSeatCount                  = 1
+	maxEnterpriseSeatCount                  = 10000
+	defaultEnterpriseSeatCount              = 1
 	defaultBrandEnterpriseName              = "Sub2API"
 	defaultBrandTitle                       = "企业工作台"
 	defaultBrandBody                        = "使用企业管理员或员工账号安全访问组织资源。"
@@ -58,24 +61,25 @@ const (
 )
 
 var (
-	errInvalidCredentials        = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	errInvalidToken              = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
-	errEnterpriseInactive        = infraerrors.Unauthorized("ENTERPRISE_DISABLED", "enterprise workspace is not active")
-	errPrincipalInactive         = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise identity is not active")
-	errInactive                  = errPrincipalInactive
-	errWrongHost                 = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
-	errPasswordExpired           = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
-	errForceChange               = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
-	errResetInvalid              = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
-	errDedicatedUserUnavailable  = infraerrors.BadRequest("DEDICATED_UPSTREAM_USER_UNAVAILABLE", "dedicated upstream user is not active")
-	errSubscriptionUnavailable   = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
-	errNotFound                  = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
-	errEmployeeDepartmentInvalid = infraerrors.BadRequest("ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID", "selected department is invalid")
-	errConflict                  = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
-	errInvalidBrand              = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
-	errEmployeeVersionConflict   = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
-	errInvalidEnterpriseInput    = infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise id and reason are required")
-	errInvalidEnterpriseHost     = infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise portal host is invalid")
+	errInvalidCredentials         = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	errInvalidToken               = infraerrors.Unauthorized("INVALID_ENTERPRISE_TOKEN", "invalid enterprise token")
+	errEnterpriseInactive         = infraerrors.Unauthorized("ENTERPRISE_DISABLED", "enterprise workspace is not active")
+	errPrincipalInactive          = infraerrors.Unauthorized("ENTERPRISE_PRINCIPAL_INACTIVE", "enterprise identity is not active")
+	errInactive                   = errPrincipalInactive
+	errWrongHost                  = infraerrors.Unauthorized("ENTERPRISE_HOST_MISMATCH", "enterprise token is not valid for this host")
+	errPasswordExpired            = infraerrors.Forbidden("INITIAL_PASSWORD_EXPIRED", "initial password has expired")
+	errForceChange                = infraerrors.Forbidden("PASSWORD_CHANGE_REQUIRED", "password must be changed before continuing")
+	errResetInvalid               = infraerrors.BadRequest("PASSWORD_RESET_INVALID", "password reset token is invalid or expired")
+	errDedicatedUserUnavailable   = infraerrors.BadRequest("DEDICATED_UPSTREAM_USER_UNAVAILABLE", "dedicated upstream user is not active")
+	errSubscriptionUnavailable    = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
+	errNotFound                   = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
+	errEmployeeDepartmentInvalid  = infraerrors.BadRequest("ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID", "selected department is invalid")
+	errConflict                   = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
+	errInvalidBrand               = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
+	errEmployeeVersionConflict    = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
+	errInvalidEnterpriseInput     = infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise id and reason are required")
+	errInvalidEnterpriseHost      = infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise portal host is invalid")
+	errInvalidEnterpriseSeatCount = infraerrors.BadRequest("INVALID_ENTERPRISE_SEAT_COUNT", "enterprise seat count must be between 1 and 10000")
 )
 
 type PasswordResetMailer interface {
@@ -84,6 +88,10 @@ type PasswordResetMailer interface {
 
 type APIKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
+}
+
+type APIKeyAuthCacheUserInvalidator interface {
+	InvalidateAuthCacheByUserID(ctx context.Context, userID int64)
 }
 
 type BrandObjectStorage interface {
@@ -197,6 +205,10 @@ type PlatformEnterprise struct {
 	ActiveEmployeeCount   int64                  `json:"active_employee_count"`
 	ActiveSessionCount    int64                  `json:"active_session_count"`
 	ActiveKeyCount        int64                  `json:"active_key_count"`
+	SeatCount             int                    `json:"seat_count"`
+	SeatUsage             int64                  `json:"seat_usage"`
+	SeatOverage           int64                  `json:"seat_overage"`
+	DedicatedConcurrency  int                    `json:"dedicated_upstream_user_concurrency"`
 	Subscriptions         []PlatformSubscription `json:"subscriptions"`
 }
 
@@ -220,6 +232,7 @@ type CreateEnterpriseInput struct {
 	Name                  string
 	Host                  string
 	DedicatedUpstreamUser int64
+	SeatCount             int
 	Reason                string
 }
 
@@ -402,8 +415,14 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 	input.Name = strings.TrimSpace(input.Name)
 	input.Host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(input.Host)), ".")
 	input.Reason = strings.TrimSpace(input.Reason)
+	if input.SeatCount == 0 {
+		input.SeatCount = defaultEnterpriseSeatCount
+	}
 	if input.Name == "" || len(input.Name) > 255 || input.Host == "" || strings.ContainsAny(input.Host, "/: ") || input.DedicatedUpstreamUser <= 0 || input.Reason == "" {
 		return nil, infraerrors.BadRequest("INVALID_ENTERPRISE", "enterprise name, host, upstream user and reason are required")
+	}
+	if input.SeatCount < minEnterpriseSeatCount || input.SeatCount > maxEnterpriseSeatCount {
+		return nil, errInvalidEnterpriseSeatCount
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -480,16 +499,21 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 
 	result := new(PlatformEnterprise)
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host, status)
-		VALUES ($1, $2, $2, $3, 'active')
+		INSERT INTO enterprises (name, dedicated_upstream_user_id, admin_user_id, portal_host, seat_count, status)
+		VALUES ($1, $2, $2, $3, $4, 'active')
 		RETURNING id, name, LOWER(BTRIM(portal_host)), dedicated_upstream_user_id, status, created_at`,
-		input.Name, input.DedicatedUpstreamUser, input.Host).Scan(&result.ID, &result.Name, &result.Host, &result.DedicatedUpstreamUser, &result.Status, &result.CreatedAt)
+		input.Name, input.DedicatedUpstreamUser, input.Host, input.SeatCount).Scan(&result.ID, &result.Name, &result.Host, &result.DedicatedUpstreamUser, &result.Status, &result.CreatedAt)
 	if err != nil {
 		return nil, errConflict
 	}
 	result.AdminEmail = maskEnterpriseEmail(upstreamEmail)
+	result.SeatCount = input.SeatCount
+	result.DedicatedConcurrency = input.SeatCount
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET concurrency = $2, updated_at = NOW() WHERE id = $1`, input.DedicatedUpstreamUser, input.SeatCount); err != nil {
+		return nil, err
+	}
 	actor := fmt.Sprintf("platform_user:%d", actorUserID)
-	payload, marshalErr := json.Marshal(map[string]any{"result": "success", "reason": input.Reason})
+	payload, marshalErr := json.Marshal(map[string]any{"result": "success", "reason": input.Reason, "seat_count": input.SeatCount, "dedicated_upstream_user_concurrency": input.SeatCount})
 	if marshalErr != nil {
 		return nil, marshalErr
 	}
@@ -521,7 +545,18 @@ func (s *Service) CreateEnterprise(ctx context.Context, input CreateEnterpriseIn
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.invalidateEnterpriseUserAuthCache(ctx, input.DedicatedUpstreamUser)
 	return result, nil
+}
+
+func setPlatformEnterpriseSeatMetrics(item *PlatformEnterprise) {
+	if item == nil {
+		return
+	}
+	item.SeatUsage = item.ActiveKeyCount
+	if item.ActiveKeyCount > int64(item.SeatCount) {
+		item.SeatOverage = item.ActiveKeyCount - int64(item.SeatCount)
+	}
 }
 
 // platformSubscriptionsSQL 依赖外层别名 e（enterprises）；列表与详情共用同一口径，enterprise_id = e.id 是企业间隔离条件。
@@ -550,13 +585,18 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT e.id, e.name, LOWER(BTRIM(e.portal_host)), e.dedicated_upstream_user_id, e.status, e.created_at,
+		       e.seat_count,
 		       COALESCE((SELECT email FROM users WHERE id = e.admin_user_id), ''),
+		       COALESCE((SELECT concurrency FROM users WHERE id = e.dedicated_upstream_user_id), 0),
 		       (SELECT COUNT(*) FROM enterprise_employees WHERE enterprise_id = e.id),
 		       (SELECT COUNT(*) FROM enterprise_employees WHERE enterprise_id = e.id AND status = 'active'),
 		       (SELECT COUNT(*) FROM enterprise_sessions WHERE enterprise_id = e.id AND revoked_at IS NULL AND expires_at > NOW()),
 		       (SELECT COUNT(*) FROM enterprise_key_assignments AS assignment
 		          JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
-		          WHERE assignment.enterprise_id = e.id AND assignment.status = 'active' AND api_key.status = 'active'),
+		          WHERE assignment.enterprise_id = e.id AND assignment.status = 'active' AND api_key.status = 'active'
+		            AND api_key.deleted_at IS NULL
+		            AND (api_key.expires_at IS NULL OR api_key.expires_at > statement_timestamp())
+		            AND (api_key.quota <= 0 OR api_key.quota_used < api_key.quota)),
 		       `+platformSubscriptionsSQL+`
 		FROM enterprises AS e WHERE `+strings.Join(conditions, " AND ")+` ORDER BY e.id DESC`, args...)
 	if err != nil {
@@ -569,7 +609,7 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 		var adminEmail string
 		var subscriptionsJSON []byte
 		if err := rows.Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt,
-			&adminEmail, &item.EmployeeCount, &item.ActiveEmployeeCount, &item.ActiveSessionCount, &item.ActiveKeyCount, &subscriptionsJSON); err != nil {
+			&item.SeatCount, &adminEmail, &item.DedicatedConcurrency, &item.EmployeeCount, &item.ActiveEmployeeCount, &item.ActiveSessionCount, &item.ActiveKeyCount, &subscriptionsJSON); err != nil {
 			return nil, err
 		}
 		if len(subscriptionsJSON) > 0 {
@@ -578,6 +618,7 @@ func (s *Service) ListPlatformEnterprises(ctx context.Context, search, status st
 			}
 		}
 		item.AdminEmail = maskEnterpriseEmail(adminEmail)
+		setPlatformEnterpriseSeatMetrics(&item)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -734,7 +775,7 @@ func (s *Service) RefreshPlatformEnterpriseSubscriptions(ctx context.Context, en
 
 func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*PlatformEnterprise, error) {
 	var item PlatformEnterprise
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, LOWER(BTRIM(portal_host)), dedicated_upstream_user_id, status, created_at FROM enterprises WHERE id = $1`, id).Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, LOWER(BTRIM(portal_host)), dedicated_upstream_user_id, status, created_at, seat_count FROM enterprises WHERE id = $1`, id).Scan(&item.ID, &item.Name, &item.Host, &item.DedicatedUpstreamUser, &item.Status, &item.CreatedAt, &item.SeatCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errNotFound
 	}
@@ -744,8 +785,9 @@ func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*Platfor
 	var subscriptionsJSON []byte
 	err = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE((SELECT email FROM users WHERE id = e.admin_user_id), ''),
+		       COALESCE((SELECT concurrency FROM users WHERE id = e.dedicated_upstream_user_id), 0),
 		       `+platformSubscriptionsSQL+`
-		FROM enterprises AS e WHERE e.id = $1`, id).Scan(&item.AdminEmail, &subscriptionsJSON)
+		FROM enterprises AS e WHERE e.id = $1`, id).Scan(&item.AdminEmail, &item.DedicatedConcurrency, &subscriptionsJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -762,11 +804,15 @@ func (s *Service) GetPlatformEnterprise(ctx context.Context, id int64) (*Platfor
 			(SELECT COUNT(*) FROM enterprise_sessions WHERE enterprise_id = $1 AND revoked_at IS NULL AND expires_at > NOW()),
 			(SELECT COUNT(*) FROM enterprise_key_assignments AS assignment
 			 JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
-			 WHERE assignment.enterprise_id = $1 AND assignment.status = 'active' AND api_key.status = 'active')`, id).
+			 WHERE assignment.enterprise_id = $1 AND assignment.status = 'active' AND api_key.status = 'active'
+			   AND api_key.deleted_at IS NULL
+			   AND (api_key.expires_at IS NULL OR api_key.expires_at > statement_timestamp())
+			   AND (api_key.quota <= 0 OR api_key.quota_used < api_key.quota))`, id).
 		Scan(&item.EmployeeCount, &item.ActiveEmployeeCount, &item.ActiveSessionCount, &item.ActiveKeyCount)
 	if err != nil {
 		return nil, err
 	}
+	setPlatformEnterpriseSeatMetrics(&item)
 	return &item, nil
 }
 
@@ -910,6 +956,69 @@ func (s *Service) UpdateEnterpriseHost(ctx context.Context, id, actorUserID int6
 		return err
 	}
 	return tx.Commit()
+}
+
+// UpdateEnterpriseSeats changes the sellable employee-key capacity and the
+// matching dedicated upstream-user concurrency in one transaction. Existing
+// keys are never revoked when the new capacity is below current usage.
+func (s *Service) UpdateEnterpriseSeats(ctx context.Context, id, actorUserID int64, seatCount int, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if id <= 0 || reason == "" || seatCount < minEnterpriseSeatCount || seatCount > maxEnterpriseSeatCount {
+		return errInvalidEnterpriseSeatCount
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var dedicatedUserID int64
+	var previousSeats, previousConcurrency int
+	if err = tx.QueryRowContext(ctx, `
+		SELECT e.dedicated_upstream_user_id, e.seat_count, u.concurrency
+		FROM enterprises AS e
+		JOIN users AS u ON u.id = e.dedicated_upstream_user_id
+		WHERE e.id = $1
+		FOR UPDATE OF e, u`, id).Scan(&dedicatedUserID, &previousSeats, &previousConcurrency); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNotFound
+		}
+		return err
+	}
+	if previousSeats == seatCount && previousConcurrency == seatCount {
+		return tx.Commit()
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE enterprises SET seat_count = $2, updated_at = NOW() WHERE id = $1`, id, seatCount); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET concurrency = $2, updated_at = NOW() WHERE id = $1`, dedicatedUserID, seatCount); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"result": "success", "reason": reason,
+		"previous_seat_count": previousSeats, "seat_count": seatCount,
+		"previous_dedicated_upstream_user_concurrency": previousConcurrency,
+		"dedicated_upstream_user_concurrency":          seatCount,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
+		VALUES ($1, 'enterprise.seats_updated', 'enterprise', $1, $2::jsonb, $3)`, id, payload, fmt.Sprintf("platform_user:%d", actorUserID)); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateEnterpriseUserAuthCache(ctx, dedicatedUserID)
+	return nil
+}
+
+func (s *Service) invalidateEnterpriseUserAuthCache(ctx context.Context, userID int64) {
+	if invalidator, ok := s.authCacheInvalidator.(APIKeyAuthCacheUserInvalidator); ok {
+		invalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
 }
 
 // validPortalHost 校验入口域名格式：小写化后仅允许小写字母、数字、点与连字符，

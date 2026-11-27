@@ -654,6 +654,7 @@ func TestEnterpriseEmployeeKeyRotationRollsBackWhenAuditFails(t *testing.T) {
 func TestEnterpriseEmployeeKeyCreateReplaysWithoutDuplicatingCurrentKey(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
+	setEnterpriseFixtureSeatCount(t, ctx, fixture, 2)
 	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 	plain := fmt.Sprintf("sk-enterprise-create-%d", time.Now().UnixNano())
 	params := enterprise.EmployeeKeyMutationParams{
@@ -952,6 +953,7 @@ func TestEnterpriseEmployeeKeyHTTPProtocolUsesAuthenticatedEmployeeAndHost(t *te
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
+	setEnterpriseFixtureSeatCount(t, ctx, fixture, 2)
 	const employeePassword = "employee-password-strong"
 	const secondEmployeePassword = "second-employee-password-strong"
 	const adminPassword = "admin-password-strong"
@@ -1114,6 +1116,7 @@ func TestEnterpriseEmployeeKeyConcurrentCreateReplaysOneIdempotencyResult(t *tes
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	fixture := seedEnterpriseFixture(t, ctx)
+	setEnterpriseFixtureSeatCount(t, ctx, fixture, 2)
 	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
 	plain := fmt.Sprintf("sk-enterprise-concurrent-create-%d", time.Now().UnixNano())
 	params := enterprise.EmployeeKeyMutationParams{
@@ -1195,6 +1198,7 @@ func TestEnterpriseEmployeeKeyCreateAndDisableRollBackWhenAuditFails(t *testing.
 	t.Run("create", func(t *testing.T) {
 		ctx := context.Background()
 		fixture := seedEnterpriseFixture(t, ctx)
+		setEnterpriseFixtureSeatCount(t, ctx, fixture, 2)
 		installEmployeeKeyAuditFailure(t, ctx, fixture.enterpriseID, "key.employee_create")
 		plain := fmt.Sprintf("sk-enterprise-create-rollback-%d", time.Now().UnixNano())
 		repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
@@ -1397,41 +1401,61 @@ func TestEnterpriseEmployeeKeySuccessorBindsCurrentSubscriptionAfterReplacement(
 }
 
 func TestEnterpriseEmployeeKeyTerminalStatusCannotBecomeCallableThroughLifecycle(t *testing.T) {
-	t.Run("disable quota exhausted", func(t *testing.T) {
+	t.Run("recreate quota exhausted key with fresh key", func(t *testing.T) {
 		ctx := context.Background()
 		fixture := seedEnterpriseFixture(t, ctx)
 		_, err := integrationDB.ExecContext(ctx, `
 			UPDATE api_keys SET quota = 5, quota_used = 5, status = 'quota_exhausted' WHERE id = $1`, fixture.apiKeyID)
 		require.NoError(t, err)
+
 		repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
-		_, err = repo.DisableEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
+		recreated, err := repo.CreateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
 			EnterpriseID: fixture.enterpriseID, EmployeeID: fixture.employeeID,
-			ExpectedAPIKeyID: fixture.apiKeyID, IdempotencyKey: "disable-exhausted", ActorRef: "test:employee",
+			IdempotencyKey: "recreate-exhausted", Plaintext: "sk-recreate-exhausted", ActorRef: "test:employee",
 		})
 		require.NoError(t, err)
-		var status string
-		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&status))
-		require.Equal(t, "disabled", status)
+		require.NotEqual(t, fixture.apiKeyID, recreated.Key.ID)
+		require.Equal(t, "active", recreated.Key.Status)
+		require.Zero(t, recreated.Key.Quota)
+		require.Zero(t, recreated.Key.QuotaUsed)
+
+		var oldKeyStatus, oldAssignmentStatus, newAssignmentStatus string
+		var oldEndedAt *time.Time
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&oldKeyStatus))
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status, ended_at FROM enterprise_key_assignments WHERE api_key_id = $1`, fixture.apiKeyID).Scan(&oldAssignmentStatus, &oldEndedAt))
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status FROM enterprise_key_assignments WHERE api_key_id = $1`, recreated.Key.ID).Scan(&newAssignmentStatus))
+		require.Equal(t, "quota_exhausted", oldKeyStatus)
+		require.Equal(t, "ended", oldAssignmentStatus)
+		require.NotNil(t, oldEndedAt)
+		require.Equal(t, "active", newAssignmentStatus)
 	})
 
-	t.Run("rotate expired", func(t *testing.T) {
+	t.Run("recreate expired key with fresh key", func(t *testing.T) {
 		ctx := context.Background()
 		fixture := seedEnterpriseFixture(t, ctx)
 		_, err := integrationDB.ExecContext(ctx, `
 			UPDATE api_keys SET status = 'expired', expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, fixture.apiKeyID)
 		require.NoError(t, err)
+
 		repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
-		successor, err := repo.RotateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
+		recreated, err := repo.CreateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
 			EnterpriseID: fixture.enterpriseID, EmployeeID: fixture.employeeID,
-			ExpectedAPIKeyID: fixture.apiKeyID, IdempotencyKey: "rotate-expired", Plaintext: "sk-rotate-expired", ActorRef: "test:employee",
+			IdempotencyKey: "recreate-expired", Plaintext: "sk-recreate-expired", ActorRef: "test:employee",
 		})
 		require.NoError(t, err)
-		require.Equal(t, "expired", successor.Key.Status)
-		var oldStatus, successorStatus string
-		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&oldStatus))
-		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status FROM api_keys WHERE id = $1`, successor.Key.ID).Scan(&successorStatus))
-		require.Equal(t, "disabled", oldStatus)
-		require.Equal(t, "expired", successorStatus)
+		require.NotEqual(t, fixture.apiKeyID, recreated.Key.ID)
+		require.Equal(t, "active", recreated.Key.Status)
+		require.Nil(t, recreated.Key.ExpiresAt)
+
+		var oldKeyStatus, oldAssignmentStatus, newAssignmentStatus string
+		var oldEndedAt *time.Time
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&oldKeyStatus))
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status, ended_at FROM enterprise_key_assignments WHERE api_key_id = $1`, fixture.apiKeyID).Scan(&oldAssignmentStatus, &oldEndedAt))
+		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT status FROM enterprise_key_assignments WHERE api_key_id = $1`, recreated.Key.ID).Scan(&newAssignmentStatus))
+		require.Equal(t, "expired", oldKeyStatus)
+		require.Equal(t, "ended", oldAssignmentStatus)
+		require.NotNil(t, oldEndedAt)
+		require.Equal(t, "active", newAssignmentStatus)
 	})
 }
 
