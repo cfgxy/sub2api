@@ -21,7 +21,7 @@ func TestSetAllocationVersionMismatchOnExistingRowWritesRejectedAudit(t *testing
 	expectSetAllocationLockPrefix(mock, 7, 22, 0)
 	mock.ExpectQuery(`(?s)SELECT CASE \$1::text.*FROM enterprise_subscriptions`).
 		WithArgs(WindowTypeWeek, int64(7), int64(11), int64(0)).
-		WillReturnRows(sqlmock.NewRows([]string{"current_anchor"}).AddRow(anchor))
+		WillReturnRows(sqlmock.NewRows([]string{"current_anchor", "limit"}).AddRow(anchor, "100.00000000"))
 	mock.ExpectQuery(`(?s)SELECT id, amount::text, version, created_at, updated_at\s+FROM enterprise_weekly_allocations`).
 		WithArgs(int64(7), int64(11), int64(22), WindowTypeWeek, anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "amount", "version", "created_at", "updated_at"}).
@@ -52,7 +52,7 @@ func TestSetAllocationVersionMismatchOnMissingRowWritesRejectedAudit(t *testing.
 	expectSetAllocationLockPrefix(mock, 7, 22, 0)
 	mock.ExpectQuery(`(?s)SELECT CASE \$1::text.*FROM enterprise_subscriptions`).
 		WithArgs(WindowTypeWeek, int64(7), int64(11), int64(0)).
-		WillReturnRows(sqlmock.NewRows([]string{"current_anchor"}).AddRow(anchor))
+		WillReturnRows(sqlmock.NewRows([]string{"current_anchor", "limit"}).AddRow(anchor, "100.00000000"))
 	mock.ExpectQuery(`(?s)SELECT id, amount::text, version, created_at, updated_at\s+FROM enterprise_weekly_allocations`).
 		WithArgs(int64(7), int64(11), int64(22), WindowTypeWeek, anchor).
 		WillReturnError(sql.ErrNoRows)

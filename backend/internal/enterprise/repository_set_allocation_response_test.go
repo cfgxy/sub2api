@@ -20,7 +20,7 @@ func TestSetAllocationReturnsActorRefMatchingRevisionAndAudit(t *testing.T) {
 	expectSetAllocationLockPrefix(mock, 7, 22, 42)
 	mock.ExpectQuery(`(?s)SELECT CASE \$1::text.*FROM enterprise_subscriptions`).
 		WithArgs(WindowTypeWeek, int64(7), int64(11), int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"current_anchor"}).AddRow(anchor))
+		WillReturnRows(sqlmock.NewRows([]string{"current_anchor", "limit"}).AddRow(anchor, "100.00000000"))
 	mock.ExpectQuery(`(?s)SELECT id, amount::text, version, created_at, updated_at\s+FROM enterprise_weekly_allocations`).
 		WithArgs(int64(7), int64(11), int64(22), WindowTypeWeek, anchor).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "amount", "version", "created_at", "updated_at"}).
@@ -28,6 +28,9 @@ func TestSetAllocationReturnsActorRefMatchingRevisionAndAudit(t *testing.T) {
 	mock.ExpectQuery(`(?s)UPDATE enterprise_weekly_allocations`).
 		WithArgs("10.00000000", int64(31), int64(4)).
 		WillReturnRows(sqlmock.NewRows([]string{"version", "updated_at"}).AddRow(int64(5), anchor))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(allow_employee_allocation_overcommit, FALSE\)\s+FROM enterprises`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"allow_employee_allocation_overcommit"}).AddRow(false))
 	mock.ExpectExec(`(?s)INSERT INTO enterprise_allocation_revisions`).
 		WithArgs(int64(7), int64(31), int64(5), "25.00000000", "10.00000000", "quarterly top-up", "user:42").
 		WillReturnResult(sqlmock.NewResult(1, 1))

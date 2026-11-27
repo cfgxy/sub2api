@@ -92,6 +92,11 @@ export interface EnterpriseEmployeeUsageTrendPoint {
   actual_cost: string
 }
 
+export interface EnterpriseAllocationPolicy {
+  enterprise_id: number
+  allow_employee_allocation_overcommit: boolean
+}
+
 export interface EnterpriseAllocationSummary {
   allocation_id: number
   allocation_version: number
