@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -577,21 +578,27 @@ func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey 
 	return s.checkAPIKeyRateLimitsWithPending(ctx, apiKey, 0)
 }
 
-// checkAPIKeyRateLimitsWithPending 在窗口用量上叠加 pending（即将扣除的金额）后检查限速窗口。
+// checkAPIKeyRateLimitsWithPending checks rate limit windows with any fixed-charge
+// pending amount. Enterprise employee weekly allocation is deliberately based on
+// settled usage only; pending remains relevant only to any ordinary 5h/1d
+// limits carried by that key.
 func (s *BillingCacheService) checkAPIKeyRateLimitsWithPending(ctx context.Context, apiKey *APIKey, pending float64) error {
-	// Enterprise employee allocations use the subscription-anchored 7d window
-	// and tolerate only the configured bounded overage. This path deliberately
-	// bypasses the ordinary Redis snapshot and its fail-open compatibility behavior.
+	// Enterprise employee allocation admits based on the authoritative, settled
+	// 7d usage only. A pricing estimate, reservation, or concurrent in-flight
+	// request must never consume this admission budget.
 	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
 		if s.apiKeyRateLimitLoader == nil || apiKey.EnterpriseWeeklyWindowAnchor == nil {
-			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
+			return enterpriseEmployeeWeeklyAllocationStateUnavailable(apiKey, errors.New("missing authoritative employee weekly allocation loader or anchor"))
 		}
 		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
-		if err != nil || data.Window7dStart == nil || !data.Window7dStart.UTC().Equal(apiKey.EnterpriseWeeklyWindowAnchor.UTC()) {
-			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
+		if err != nil {
+			return enterpriseEmployeeWeeklyAllocationStateUnavailable(apiKey, err)
+		}
+		if data == nil || data.Window7dStart == nil || !data.Window7dStart.UTC().Equal(apiKey.EnterpriseWeeklyWindowAnchor.UTC()) {
+			return enterpriseEmployeeWeeklyAllocationStateUnavailable(apiKey, errors.New("employee weekly allocation window anchor mismatch"))
 		}
 		maximum := apiKey.RateLimit7d + enterpriseEmployeeWeeklyAllocationOverageUSD(s.cfg)
-		if apiKey.RateLimit7d <= 0 || data.Usage7d > maximum+0.000000001 || data.Usage7d+pending > maximum+0.000000001 {
+		if apiKey.RateLimit7d <= 0 || data.Usage7d > maximum+0.000000001 {
 			return ErrEnterpriseEmployeeWeeklyAllocationExceeded
 		}
 		// Employee keys normally do not carry 5h/1d limits. Preserve those
@@ -660,6 +667,14 @@ func (s *BillingCacheService) checkAPIKeyRateLimitsWithPending(ctx context.Conte
 	return s.evaluateRateLimits(ctx, apiKey, cacheData.Usage5h, cacheData.Usage1d, cacheData.Usage7d, w5h, w1d, w7d, pending)
 }
 
+func enterpriseEmployeeWeeklyAllocationStateUnavailable(apiKey *APIKey, cause error) error {
+	keyID := int64(0)
+	if apiKey != nil {
+		keyID = apiKey.ID
+	}
+	logger.LegacyPrintf("service.billing_cache", "Warning: enterprise employee weekly allocation state unavailable for api key %d: %v", keyID, cause)
+	return ErrEnterpriseEmployeeWeeklyAllocationStateUnavailable.WithCause(cause)
+}
 func enterpriseEmployeeWeeklyAllocationOverageUSD(cfg *config.Config) float64 {
 	if cfg == nil {
 		return config.DefaultEnterpriseEmployeeWeeklyAllocationOverageUSD
@@ -855,7 +870,7 @@ func (s *BillingCacheService) ReserveFixedCharge(ctx context.Context, user *User
 	if subscriptionBill && (group.HasDailyLimit() || group.HasWeeklyLimit() || group.HasMonthlyLimit()) {
 		res, subscriptionPending = s.reserveInflightScope(ctx, res, user.ID, inflightSubscriptionScope(subscription.ID), amount)
 	}
-	if apiKey != nil && (apiKey.Quota > 0 || apiKey.HasRateLimits()) {
+	if apiKey != nil && !apiKey.EnterpriseEmployeeWeeklyLimit && (apiKey.Quota > 0 || apiKey.HasRateLimits()) {
 		res, apiKeyPending = s.reserveInflightScope(ctx, res, user.ID, inflightAPIKeyScope(apiKey.ID), amount)
 	}
 	if subscriptionBill {
@@ -896,7 +911,9 @@ func (s *BillingCacheService) checkFixedChargeSubscription(ctx context.Context, 
 // checkFixedChargeAPIKey 按库中 Key 用量校验总额度与限速窗口覆盖 pending；未接入仓储时使用请求上下文与限速缓存中的用量。
 func (s *BillingCacheService) checkFixedChargeAPIKey(ctx context.Context, apiKey *APIKey, pending float64) error {
 	if apiKey != nil && apiKey.EnterpriseEmployeeWeeklyLimit {
-		return s.checkAPIKeyRateLimitsWithPending(ctx, apiKey, pending)
+		// Employee allocation admission is settled-usage only. Do not turn a
+		// known fixed charge into a pre-settlement employee quota hold.
+		return s.checkAPIKeyRateLimitsWithPending(ctx, apiKey, 0)
 	}
 	if apiKey.Quota <= 0 && !apiKey.HasRateLimits() {
 		return nil

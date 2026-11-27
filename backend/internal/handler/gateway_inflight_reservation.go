@@ -13,10 +13,6 @@ type inflightReservationEstimator interface {
 	EstimateInflightReservation(ctx context.Context, apiKey *service.APIKey, req service.InflightEstimateRequest) (float64, bool)
 }
 
-type enterpriseEmployeeUsageReserver interface {
-	ReserveEnterpriseEmployeeUsage(ctx context.Context, apiKey *service.APIKey, req service.InflightEstimateRequest) (*service.EnterpriseEmployeeUsageReservation, error)
-}
-
 // requestMaxOutputTokens 从请求体中提取输出 token 上限（兼容 Anthropic / OpenAI Chat / Responses / Gemini）。
 func requestMaxOutputTokens(body []byte) int {
 	for _, path := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens", "generationConfig.maxOutputTokens", "generation_config.max_output_tokens"} {
@@ -80,16 +76,10 @@ func reserveInflightBalanceCtx(
 		return ctx, inflightNoop, nil
 	}
 	if apiKey.EnterpriseEmployeeWeeklyLimit {
-		reserver, ok := estimator.(enterpriseEmployeeUsageReserver)
-		if !ok {
-			return ctx, inflightNoop, service.ErrBillingServiceUnavailable
-		}
-		employee, err := reserver.ReserveEnterpriseEmployeeUsage(ctx, apiKey, req)
-		if err != nil {
-			return ctx, inflightNoop, err
-		}
-		res := service.AttachEnterpriseEmployeeUsageReservation(nil, employee)
-		return service.WithInflightReservation(ctx, res), res.HandlerDone, nil
+		// Enterprise employee admission was already checked against settled
+		// authoritative usage. Do not estimate, serialize, or reserve it before
+		// the upstream request; actual usage is recorded after completion.
+		return ctx, inflightNoop, nil
 	}
 	if billing == nil || !billing.InflightReservationEnabled() {
 		return ctx, inflightNoop, nil

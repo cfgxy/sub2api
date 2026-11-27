@@ -36,19 +36,6 @@ func (e *countingEstimator) EstimateInflightReservation(context.Context, *servic
 	return e.cost, e.priced
 }
 
-type failClosedEmployeeEstimator struct {
-	reserveCalls int
-}
-
-func (e *failClosedEmployeeEstimator) EstimateInflightReservation(context.Context, *service.APIKey, service.InflightEstimateRequest) (float64, bool) {
-	return 0, false
-}
-
-func (e *failClosedEmployeeEstimator) ReserveEnterpriseEmployeeUsage(context.Context, *service.APIKey, service.InflightEstimateRequest) (*service.EnterpriseEmployeeUsageReservation, error) {
-	e.reserveCalls++
-	return nil, service.ErrBillingServiceUnavailable.WithCause(service.ErrEnterpriseEmployeeMaximumCostUnknown)
-}
-
 func newInflightTestGinContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -94,25 +81,24 @@ func TestReserveInflightBalance_UnpricedFailOpenByDefaultFailClosedOptIn(t *test
 	require.ErrorIs(t, err, service.ErrInsufficientBalance)
 }
 
-func TestEnterpriseEmployeeUnknownMaximumStopsBeforeUpstreamCall(t *testing.T) {
-	estimator := &failClosedEmployeeEstimator{}
+func TestEnterpriseEmployeeUnknownMaximumDoesNotBlockBeforeUpstreamCall(t *testing.T) {
+	estimator := &countingEstimator{priced: false}
 	apiKey := &service.APIKey{
 		ID: 1, User: &service.User{ID: 2}, EnterpriseEmployeeWeeklyLimit: true,
 	}
-	upstreamCalls := 0
 
+	c := newInflightTestGinContext()
 	done, err := reserveInflightBalance(
-		newInflightTestGinContext(), nil, estimator, apiKey, nil,
+		c, nil, estimator, apiKey, nil,
 		tokenInflightEstimate("unknown-model", []byte(`{"messages":[]}`)),
 	)
-	if err == nil {
-		upstreamCalls++
-		done()
-	}
+	require.NoError(t, err)
+	done()
 
-	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeMaximumCostUnknown)
-	require.Equal(t, 1, estimator.reserveCalls)
-	require.Zero(t, upstreamCalls)
+	// The handler can now invoke its upstream. Settlement records the actual
+	// charge afterwards; an unknown maximum must not become a 429/503 gate.
+	require.Zero(t, estimator.calls)
+	require.Nil(t, service.EnterpriseEmployeeUsageReservationFromContext(c.Request.Context()))
 }
 
 // handlerInflightCache 内存版余额缓存 + 在途预留（语义同 Redis Lua）。
