@@ -133,6 +133,50 @@ describe('EnterpriseEmployeesView', () => {
     wrapper.unmount()
   })
 
+  it('shows occupied and total employee seats when creation is rejected at capacity', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await clickText(wrapper, '创建员工')
+    await wrapper.get('[data-testid="generate-initial-password"]').trigger('click')
+    await wrapper.get('#create-email').setValue('blocked@example.com')
+    createEmployee.mockRejectedValueOnce({
+      status: 409,
+      reason: 'ENTERPRISE_EMPLOYEE_SEAT_LIMIT_REACHED',
+      message: 'enterprise employee seats are full',
+      metadata: { active_employee_count: '2', seat_count: '1', seat_overage: '1' },
+    })
+
+    await clickText(wrapper, '创建')
+
+    const message = wrapper.get('[data-testid="employee-seat-limit-error"]').text()
+    expect(message).toContain('已占用 2 / 1')
+    expect(message).toContain('停用或终止')
+    expect(message).toContain('增加席位')
+    expect(wrapper.find('#create-email').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('该邮箱已被使用')
+    expect(toastMessages()).toContain('员工席位已满')
+    wrapper.unmount()
+  })
+
+  it('shows the same seat guidance when restoring a disabled employee would exceed capacity', async () => {
+    listEmployees.mockResolvedValueOnce([{ ...baseEmployees[0], status: 'disabled' }])
+    updateEmployee.mockRejectedValueOnce({
+      status: 409,
+      reason: 'ENTERPRISE_EMPLOYEE_SEAT_LIMIT_REACHED',
+      metadata: { active_employee_count: '1', seat_count: '1', seat_overage: '0' },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickText(wrapper, '恢复')
+    await clickText(wrapper, '确认')
+
+    expect(updateEmployee).toHaveBeenCalledWith(10, expect.objectContaining({ status: 'active', version: 3 }))
+    expect(toastMessages()).toContain('已占用 1 / 1')
+    expect(toastMessages()).toContain('增加席位')
+    wrapper.unmount()
+  })
+
   it('generates a 12-character initial password and shows a one-time delivery card with email, password and entry URL after creation', async () => {
     const wrapper = mountView()
     await flushPromises()

@@ -32,7 +32,6 @@ const (
 	employeeKeyAuditReasonKeyConflict        = "key_conflict"
 	employeeKeyAuditReasonIdempotency        = "idempotency_conflict"
 	employeeKeyAuditReasonProvisionLimit     = "provision_limit"
-	employeeKeyAuditReasonSeatLimit          = "seat_limit"
 	employeeKeyAuditReasonServiceUnavailable = "service_unavailable"
 	employeeKeyAuditReasonNoAvailableResult  = "no_available_result"
 	employeeKeyAuditReasonPermissionDenied   = "permission_denied"
@@ -1026,8 +1025,6 @@ func employeeKeyRejectedAuditReason(err error) string {
 		return employeeKeyAuditReasonIdempotency
 	case errors.Is(err, enterprise.ErrEmployeeKeyProvisionLimit):
 		return employeeKeyAuditReasonProvisionLimit
-	case errors.Is(err, enterprise.ErrEnterpriseSeatLimit):
-		return employeeKeyAuditReasonSeatLimit
 	case errors.Is(err, enterprise.ErrEmployeeKeyUnavailable):
 		return employeeKeyAuditReasonServiceUnavailable
 	default:

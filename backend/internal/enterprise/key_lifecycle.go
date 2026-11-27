@@ -23,7 +23,6 @@ var (
 	ErrEmployeeKeyIdempotency     = infraerrors.Conflict("ENTERPRISE_KEY_IDEMPOTENCY_CONFLICT", "idempotency key was already used with a different request")
 	ErrEmployeeKeyUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "ENTERPRISE_KEY_UNAVAILABLE", "enterprise employee key service is unavailable")
 	ErrEmployeeKeyProvisionLimit  = infraerrors.TooManyRequests("ENTERPRISE_KEY_PROVISION_LIMIT", "enterprise employee key provision limit reached")
-	ErrEnterpriseSeatLimit        = infraerrors.Conflict("ENTERPRISE_SEAT_LIMIT_REACHED", "enterprise seat limit reached; revoke or disable an active employee key, or increase seats")
 )
 
 const (
@@ -306,9 +305,6 @@ func (r *Repository) mutateEmployeeKey(ctx context.Context, operation string, pa
 		if hasCurrent {
 			return nil, ErrEmployeeKeyAlreadyActive
 		}
-		if err := enforceEnterpriseSeatLimit(ctx, tx, params.EnterpriseID); err != nil {
-			return nil, err
-		}
 		previous, err = lockLatestEmployeeKey(ctx, tx, params.EnterpriseID, params.EmployeeID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
@@ -443,28 +439,6 @@ func lockEmployeeKeyIdempotency(ctx context.Context, tx *sql.Tx, params Employee
 		return 0, false, ErrEmployeeKeyUnavailable
 	}
 	return resultID.Int64, true, nil
-}
-
-func enforceEnterpriseSeatLimit(ctx context.Context, tx *sql.Tx, enterpriseID int64) error {
-	var seatCount, activeKeyCount int
-	// The caller already holds the enterprise row FOR UPDATE. That lock makes
-	// this count-and-insert decision serial for one enterprise while preserving
-	// isolation between different enterprises.
-	if err := tx.QueryRowContext(ctx, `
-		SELECT e.seat_count,
-		       COUNT(assignment.id) FILTER (WHERE `+employeeKeyEffectivePredicate+`)
-		FROM enterprises AS e
-		LEFT JOIN enterprise_key_assignments AS assignment
-		  ON assignment.enterprise_id = e.id
-		LEFT JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
-		WHERE e.id = $1
-		GROUP BY e.seat_count`, enterpriseID).Scan(&seatCount, &activeKeyCount); err != nil {
-		return err
-	}
-	if activeKeyCount >= seatCount {
-		return ErrEnterpriseSeatLimit
-	}
-	return nil
 }
 
 func enforceEmployeeKeyProvisionLimit(ctx context.Context, tx *sql.Tx, enterpriseID, employeeID int64) error {

@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -74,6 +75,7 @@ var (
 	errSubscriptionUnavailable    = infraerrors.BadRequest("ENTERPRISE_SUBSCRIPTION_UNAVAILABLE", "dedicated upstream user has no active subscription")
 	errNotFound                   = infraerrors.NotFound("ENTERPRISE_OBJECT_NOT_FOUND", "enterprise object not found")
 	errEmployeeDepartmentInvalid  = infraerrors.BadRequest("ENTERPRISE_EMPLOYEE_DEPARTMENT_INVALID", "selected department is invalid")
+	errEmployeeSeatLimit          = infraerrors.Conflict("ENTERPRISE_EMPLOYEE_SEAT_LIMIT_REACHED", "enterprise employee seats are full; disable or terminate an active employee, or increase seats")
 	errConflict                   = infraerrors.Conflict("ENTERPRISE_CONFLICT", "enterprise object conflicts with an existing record")
 	errInvalidBrand               = infraerrors.BadRequest("INVALID_ENTERPRISE_BRAND", "enterprise brand content is invalid")
 	errEmployeeVersionConflict    = infraerrors.Conflict("EMPLOYEE_VERSION_CONFLICT", "employee was modified by another admin; reload and retry")
@@ -554,9 +556,9 @@ func setPlatformEnterpriseSeatMetrics(item *PlatformEnterprise) {
 	if item == nil {
 		return
 	}
-	item.SeatUsage = item.ActiveKeyCount
-	if item.ActiveKeyCount > int64(item.SeatCount) {
-		item.SeatOverage = item.ActiveKeyCount - int64(item.SeatCount)
+	item.SeatUsage = item.ActiveEmployeeCount
+	if item.ActiveEmployeeCount > int64(item.SeatCount) {
+		item.SeatOverage = item.ActiveEmployeeCount - int64(item.SeatCount)
 	}
 }
 
@@ -981,9 +983,9 @@ func (s *Service) UpdateEnterpriseHost(ctx context.Context, id, actorUserID int6
 	return tx.Commit()
 }
 
-// UpdateEnterpriseSeats changes the sellable employee-key capacity and the
-// matching dedicated upstream-user concurrency in one transaction. Existing
-// keys are never revoked when the new capacity is below current usage.
+// UpdateEnterpriseSeats changes the active-employee capacity and the matching
+// dedicated upstream-user concurrency in one transaction. Existing employees
+// are never disabled or terminated when the new capacity is below current use.
 func (s *Service) UpdateEnterpriseSeats(ctx context.Context, id, actorUserID int64, seatCount int, reason string) error {
 	reason = strings.TrimSpace(reason)
 	if id <= 0 || reason == "" || seatCount < minEnterpriseSeatCount || seatCount > maxEnterpriseSeatCount {
@@ -2137,39 +2139,62 @@ func (s *Service) CreateEmployee(ctx context.Context, enterpriseID int64, email,
 	item := new(Employee)
 	var dept sql.NullInt64
 	actor := auditActor(ctx)
-	insertEmployee := func(q queryRower) error {
-		return q.QueryRowContext(ctx, `
-			INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, department_id, status, must_change_password, initial_password_expires_at)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = enforceEnterpriseEmployeeSeatLimit(ctx, tx, enterpriseID); err != nil {
+		return nil, err
+	}
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO enterprise_employees (enterprise_id, email, current_email, password_hash, department_id, status, must_change_password, initial_password_expires_at)
 		SELECT $1, $2, $2, $3, $4, 'active', TRUE, NOW() + INTERVAL '24 hours'
 		WHERE $4::bigint IS NULL OR EXISTS (SELECT 1 FROM enterprise_departments WHERE enterprise_id = $1 AND id = $4 AND status = 'active')
 		RETURNING id, current_email, status, department_id, must_change_password, version
 		`, enterpriseID, email, string(hash), departmentID).Scan(&item.ID, &item.Email, &item.Status, &dept, &item.MustChange, &item.Version)
-	}
-	if actor == "" {
-		err = insertEmployee(s.db)
-	} else {
-		tx, txErr := s.db.BeginTx(ctx, nil)
-		if txErr != nil {
-			return nil, txErr
-		}
-		defer func() { _ = tx.Rollback() }()
-		err = insertEmployee(tx)
-		if err == nil {
-			if auditErr := writeAuditEvent(ctx, tx, enterpriseID, "employee.created", "employee", &item.ID, map[string]any{"result": "success", "employee_id": item.ID, "department_id": departmentID}); auditErr != nil {
-				return nil, auditErr
-			}
-		}
-		if err == nil {
-			err = tx.Commit()
-		}
-	}
 	if err != nil {
 		return nil, errConflict
+	}
+	if actor != "" {
+		if err = writeAuditEvent(ctx, tx, enterpriseID, "employee.created", "employee", &item.ID, map[string]any{"result": "success", "employee_id": item.ID, "department_id": departmentID}); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
 	}
 	if dept.Valid {
 		item.DepartmentID = &dept.Int64
 	}
 	return item, nil
+}
+
+func enforceEnterpriseEmployeeSeatLimit(ctx context.Context, tx *sql.Tx, enterpriseID int64) error {
+	var seatCount, activeEmployeeCount int
+	// Serializing on the enterprise row makes concurrent creates/reactivations
+	// share one authoritative count without blocking writes for other tenants.
+	err := tx.QueryRowContext(ctx, `
+		SELECT enterprise.seat_count,
+		       (SELECT COUNT(*) FROM enterprise_employees AS employee
+		        WHERE employee.enterprise_id = enterprise.id AND employee.status = 'active')
+		FROM enterprises AS enterprise
+		WHERE enterprise.id = $1 AND enterprise.status = 'active'
+		FOR UPDATE`, enterpriseID).Scan(&seatCount, &activeEmployeeCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if activeEmployeeCount >= seatCount {
+		return errEmployeeSeatLimit.WithMetadata(map[string]string{
+			"active_employee_count": strconv.Itoa(activeEmployeeCount),
+			"seat_count":            strconv.Itoa(seatCount),
+			"seat_overage":          strconv.Itoa(max(0, activeEmployeeCount-seatCount)),
+		})
+	}
+	return nil
 }
 
 // generateInitialPassword 生成无易混淆字符的随机初始密码，仅供管理员一次性交付。
@@ -2253,8 +2278,9 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var currentStatus string
 	var currentVersion int64
-	err = tx.QueryRowContext(ctx, `SELECT version FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2 AND status <> 'terminated' FOR UPDATE`, enterpriseID, employeeID).Scan(&currentVersion)
+	err = tx.QueryRowContext(ctx, `SELECT status, version FROM enterprise_employees WHERE enterprise_id = $1 AND id = $2 AND status <> 'terminated' FOR UPDATE`, enterpriseID, employeeID).Scan(&currentStatus, &currentVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errNotFound
 	}
@@ -2276,6 +2302,11 @@ func (s *Service) UpdateEmployee(ctx context.Context, enterpriseID, employeeID i
 			return conflictErr
 		}
 		return conflictErr
+	}
+	if currentStatus != "active" && status == "active" {
+		if err := enforceEnterpriseEmployeeSeatLimit(ctx, tx, enterpriseID); err != nil {
+			return err
+		}
 	}
 
 	result, err := tx.ExecContext(ctx, `

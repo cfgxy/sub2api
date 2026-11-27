@@ -157,6 +157,7 @@ enterpriseClient.interceptors.response.use(
       code: data?.code,
       reason: data?.reason,
       message: data?.message || error.message,
+      metadata: isRecord(data?.metadata) ? data.metadata : undefined,
     })
   },
 )

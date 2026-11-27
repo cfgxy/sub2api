@@ -1,4 +1,4 @@
--- 企业员工 API Key 席位数；新企业由服务层显式传入，默认值只保障旧客户端和历史数据可读。
+-- 企业 active 员工席位数；新企业由服务层显式传入，默认值只保障旧客户端和历史数据可读。
 ALTER TABLE enterprises
     ADD COLUMN IF NOT EXISTS seat_count INTEGER NOT NULL DEFAULT 1;
 
@@ -7,21 +7,16 @@ ALTER TABLE enterprises
 ALTER TABLE enterprises
     ADD CONSTRAINT chk_enterprises_seat_count CHECK (seat_count BETWEEN 1 AND 10000);
 
--- 已存在的有效员工 Key 不会在迁移时失效：将历史企业容量提升到至少当前占用数。
--- 过期、已删除、已禁用的 Key 本来就不占用席位。
+-- 首次引入字段时保留既有 active 员工：将历史企业容量提升到至少当前占用数。
+-- 后续员工 Key 的创建、轮换、撤销均不改变席位占用。
 UPDATE enterprises AS enterprise
 SET seat_count = GREATEST(
     1,
     COALESCE((
         SELECT COUNT(*)
-        FROM enterprise_key_assignments AS assignment
-        JOIN api_keys AS api_key ON api_key.id = assignment.api_key_id
-        WHERE assignment.enterprise_id = enterprise.id
-          AND assignment.status = 'active'
-          AND api_key.status = 'active'
-          AND api_key.deleted_at IS NULL
-          AND (api_key.expires_at IS NULL OR api_key.expires_at > statement_timestamp())
-          AND (api_key.quota <= 0 OR api_key.quota_used < api_key.quota)
+        FROM enterprise_employees AS employee
+        WHERE employee.enterprise_id = enterprise.id
+          AND employee.status = 'active'
     ), 0)
 );
 

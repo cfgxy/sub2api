@@ -245,7 +245,7 @@ describe('EnterpriseCreateView 搜索选人', () => {
     wrapper.vm.form.seat_count = 10001
     await wrapper.vm.submit()
     expect(create).not.toHaveBeenCalled()
-    expect(wrapper.vm.errors.seat_count).toBe('请输入 1–10000 的 Key 席位数')
+    expect(wrapper.vm.errors.seat_count).toBe('请输入 1–10000 的员工席位数')
   })
 
   it('创建失败时只提示固定文案，不回显后端原始错误或内部标识', async () => {
