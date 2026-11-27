@@ -43,6 +43,30 @@ func enterpriseEmployeeReservationCommand(fixture enterpriseFixture, requestID, 
 	}
 }
 
+func TestEnterpriseEmployeeActualBillingCrossesAllocationWithoutReservation(t *testing.T) {
+	ctx := context.Background()
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 2, 1.9)
+	repo := NewUsageBillingRepository(nil, integrationDB, &config.Config{Billing: config.BillingConfig{
+		EnterpriseEmployeeWeeklyAllocationOverageUSD: 0.10,
+	}}).(*usageBillingRepository)
+
+	result, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:           fmt.Sprintf("settled-only-employee-%d", time.Now().UnixNano()),
+		APIKeyID:            fixture.apiKeyID,
+		APIKeyRateLimitCost: 0.2,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+
+	var usage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT usage_7d FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&usage))
+	require.InDelta(t, 2.1, usage, 0.000000001, "only the settled charge crosses the configured allocation tolerance")
+
+	var reservations int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM enterprise_employee_usage_reservations WHERE source_api_key_id = $1`, fixture.apiKeyID).Scan(&reservations))
+	require.Zero(t, reservations, "settled-only billing must not create an employee admission reservation")
+}
+
 func TestEnterpriseEmployeeWeeklyAllocationOverageReservation(t *testing.T) {
 	ctx := context.Background()
 	newRepository := func() *usageBillingRepository {

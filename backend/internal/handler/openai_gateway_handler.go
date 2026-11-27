@@ -2796,12 +2796,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		byTurn map[int]service.InflightEstimateRequest
 	}
 
-	// A WebSocket may outlive a key's remaining spending window. Recheck
-	// after acquiring turn slots, including the first account-selection wait.
-	// Restrict this extra check to the opt-in mode so standard-mode RPM checks
-	// are not charged a second time for the same request.
+	// A WebSocket may outlive a key's remaining spending window. Employee keys
+	// recheck their settled allocation before every turn; ordinary keys retain
+	// the existing simple-mode-only recheck behavior.
 	checkSimpleModeTurnBilling := func() error {
-		if h.cfg == nil || h.cfg.RunMode != config.RunModeSimple || !h.cfg.SimpleModeKeyRateLimitEnabled {
+		isEmployee := apiKey.EnterpriseEmployeeWeeklyLimit
+		if !isEmployee && (h.cfg == nil || h.cfg.RunMode != config.RunModeSimple || !h.cfg.SimpleModeKeyRateLimitEnabled) {
 			return nil
 		}
 		if err := h.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(ctx, apiKey)); err != nil {
