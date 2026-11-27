@@ -12,8 +12,9 @@ env_file=${SUB2API_ENV_FILE:-/mnt/data/srv/sub2api/.env}
 }
 [[ -f "$env_file" ]] || { echo "missing env file: $env_file" >&2; exit 1; }
 
-# Verify availability before changing the next-start pointer.
-docker pull "$image" >/dev/null
+# CI deploy account is intentionally not in the docker group; use the narrowly
+# permitted privileged Docker command without starting or restarting a stack.
+sudo docker pull "$image" >/dev/null
 sudo cp -p "$env_file" "${env_file}.bak.${GITHUB_RUN_ID:-manual}"
 tmp=$(mktemp)
 sudo awk -v image="$image" '
