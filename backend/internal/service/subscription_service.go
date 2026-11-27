@@ -198,6 +198,28 @@ func (s *SubscriptionService) invalidateSubscriptionCaches(userID, groupID int64
 	return nil
 }
 
+// invalidateSubscriptionCachesAfterCommit avoids publishing an invalidation for
+// a reset that is later rolled back by an enclosing transaction.
+func (s *SubscriptionService) invalidateSubscriptionCachesAfterCommit(ctx context.Context, subscriptionID, userID, groupID int64) {
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		tx.OnCommit(func(next dbent.Committer) dbent.Committer {
+			return dbent.CommitFunc(func(commitCtx context.Context, tx *dbent.Tx) error {
+				if err := next.Commit(commitCtx, tx); err != nil {
+					return err
+				}
+				if err := s.invalidateSubscriptionCaches(userID, groupID); err != nil {
+					log.Printf("Warning: reset subscription quota cache invalidation failed subscription_id=%d user_id=%d group_id=%d err=%v", subscriptionID, userID, groupID, err)
+				}
+				return nil
+			})
+		})
+		return
+	}
+	if err := s.invalidateSubscriptionCaches(userID, groupID); err != nil {
+		log.Printf("Warning: reset subscription quota cache invalidation failed subscription_id=%d user_id=%d group_id=%d err=%v", subscriptionID, userID, groupID, err)
+	}
+}
+
 // AssignSubscriptionInput 分配订阅输入
 type AssignSubscriptionInput struct {
 	UserID       int64
@@ -972,6 +994,11 @@ func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionI
 	if err := s.userSubRepo.ResetUsageWindows(ctx, sub.ID, resetDaily, resetWeekly, resetMonthly, timezone.StartOfDay(now), now); err != nil {
 		return nil, err
 	}
+	// The reset is already persisted for direct calls. Clear the local L1 cache,
+	// the shared billing cache, and publish cross-instance invalidation before
+	// the failure-prone mapping refresh so an error cannot leave an old window
+	// readable until its TTL expires.
+	s.invalidateSubscriptionCachesAfterCommit(ctx, sub.ID, sub.UserID, sub.GroupID)
 	// A weekly reset changes the anchor used to attribute enterprise consumption.
 	// Defer its mapping refresh until the enclosing transaction commits so it never
 	// observes a transient window or recreates a mapping for a rolled-back reset.
@@ -979,13 +1006,6 @@ func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionI
 		if err := s.refreshEnterpriseSubscriptionMappingAfterCommit(ctx, sub.UserID, subscriptionMutationActorUserID(actorUserIDs)); err != nil {
 			return nil, err
 		}
-	}
-	// Invalidate L1 ristretto cache. Ristretto's Del() is asynchronous by design,
-	// so call Wait() immediately after to flush pending operations and guarantee
-	// the deleted key is not returned on the very next Get() call.
-	s.InvalidateSubCacheSync(sub.UserID, sub.GroupID)
-	if s.billingCacheService != nil {
-		_ = s.billingCacheService.InvalidateSubscription(ctx, sub.UserID, sub.GroupID)
 	}
 	// Return the refreshed subscription from DB
 	return s.userSubRepo.GetByID(ctx, subscriptionID)
