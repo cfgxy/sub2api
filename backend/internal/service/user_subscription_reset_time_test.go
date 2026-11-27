@@ -66,6 +66,37 @@ func TestWeeklyResetTime_MatchesAutomaticWindowStart(t *testing.T) {
 	assert.True(t, resetAt.Equal(newStart), "推进后的新窗口起点应等于展示的重置时间")
 }
 
+func TestNextWeeklyResetTimeAt_AdvancesStaleAnchorWithoutPersisting(t *testing.T) {
+	startsAt := time.Date(2026, 11, 4, 2, 11, 12, 0, time.UTC)
+	staleAnchor := startsAt
+	now := startsAt.Add(23 * 24 * time.Hour)
+	sub := &UserSubscription{
+		StartsAt:          startsAt,
+		ExpiresAt:         startsAt.Add(30 * 24 * time.Hour),
+		WeeklyWindowStart: ptrTime(staleAnchor),
+	}
+
+	got := sub.NextWeeklyResetTimeAt(now)
+	require.NotNil(t, got)
+	require.Equal(t, startsAt.Add(28*24*time.Hour), *got)
+	require.True(t, got.After(now), "workbench must never expose a past reset as the next reset")
+	require.Equal(t, staleAnchor, *sub.WeeklyWindowStart, "read-only projection must not materialize a reset")
+}
+
+func TestNextWeeklyResetTimeAt_OmitsFinalIncompleteWindow(t *testing.T) {
+	startsAt := time.Date(2026, 11, 4, 2, 11, 12, 0, time.UTC)
+	anchor := startsAt
+	sub := &UserSubscription{
+		StartsAt:          startsAt,
+		ExpiresAt:         startsAt.Add(7 * 24 * time.Hour),
+		WeeklyWindowStart: ptrTime(anchor),
+	}
+
+	require.Nil(t, sub.NextWeeklyResetTimeAt(startsAt.Add(time.Hour)),
+		"a reset at subscription expiry is not executable and must not be displayed")
+	require.Equal(t, anchor, *sub.WeeklyWindowStart, "read-only projection must not mutate the final window")
+}
+
 // 月窗口与周窗口同属期限对齐滚动窗口，应用同一 legacy 锚点修正。
 // 日窗口按日历日对齐（见 automaticDailyWindowStartAt），不走此修正，故不在此覆盖。
 func TestMonthlyResetTime_LegacyMidnightAnchor_UsesStartsAt(t *testing.T) {

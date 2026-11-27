@@ -352,7 +352,7 @@ func (h *WorkbenchHandler) getSummary(ctx context.Context, enterpriseID int64, q
 		result.SubscriptionID = &subscriptionID
 		result.PoolWindowAnchor = &windowAnchor
 		result.SubscriptionExpiresAt = &expiresAt
-		result.WeeklyResetAt = currentWeek.WeeklyResetAt()
+		result.WeeklyResetAt = currentWeek.WeeklyResetAt(h.owner.service.now())
 	}
 	scope := buildWorkbenchUsageScope(enterpriseID, q, currentWeek)
 	if err := h.owner.service.db.QueryRowContext(ctx, `

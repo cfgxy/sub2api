@@ -145,6 +145,7 @@ func TestGetSummaryUsesCanonicalWindowAndScansDecimalCredit(t *testing.T) {
 	service, mock := newMockService(t)
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
 	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return anchor.Add(time.Hour) }
 	expectCurrentEnterpriseWeek(mock, 7, 55, anchor)
 
 	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
@@ -208,6 +209,7 @@ func TestGetSummaryOmitsWeeklyResetAtWhenSubscriptionExpiresAtResetBoundary(t *t
 	handler := &WorkbenchHandler{owner: &Handler{service: service}}
 	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	expiresAt := anchor.Add(7 * 24 * time.Hour)
+	service.now = func() time.Time { return anchor.Add(time.Hour) }
 	expectCurrentEnterpriseWeekWithDates(mock, 7, 55, anchor, anchor.Add(-7*24*time.Hour), expiresAt)
 
 	mock.ExpectQuery(`SELECT COALESCE\(SUM\(COALESCE\(usage_log\.actual_cost, 0\)\), 0\)::text, COUNT\(\*\)`).
@@ -348,7 +350,7 @@ func TestResolveCurrentEnterpriseWeekUsesLiveSubscriptionAndCanonicalResetTime(t
 	require.NoError(t, err)
 	require.NotNil(t, week)
 	require.Equal(t, expiresAt, week.ExpiresAt)
-	resetAt := week.WeeklyResetAt()
+	resetAt := week.WeeklyResetAt(startsAt.Add(time.Hour))
 	require.NotNil(t, resetAt)
 	require.Equal(t, startsAt.Add(7*24*time.Hour), *resetAt,
 		"展示的重置时间必须与实际滚动窗口的 legacy 锚点修正一致")
