@@ -4,7 +4,6 @@
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="text-xl font-bold text-gray-900 dark:text-white">企业用量</h2>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">核对企业总池、员工额度与调用明细。</p>
         </div>
         <button type="button" class="btn btn-secondary" :disabled="loading" @click="load">
           <Icon name="refresh" size="md" class="mr-2" :class="{ 'animate-spin': loading }" />刷新数据
@@ -37,9 +36,9 @@
         </section>
         <template v-else>
           <section class="grid grid-cols-1 gap-3 px-4 pt-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="企业额度概览">
-            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">{{ terms.pool }}</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ summary?.enterprise_pool_limit ?? '0' }}</p><p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ poolSourceLabel }}</p></div>
-            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">总池{{ terms.remaining }}</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ summary?.enterprise_pool_remaining ?? '0' }}</p><p v-if="summary?.enterprise_pool_exhausted" class="mt-1 text-xs text-red-600 dark:text-red-400">总池已耗尽</p></div>
-            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">总池已用额度</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ summary?.enterprise_pool_used ?? '0' }}</p><p class="mt-1 text-xs text-gray-500 dark:text-dark-400">上游订阅权威实际已用额度</p></div>
+            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">{{ terms.pool }}</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(summary?.enterprise_pool_limit) }}</p><p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ poolSourceLabel }}</p></div>
+            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">总池{{ terms.remaining }}</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(summary?.enterprise_pool_remaining) }}</p><p v-if="summary?.enterprise_pool_exhausted" class="mt-1 text-xs text-red-600 dark:text-red-400">总池已耗尽</p></div>
+            <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">总池已用额度</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ formatEnterpriseAmount(summary?.enterprise_pool_used) }}</p><p class="mt-1 text-xs text-gray-500 dark:text-dark-400">上游订阅权威实际已用额度</p></div>
             <div class="card p-4"><p class="text-xs text-gray-500 dark:text-dark-400">个人{{ terms.overage }}员工数</p><p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ overageEmployeeCount }}</p></div>
           </section>
           <div class="grid grid-cols-1 gap-4 px-4 lg:grid-cols-2">
@@ -52,8 +51,8 @@
               <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">员工排名（Top 8）</h3>
               <div v-if="topEmployees.length" class="space-y-3">
                 <div v-for="item in topEmployees" :key="item.employee_id" class="min-w-0 border-b border-gray-200 pb-2 text-sm dark:border-dark-700">
-                  <div class="flex flex-wrap justify-between gap-2"><span class="break-all font-medium text-gray-900 dark:text-white">{{ item.email }}</span><span class="text-gray-500 dark:text-dark-400">{{ item.usage_credit }} / {{ item.configured_credit }}</span></div>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ terms.remaining }} {{ item.remaining_credit }}<span v-if="Number(item.overage_credit) > 0" class="ml-2 text-red-600 dark:text-red-400">{{ terms.overage }} {{ item.overage_credit }}</span></p>
+                  <div class="flex flex-wrap justify-between gap-2"><span class="break-all font-medium text-gray-900 dark:text-white">{{ item.email }}</span><span class="text-gray-500 dark:text-dark-400">{{ formatEnterpriseAmount(item.usage_credit) }} / {{ formatEnterpriseAmount(item.configured_credit) }}</span></div>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ terms.remaining }} {{ formatEnterpriseAmount(item.remaining_credit) }}<span v-if="Number(item.overage_credit) > 0" class="ml-2 text-red-600 dark:text-red-400">{{ terms.overage }} {{ formatEnterpriseAmount(item.overage_credit) }}</span></p>
                 </div>
               </div>
               <EmptyState v-else title="当前筛选条件暂无员工用量" />
@@ -95,6 +94,7 @@ import EnterpriseUsageTrendChart from '@/components/charts/EnterpriseUsageTrendC
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
+import { formatEnterpriseAmount } from '@/utils/enterpriseAmounts'
 import { sourceStatusLabel, windowTypeLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type { EnterpriseDepartment, EnterpriseEmployee, EnterprisePaginated, EnterpriseWorkbenchSummary, EnterpriseWorkbenchUsageRow } from '@/types/enterprise'

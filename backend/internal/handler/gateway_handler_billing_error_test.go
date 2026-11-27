@@ -57,6 +57,14 @@ func TestBillingErrorDetails_BillingServiceUnavailableMapsTo503(t *testing.T) {
 	require.Equal(t, 0, retryAfter, "non-RPM errors should not set Retry-After")
 }
 
+func TestBillingErrorDetails_EnterpriseEmployeeAllocationStateUnavailableMapsToDistinct503(t *testing.T) {
+	status, code, msg, retryAfter := billingErrorDetails(service.ErrEnterpriseEmployeeWeeklyAllocationStateUnavailable)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "enterprise_employee_weekly_allocation_state_unavailable", code)
+	require.Contains(t, msg, "weekly allocation state")
+	require.Zero(t, retryAfter)
+}
+
 func TestBillingErrorDetails_UnknownErrorFallsBackTo403(t *testing.T) {
 	status, code, msg, _ := billingErrorDetails(service.ErrInsufficientBalance)
 	require.Equal(t, http.StatusForbidden, status)

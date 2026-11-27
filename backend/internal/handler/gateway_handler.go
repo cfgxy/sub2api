@@ -2494,6 +2494,13 @@ func extractQuotaResetSeconds(err error) int {
 }
 
 func billingErrorDetails(err error) (status int, code, message string, retryAfter int) {
+	if errors.Is(err, service.ErrEnterpriseEmployeeWeeklyAllocationStateUnavailable) {
+		msg := pkgerrors.Message(err)
+		if msg == "" {
+			msg = "enterprise employee weekly allocation state is temporarily unavailable"
+		}
+		return http.StatusServiceUnavailable, "enterprise_employee_weekly_allocation_state_unavailable", msg, 0
+	}
 	if errors.Is(err, service.ErrBillingServiceUnavailable) {
 		msg := pkgerrors.Message(err)
 		if msg == "" {

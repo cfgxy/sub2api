@@ -9,6 +9,10 @@
         <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ activeState.title }}</h2>
       </header>
 
+      <div v-if="showPainuoyunEmptyState" class="flex justify-center" aria-hidden="true">
+        <img src="/brand/painuoyun-empty-state.svg" class="h-24 w-48 object-contain" alt="" />
+      </div>
+
       <div class="rounded-md border p-4" :class="toneStyles[activeState.tone].panel">
         <div class="flex items-start gap-3">
           <Icon :name="activeState.icon" size="lg" class="shrink-0" :class="toneStyles[activeState.tone].icon" />
@@ -49,6 +53,7 @@ import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import Icon from '@/components/icons/Icon.vue'
 import EnterpriseAuthShell from '@/components/enterprise/EnterpriseAuthShell.vue'
+import { isPainuoyunEnterprisePortal } from '@/utils/enterpriseBranding'
 
 type StateTone = 'session' | 'warning' | 'danger' | 'access'
 type StateKey = 'session-expired' | 'employee-disabled' | 'enterprise-disabled' | 'source-unavailable' | 'forbidden' | 'not-found' | 'cross-enterprise' | 'reset-link-invalid'
@@ -75,4 +80,7 @@ const toneStyles: Record<StateTone, { panel: string; icon: string; code: string;
 }
 
 const activeState = computed(() => states.find((state) => state.key === route.query.state) || states[0])
+const showPainuoyunEmptyState = computed(() =>
+  isPainuoyunEnterprisePortal(route.path) && activeState.value.key === 'source-unavailable',
+)
 </script>

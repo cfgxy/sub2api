@@ -3,7 +3,6 @@
     <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('enterprise.keys.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('enterprise.keys.description') }}</p>
       </div>
       <div class="flex gap-3">
         <button
@@ -129,6 +128,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import { enterpriseAPI, isEnterpriseKeyMutationStateConflict } from '@/api/enterprise'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores/app'
+import { formatEnterpriseCurrency } from '@/utils/enterpriseAmounts'
 import { keyStatusLabel } from '@/utils/enterpriseDisplay'
 import type { EnterpriseEmployeeKey } from '@/types/enterprise'
 
@@ -154,7 +154,7 @@ async function copyKey() {
   if (fullKey.value) await copyToClipboard(fullKey.value, t('enterprise.guide.key.copied'))
 }
 
-const formatUsage = (value: number) => `$${value.toFixed(2)}`
+const formatUsage = (value: number) => formatEnterpriseCurrency(value)
 const formatLimit = (value: number) => (value > 0 ? formatUsage(value) : t('enterprise.common.unlimited'))
 const percentage = (usage: number, limit: number) => (limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0)
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,27 +27,14 @@ func TestRequestMaxOutputTokens(t *testing.T) {
 }
 
 type countingEstimator struct {
-	calls  int
+	calls  atomic.Int32
 	cost   float64
 	priced bool
 }
 
 func (e *countingEstimator) EstimateInflightReservation(context.Context, *service.APIKey, service.InflightEstimateRequest) (float64, bool) {
-	e.calls++
+	e.calls.Add(1)
 	return e.cost, e.priced
-}
-
-type failClosedEmployeeEstimator struct {
-	reserveCalls int
-}
-
-func (e *failClosedEmployeeEstimator) EstimateInflightReservation(context.Context, *service.APIKey, service.InflightEstimateRequest) (float64, bool) {
-	return 0, false
-}
-
-func (e *failClosedEmployeeEstimator) ReserveEnterpriseEmployeeUsage(context.Context, *service.APIKey, service.InflightEstimateRequest) (*service.EnterpriseEmployeeUsageReservation, error) {
-	e.reserveCalls++
-	return nil, service.ErrBillingServiceUnavailable.WithCause(service.ErrEnterpriseEmployeeMaximumCostUnknown)
 }
 
 func newInflightTestGinContext() *gin.Context {
@@ -66,14 +54,14 @@ func TestReserveInflightBalance_SkipsWhenDisabledOrSubscription(t *testing.T) {
 	done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate("m", []byte(`{}`)))
 	require.NoError(t, err)
 	done()
-	require.Equal(t, 0, est.calls, "disabled switch must not even estimate")
+	require.Equal(t, int32(0), est.calls.Load(), "disabled switch must not even estimate")
 
 	cfg.Billing.InflightReservation.Enabled = true
 	apiKey.Group = &service.Group{SubscriptionType: service.SubscriptionTypeSubscription}
 	done, err = reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, &service.UserSubscription{}, tokenInflightEstimate("m", []byte(`{}`)))
 	require.NoError(t, err)
 	done()
-	require.Equal(t, 0, est.calls, "subscription mode must be unaffected")
+	require.Equal(t, int32(0), est.calls.Load(), "subscription mode must be unaffected")
 }
 
 func TestReserveInflightBalance_UnpricedFailOpenByDefaultFailClosedOptIn(t *testing.T) {
@@ -94,25 +82,63 @@ func TestReserveInflightBalance_UnpricedFailOpenByDefaultFailClosedOptIn(t *test
 	require.ErrorIs(t, err, service.ErrInsufficientBalance)
 }
 
-func TestEnterpriseEmployeeUnknownMaximumStopsBeforeUpstreamCall(t *testing.T) {
-	estimator := &failClosedEmployeeEstimator{}
+func TestEnterpriseEmployeeUnknownMaximumDoesNotBlockBeforeUpstreamCall(t *testing.T) {
+	estimator := &countingEstimator{priced: false}
 	apiKey := &service.APIKey{
 		ID: 1, User: &service.User{ID: 2}, EnterpriseEmployeeWeeklyLimit: true,
 	}
-	upstreamCalls := 0
 
+	c := newInflightTestGinContext()
 	done, err := reserveInflightBalance(
-		newInflightTestGinContext(), nil, estimator, apiKey, nil,
+		c, nil, estimator, apiKey, nil,
 		tokenInflightEstimate("unknown-model", []byte(`{"messages":[]}`)),
 	)
-	if err == nil {
-		upstreamCalls++
-		done()
-	}
+	require.NoError(t, err)
+	done()
 
-	require.ErrorIs(t, err, service.ErrEnterpriseEmployeeMaximumCostUnknown)
-	require.Equal(t, 1, estimator.reserveCalls)
-	require.Zero(t, upstreamCalls)
+	// The handler can now invoke its upstream. Settlement records the actual
+	// charge afterwards; an unknown maximum must not become a 429/503 gate.
+	require.Zero(t, estimator.calls.Load())
+	require.Nil(t, service.EnterpriseEmployeeUsageReservationFromContext(c.Request.Context()))
+}
+
+func TestEnterpriseEmployeeConcurrentRequestsSkipInflightReservations(t *testing.T) {
+	apiKey := &service.APIKey{
+		ID: 1, User: &service.User{ID: 2}, EnterpriseEmployeeWeeklyLimit: true,
+	}
+	estimator := &countingEstimator{cost: 999, priced: true}
+
+	const requests = 32
+	start := make(chan struct{})
+	errs := make(chan error, requests)
+	reservationAttached := make(chan bool, requests)
+	var wg sync.WaitGroup
+	for range requests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ctx, done, err := reserveInflightBalanceCtx(
+				context.Background(), nil, estimator, apiKey, nil,
+				tokenInflightEstimate("unknown-model", []byte(`{"messages":[]}`)),
+			)
+			defer done()
+			errs <- err
+			reservationAttached <- service.EnterpriseEmployeeUsageReservationFromContext(ctx) != nil
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(reservationAttached)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	for attached := range reservationAttached {
+		require.False(t, attached, "employee requests must not create a pre-settlement reservation")
+	}
+	require.Zero(t, estimator.calls.Load(), "employee requests must not consume an inflight estimate")
 }
 
 // handlerInflightCache 内存版余额缓存 + 在途预留（语义同 Redis Lua）。

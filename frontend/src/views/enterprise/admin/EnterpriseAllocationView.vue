@@ -7,9 +7,6 @@
             企业管理 / 订阅与额度
           </p>
           <h2 class="mt-1 text-xl font-bold text-gray-900 dark:text-white">订阅与{{ terms.allocation }}</h2>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            从{{ terms.pool }}向员工分配{{ terms.allocation }}；部门不参与分配，只作组织归属展示。
-          </p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button type="button" class="btn btn-secondary" :disabled="loading" @click="load">
@@ -68,7 +65,7 @@
             <div class="card p-4">
               <p class="text-xs font-medium text-gray-500 dark:text-dark-400">{{ terms.pool }}</p>
               <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-                {{ result?.authoritative_limit ?? '未获取' }}
+                {{ formatEnterpriseAmount(result?.authoritative_limit) }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                 本周期 · 来源{{ poolSourceText }}
@@ -77,7 +74,7 @@
             <div class="card p-4">
               <p class="text-xs font-medium text-gray-500 dark:text-dark-400">员工{{ terms.allocation }}合计</p>
               <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-                {{ result?.allocated_total || '0' }}
+                {{ formatEnterpriseAmount(result?.allocated_total) }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                 {{ result?.items?.length || 0 }} 名员工已分配
@@ -86,7 +83,7 @@
             <div class="card p-4">
               <p class="text-xs font-medium text-gray-500 dark:text-dark-400">企业池未分配{{ terms.allocation }}</p>
               <p class="mt-2 truncate text-xl font-bold text-gray-900 dark:text-white">
-                {{ result?.unallocated_total || '0' }}
+                {{ formatEnterpriseAmount(result?.unallocated_total) }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">最小为 0，不显示负数</p>
             </div>
@@ -96,7 +93,7 @@
                 class="mt-2 truncate text-xl font-bold"
                 :class="hasOverallocation ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
               >
-                {{ result?.overallocated_by || '0' }}
+                {{ formatEnterpriseAmount(result?.overallocated_by) }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                 超用独立记录，不冲减员工个人{{ terms.remaining }}
@@ -135,9 +132,12 @@
           <span
             :class="isPositiveAmount(value) ? 'font-semibold text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'"
           >
-            {{ value }}
+            {{ formatEnterpriseAmount(value) }}
           </span>
         </template>
+        <template #cell-configured_credit="{ value }">{{ formatEnterpriseAmount(value) }}</template>
+        <template #cell-usage_credit="{ value }">{{ formatEnterpriseAmount(value) }}</template>
+        <template #cell-remaining_credit="{ value }">{{ formatEnterpriseAmount(value) }}</template>
         <template #cell-status="{ value }">
           <StatusBadge :status="value === 'overage' ? 'error' : 'active'" :label="allocationStatusText(value)" />
         </template>
@@ -212,6 +212,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { enterpriseAPI } from '@/api/enterprise'
+import { formatEnterpriseAmount } from '@/utils/enterpriseAmounts'
 import { allocationStatusLabel, sourceStatusLabel } from '@/utils/enterpriseDisplay'
 import type { Column } from '@/components/common/types'
 import type {

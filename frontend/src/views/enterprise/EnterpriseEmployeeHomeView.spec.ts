@@ -176,7 +176,7 @@ describe('EnterpriseEmployeeHomeView', () => {
 
   it('never renders platform-admin-only fields that leak into the employee payload', async () => {
     const platformOnly = 'PLATFORM-ONLY-SENTINEL-4213'
-    const employeeVisible = 'EMPLOYEE-VISIBLE-SENTINEL'
+    const employeeVisible = '123.45'
     getEmployeeHome.mockResolvedValue({
       usage: { ...baseUsage, allocation: employeeVisible },
       enterprise_pool: basePool,

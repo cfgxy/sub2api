@@ -196,6 +196,30 @@ func (s *UserSubscription) WeeklyResetTime() *time.Time {
 	return &t
 }
 
+// NextWeeklyResetTimeAt returns the next executable rolling-week reset without
+// persisting a reset. A subscription can have a stale weekly anchor until the
+// quota path next materializes its automatic reset; for read-only workbench
+// views, advance that anchor with the same automaticWindowStartAt semantics so
+// a past timestamp is never presented as the next reset.
+func (s *UserSubscription) NextWeeklyResetTimeAt(now time.Time) *time.Time {
+	if s.WeeklyWindowStart == nil {
+		return nil
+	}
+
+	windowStart := *s.WeeklyWindowStart
+	if advanced, ok := s.automaticWindowStartAt(s.WeeklyWindowStart, 7*24*time.Hour, now); ok {
+		windowStart = advanced
+	}
+
+	current := *s
+	current.WeeklyWindowStart = &windowStart
+	resetAt := current.WeeklyResetTime()
+	if resetAt == nil || !resetAt.After(now) || !resetAt.Before(s.ExpiresAt) {
+		return nil
+	}
+	return resetAt
+}
+
 func (s *UserSubscription) MonthlyResetTime() *time.Time {
 	if s.MonthlyWindowStart == nil {
 		return nil
