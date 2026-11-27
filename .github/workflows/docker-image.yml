@@ -64,6 +64,8 @@ jobs:
             --source-sha "$SOURCE_SHA" --sequence "$SEQUENCE" --output build-info.json)
           TAG="v${VERSION}"
           [[ "$TAG" == "${PREFIX}${SEQUENCE}" ]] || { echo '版本格式校验失败' >&2; exit 1; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "$TAG" "$SOURCE_SHA" -m "Sub2API package ${TAG}"
           git push origin "refs/tags/${TAG}"
 
