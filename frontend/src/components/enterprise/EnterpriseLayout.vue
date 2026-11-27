@@ -44,7 +44,7 @@
           </div>
 
           <RouterLink
-            v-for="item in navigation"
+            v-for="item in primaryNavigation"
             :key="item.path"
             :to="item.path"
             class="sidebar-link mb-1"
@@ -55,6 +55,24 @@
             <Icon :name="item.icon" size="md" class="flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
           </RouterLink>
+
+          <div v-if="auth.isAdmin" data-testid="system-settings-menu" class="mt-4 border-t border-gray-100 pt-3 dark:border-dark-800">
+            <div class="sidebar-section-title" :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
+              <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">{{ t('enterprise.shell.nav.systemSettings') }}</span>
+            </div>
+            <RouterLink
+              v-for="item in systemNavigation"
+              :key="item.path"
+              :to="item.path"
+              class="sidebar-link mb-1"
+              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+              :title="sidebarCollapsed ? item.label : undefined"
+              @click="handleMenuItemClick"
+            >
+              <Icon :name="item.icon" size="md" class="flex-shrink-0" />
+              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+            </RouterLink>
+          </div>
         </div>
       </nav>
 
@@ -205,17 +223,14 @@ const isPainuoyun = isPainuoyunEnterprisePortal(window.location.pathname)
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 
-// 导航 IA 与 L0 版本保持一致：管理员 9 项 / 员工 5 项
-const navigation = computed(() => auth.isAdmin ? [
+// 管理端先提供日常管理入口；部门、品牌与本单策略统一收在“系统设置”下并位于会话之后。
+const primaryNavigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/admin/workbench', label: t('enterprise.shell.nav.workbench'), icon: 'chartBar' as const },
   { path: '/enterprise/admin/usage', label: t('enterprise.shell.nav.adminUsage'), icon: 'search' as const },
   { path: '/enterprise/admin/audit', label: t('enterprise.shell.nav.adminAudit'), icon: 'clipboard' as const },
   { path: '/enterprise/admin/allocation', label: t('enterprise.shell.nav.allocation'), icon: 'grid' as const },
-  { path: '/enterprise/admin/allocation-settings', label: t('enterprise.shell.nav.allocationSettings'), icon: 'shield' as const },
   { path: '/enterprise/admin/employees', label: t('enterprise.shell.nav.employees'), icon: 'users' as const },
   { path: '/enterprise/admin/keys', label: t('enterprise.shell.nav.adminKeys'), icon: 'key' as const },
-  { path: '/enterprise/admin/departments', label: t('enterprise.shell.nav.departments'), icon: 'grid' as const },
-  { path: '/enterprise/admin/brand', label: t('enterprise.shell.nav.brand'), icon: 'sparkles' as const },
   { path: '/enterprise/admin/sessions', label: t('enterprise.shell.nav.sessions'), icon: 'shield' as const },
 ] : [
   { path: '/enterprise/home', label: t('enterprise.shell.nav.home'), icon: 'chartBar' as const },
@@ -224,6 +239,12 @@ const navigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/settings', label: t('enterprise.shell.nav.settings'), icon: 'shield' as const },
   { path: '/enterprise/sessions', label: t('enterprise.shell.nav.sessions'), icon: 'shield' as const },
 ])
+
+const systemNavigation = computed(() => auth.isAdmin ? [
+  { path: '/enterprise/admin/departments', label: t('enterprise.shell.nav.departments'), icon: 'grid' as const },
+  { path: '/enterprise/admin/brand', label: t('enterprise.shell.nav.brand'), icon: 'sparkles' as const },
+  { path: '/enterprise/admin/allocation-settings', label: t('enterprise.shell.nav.systemSettings'), icon: 'cog' as const },
+] : [])
 
 const pageTitle = computed(() => {
   const key = route.meta.titleKey

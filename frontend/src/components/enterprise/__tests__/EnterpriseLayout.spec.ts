@@ -113,13 +113,28 @@ describe('EnterpriseLayout（L1 外壳重制）', () => {
     wrapper.unmount()
   })
 
-  it('管理员侧边栏渲染 10 项导航，员工渲染 5 项', () => {
+  it('管理员侧边栏将部门、品牌和系统设置归入我的会话后的系统设置菜单', () => {
     const admin = mountShell('enterprise_admin')
-    expect(admin.wrapper.findAll('nav a')).toHaveLength(10)
+    const links = admin.wrapper.findAll('nav a')
+    expect(links).toHaveLength(10)
+    expect(links.map((link) => link.attributes('href'))).toEqual([
+      '/enterprise/admin/workbench',
+      '/enterprise/admin/usage',
+      '/enterprise/admin/audit',
+      '/enterprise/admin/allocation',
+      '/enterprise/admin/employees',
+      '/enterprise/admin/keys',
+      '/enterprise/admin/sessions',
+      '/enterprise/admin/departments',
+      '/enterprise/admin/brand',
+      '/enterprise/admin/allocation-settings',
+    ])
+    expect(admin.wrapper.get('[data-testid="system-settings-menu"]').text()).toContain('系统设置')
     admin.wrapper.unmount()
 
     const employee = mountShell('employee')
     expect(employee.wrapper.findAll('nav a')).toHaveLength(5)
+    expect(employee.wrapper.find('[data-testid="system-settings-menu"]').exists()).toBe(false)
     employee.wrapper.unmount()
   })
 
