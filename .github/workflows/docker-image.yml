@@ -100,8 +100,16 @@ jobs:
             COMMIT=${{ github.sha }}
             DATE=${{ steps.version.outputs.date }}
             UPSTREAM_VERSION=${{ steps.version.outputs.upstream }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            GOPROXY=https://proxy.golang.org,direct
+            GOSUMDB=sum.golang.org
+            NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+            COREPACK_NPM_REGISTRY=https://registry.npmjs.org
+            PIP_INDEX_URL=https://pypi.org/simple
+            UV_INDEX_URL=https://pypi.org/simple
+            APT_MIRROR=https://deb.debian.org/debian
+            ALPINE_REPOSITORY=https://dl-cdn.alpinelinux.org/alpine
+          cache-from: type=gha,scope=sub2api-docker-image-${{ github.ref_name }}
+          cache-to: type=gha,mode=max,scope=sub2api-docker-image-${{ github.ref_name }}
 
       - id: image
         name: Resolve immutable image digest
