@@ -26,7 +26,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func TestEnterprise248BackfillsSeatsFromActiveEmployees(t *testing.T) {
+func TestEnterprise252UpgradesPublished248SeatsFromActiveEmployees(t *testing.T) {
 	ctx := context.Background()
 	db := newIndependentMigrationDatabase(t, ctx)
 	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "247_scoped_admin_api_keys.sql")))
@@ -53,8 +53,26 @@ func TestEnterprise248BackfillsSeatsFromActiveEmployees(t *testing.T) {
 	`, enterpriseID, fmt.Sprintf("disabled-%d@example.com", time.Now().UnixNano()))
 	require.NoError(t, err)
 
-	require.NoError(t, applyMigrationsFS(ctx, db, migrationOnly(t, "248_enterprise_employee_key_seats.sql")))
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "248_enterprise_employee_key_seats.sql")))
 	var seatCount, concurrency int
+	var published248Checksum string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT checksum FROM schema_migrations
+		WHERE filename = '248_enterprise_employee_key_seats.sql'
+	`).Scan(&published248Checksum))
+	require.Equal(t, "03ac763a73592022a4859392d949859bf1feced83155cbc55c99524a9e0f0bdf", published248Checksum)
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT enterprise.seat_count, user_record.concurrency
+		FROM enterprises AS enterprise
+		JOIN users AS user_record ON user_record.id = enterprise.dedicated_upstream_user_id
+		WHERE enterprise.id = $1
+	`, enterpriseID).Scan(&seatCount, &concurrency))
+	require.Equal(t, 1, seatCount, "published 248 used active API keys and must remain immutable")
+	require.Equal(t, 1, concurrency)
+
+	// Re-run the complete migration sequence so the runner verifies the recorded 248
+	// checksum before applying the employee-based correction in 252.
+	require.NoError(t, applyMigrationsFS(ctx, db, migrationsThrough(t, "252_enterprise_active_employee_seats.sql")))
 	require.NoError(t, db.QueryRowContext(ctx, `
 		SELECT enterprise.seat_count, user_record.concurrency
 		FROM enterprises AS enterprise
