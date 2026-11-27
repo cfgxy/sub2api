@@ -176,6 +176,8 @@ func RegisterEnterpriseAllocationRoutes(
 	h *handler.EnterpriseAllocationHandler,
 ) {
 	enterpriseSubscriptions := authenticated.Group("/enterprise/subscriptions")
+	enterpriseSubscriptions.GET("/allocation-policy", h.GetPolicy)
+	enterpriseSubscriptions.PUT("/allocation-policy", h.UpdatePolicy)
 	enterpriseSubscriptions.PUT("/:subscription_id/allocations/:employee_id", h.Set)
 	enterpriseSubscriptions.GET("/:subscription_id/allocations/:employee_id", h.Summary)
 	enterpriseSubscriptions.GET("/:subscription_id/allocations", h.List)

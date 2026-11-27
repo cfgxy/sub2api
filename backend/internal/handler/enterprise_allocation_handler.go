@@ -20,12 +20,81 @@ type EnterpriseAllocationStore interface {
 	ListSubscriptionAllocations(context.Context, enterprise.ListSubscriptionAllocationsQuery) (*enterprise.AllocationListResult, error)
 }
 
+type EnterpriseAllocationPolicyStore interface {
+	GetAllocationPolicy(context.Context, int64, int64) (*enterprise.AllocationPolicy, error)
+	UpdateAllocationPolicy(context.Context, enterprise.UpdateAllocationPolicyParams) (*enterprise.AllocationPolicy, error)
+}
+
 type EnterpriseAllocationHandler struct {
 	store EnterpriseAllocationStore
 }
 
 func NewEnterpriseAllocationHandler(store EnterpriseAllocationStore) *EnterpriseAllocationHandler {
 	return &EnterpriseAllocationHandler{store: store}
+}
+
+type updateEnterpriseAllocationPolicyRequest struct {
+	EnterpriseID                      int64 `json:"enterprise_id" binding:"required"`
+	AllowEmployeeAllocationOvercommit bool  `json:"allow_employee_allocation_overcommit"`
+}
+
+func (h *EnterpriseAllocationHandler) GetPolicy(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	enterpriseID, err := strconv.ParseInt(c.Query("enterprise_id"), 10, 64)
+	if err != nil || enterpriseID <= 0 {
+		response.BadRequest(c, "Invalid enterprise ID")
+		return
+	}
+	if claims, exists := enterpriseidentity.ClaimsFromContext(c); exists && claims.EnterpriseID != enterpriseID {
+		response.NotFound(c, "Enterprise allocation policy not found")
+		return
+	}
+	store, ok := h.store.(EnterpriseAllocationPolicyStore)
+	if !ok {
+		response.Error(c, 503, "Enterprise allocation policy is unavailable")
+		return
+	}
+	policy, err := store.GetAllocationPolicy(c.Request.Context(), subject.UserID, enterpriseID)
+	if err != nil {
+		writeEnterpriseAllocationError(c, err)
+		return
+	}
+	response.Success(c, policy)
+}
+
+func (h *EnterpriseAllocationHandler) UpdatePolicy(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	var req updateEnterpriseAllocationPolicyRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.EnterpriseID <= 0 {
+		response.BadRequest(c, "Invalid enterprise allocation policy")
+		return
+	}
+	if claims, exists := enterpriseidentity.ClaimsFromContext(c); exists && claims.EnterpriseID != req.EnterpriseID {
+		response.NotFound(c, "Enterprise allocation policy not found")
+		return
+	}
+	store, ok := h.store.(EnterpriseAllocationPolicyStore)
+	if !ok {
+		response.Error(c, 503, "Enterprise allocation policy is unavailable")
+		return
+	}
+	policy, err := store.UpdateAllocationPolicy(c.Request.Context(), enterprise.UpdateAllocationPolicyParams{
+		RequesterUserID: subject.UserID, EnterpriseID: req.EnterpriseID,
+		AllowEmployeeAllocationOvercommit: req.AllowEmployeeAllocationOvercommit,
+	})
+	if err != nil {
+		writeEnterpriseAllocationError(c, err)
+		return
+	}
+	response.Success(c, policy)
 }
 
 type setEnterpriseAllocationRequest struct {
@@ -204,7 +273,10 @@ func writeEnterpriseAllocationError(c *gin.Context, err error) {
 		errors.Is(err, enterprise.ErrReasonRequired),
 		errors.Is(err, enterprise.ErrUnsafeReason):
 		response.BadRequest(c, "Invalid allocation request")
-	case errors.Is(err, enterprise.ErrAllocationVersionConflict):
+	case errors.Is(err, enterprise.ErrAllocationVersionConflict),
+		errors.Is(err, enterprise.ErrEmployeeAllocationTotalExceeded):
+		response.Error(c, 409, err.Error())
+	case errors.Is(err, enterprise.ErrEmployeeAllocationLimitUnavailable):
 		response.Error(c, 409, err.Error())
 	default:
 		response.ErrorFrom(c, err)

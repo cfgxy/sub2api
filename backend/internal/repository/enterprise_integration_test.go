@@ -331,10 +331,14 @@ func TestEnterpriseAllocationAuditFailureRollsBackUpdateAndRevision(t *testing.T
 	require.Equal(t, 1, auditCount)
 }
 
-func TestEnterpriseAllocationAllowsOvercommitAndReusesCreditAcrossWindows(t *testing.T) {
+func TestEnterpriseAllocationRejectsDefaultOvercommitAndAllowsOptInAcrossWindows(t *testing.T) {
 	ctx := context.Background()
 	fixture := seedEnterpriseFixture(t, ctx)
 	repo := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{})
+
+	policy, err := repo.GetAllocationPolicy(ctx, fixture.enterpriseUserID, fixture.enterpriseID)
+	require.NoError(t, err)
+	require.False(t, policy.AllowEmployeeAllocationOvercommit)
 
 	first, err := repo.SetAllocation(ctx, enterprise.SetAllocationParams{
 		RequesterUserID: fixture.enterpriseUserID,
@@ -344,6 +348,29 @@ func TestEnterpriseAllocationAllowsOvercommitAndReusesCreditAcrossWindows(t *tes
 	})
 	require.NoError(t, err)
 	require.Equal(t, "6.00000000", first.Amount)
+
+	_, err = repo.SetAllocation(ctx, enterprise.SetAllocationParams{
+		RequesterUserID: fixture.enterpriseUserID,
+		EnterpriseID:    fixture.enterpriseID, SubscriptionID: fixture.subscriptionID,
+		EmployeeID: fixture.secondEmployee, WindowType: enterprise.WindowTypeDay,
+		WindowAnchor: fixture.anchor, Amount: "5", Reason: "default policy rejects overcommit",
+	})
+	require.ErrorIs(t, err, enterprise.ErrEmployeeAllocationTotalExceeded)
+	var rejectedCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM enterprise_weekly_allocations
+		WHERE enterprise_id = $1 AND subscription_id = $2 AND employee_id = $3
+		  AND window_type = 'day' AND window_anchor = $4
+	`, fixture.enterpriseID, fixture.subscriptionID, fixture.secondEmployee, fixture.anchor).Scan(&rejectedCount))
+	require.Zero(t, rejectedCount)
+
+	policy, err = repo.UpdateAllocationPolicy(ctx, enterprise.UpdateAllocationPolicyParams{
+		RequesterUserID:                   fixture.enterpriseUserID,
+		EnterpriseID:                      fixture.enterpriseID,
+		AllowEmployeeAllocationOvercommit: true,
+	})
+	require.NoError(t, err)
+	require.True(t, policy.AllowEmployeeAllocationOvercommit)
 
 	second, err := repo.SetAllocation(ctx, enterprise.SetAllocationParams{
 		RequesterUserID: fixture.enterpriseUserID,

@@ -44,7 +44,7 @@
           </div>
 
           <RouterLink
-            v-for="item in navigation"
+            v-for="item in primaryNavigation"
             :key="item.path"
             :to="item.path"
             class="sidebar-link mb-1"
@@ -55,6 +55,36 @@
             <Icon :name="item.icon" size="md" class="flex-shrink-0" />
             <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
           </RouterLink>
+
+          <div v-if="auth.isAdmin" class="mt-2">
+            <button
+              data-testid="system-settings-menu-toggle"
+              type="button"
+              class="sidebar-link mb-1 w-full"
+              :class="{ 'sidebar-link-active': isSystemSettingsRoute, 'sidebar-link-collapsed': sidebarCollapsed }"
+              :title="sidebarCollapsed ? t('enterprise.shell.nav.systemSettings') : undefined"
+              :aria-expanded="systemSettingsOpen"
+              @click="systemSettingsOpen = !systemSettingsOpen"
+            >
+              <Icon name="cog" size="md" class="flex-shrink-0" />
+              <span class="sidebar-label flex-1 text-left" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('enterprise.shell.nav.systemSettings') }}</span>
+              <Icon v-if="!sidebarCollapsed" name="chevronDown" size="sm" class="flex-shrink-0 transition-transform" :class="{ 'rotate-180': systemSettingsOpen }" />
+            </button>
+            <div v-if="systemSettingsOpen" data-testid="system-settings-submenu" class="ml-3 border-l border-gray-100 pl-2 dark:border-dark-800">
+              <RouterLink
+                v-for="item in systemNavigation"
+                :key="item.path"
+                :to="item.path"
+                class="sidebar-link mb-1"
+                :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+                :title="sidebarCollapsed ? item.label : undefined"
+                @click="handleMenuItemClick"
+              >
+                <Icon :name="item.icon" size="md" class="flex-shrink-0" />
+                <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              </RouterLink>
+            </div>
+          </div>
         </div>
       </nav>
 
@@ -187,7 +217,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
@@ -205,16 +235,14 @@ const isPainuoyun = isPainuoyunEnterprisePortal(window.location.pathname)
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 
-// 导航 IA 与 L0 版本保持一致：管理员 9 项 / 员工 5 项
-const navigation = computed(() => auth.isAdmin ? [
+// 管理端先提供日常管理入口；部门、品牌与本单策略统一收在“系统设置”下并位于会话之后。
+const primaryNavigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/admin/workbench', label: t('enterprise.shell.nav.workbench'), icon: 'chartBar' as const },
   { path: '/enterprise/admin/usage', label: t('enterprise.shell.nav.adminUsage'), icon: 'search' as const },
   { path: '/enterprise/admin/audit', label: t('enterprise.shell.nav.adminAudit'), icon: 'clipboard' as const },
   { path: '/enterprise/admin/allocation', label: t('enterprise.shell.nav.allocation'), icon: 'grid' as const },
   { path: '/enterprise/admin/employees', label: t('enterprise.shell.nav.employees'), icon: 'users' as const },
   { path: '/enterprise/admin/keys', label: t('enterprise.shell.nav.adminKeys'), icon: 'key' as const },
-  { path: '/enterprise/admin/departments', label: t('enterprise.shell.nav.departments'), icon: 'grid' as const },
-  { path: '/enterprise/admin/brand', label: t('enterprise.shell.nav.brand'), icon: 'sparkles' as const },
   { path: '/enterprise/admin/sessions', label: t('enterprise.shell.nav.sessions'), icon: 'shield' as const },
 ] : [
   { path: '/enterprise/home', label: t('enterprise.shell.nav.home'), icon: 'chartBar' as const },
@@ -223,6 +251,18 @@ const navigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/settings', label: t('enterprise.shell.nav.settings'), icon: 'shield' as const },
   { path: '/enterprise/sessions', label: t('enterprise.shell.nav.sessions'), icon: 'shield' as const },
 ])
+
+const systemNavigation = computed(() => auth.isAdmin ? [
+  { path: '/enterprise/admin/departments', label: t('enterprise.shell.nav.departments'), icon: 'grid' as const },
+  { path: '/enterprise/admin/brand', label: t('enterprise.shell.nav.brand'), icon: 'sparkles' as const },
+  { path: '/enterprise/admin/allocation-settings', label: t('enterprise.shell.nav.systemSettings'), icon: 'cog' as const },
+] : [])
+
+const isSystemSettingsRoute = computed(() => systemNavigation.value.some((item) => isActive(item.path)))
+const systemSettingsOpen = ref(isSystemSettingsRoute.value)
+watch(isSystemSettingsRoute, (active) => {
+  if (active) systemSettingsOpen.value = true
+})
 
 const pageTitle = computed(() => {
   const key = route.meta.titleKey

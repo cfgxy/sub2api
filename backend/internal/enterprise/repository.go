@@ -13,18 +13,20 @@ import (
 )
 
 var (
-	ErrAllocationVersionConflict = errors.New("enterprise allocation version conflict")
-	ErrActorRefRequired          = errors.New("enterprise actor ref is required")
-	ErrReasonRequired            = errors.New("enterprise allocation reason is required")
-	ErrEnterpriseOwnership       = errors.New("enterprise upstream ownership mismatch")
-	ErrObservedWindowConflict    = errors.New("enterprise observed window conflict")
-	ErrObservedWindowMismatch    = errors.New("enterprise observed window does not match upstream")
-	ErrKeyGenerationRevoked      = errors.New("enterprise api key generation was revoked")
-	ErrKeyAlreadyAssigned        = errors.New("enterprise api key is assigned to another employee")
-	ErrUsageAttributionMismatch  = errors.New("enterprise usage attribution snapshot mismatch")
-	ErrInvalidWindowType         = errors.New("invalid enterprise allocation window type")
-	ErrInvalidWindowAnchor       = errors.New("invalid enterprise allocation window anchor")
-	ErrEnterpriseAccessDenied    = errors.New("enterprise allocation access denied")
+	ErrAllocationVersionConflict          = errors.New("enterprise allocation version conflict")
+	ErrActorRefRequired                   = errors.New("enterprise actor ref is required")
+	ErrReasonRequired                     = errors.New("enterprise allocation reason is required")
+	ErrEnterpriseOwnership                = errors.New("enterprise upstream ownership mismatch")
+	ErrObservedWindowConflict             = errors.New("enterprise observed window conflict")
+	ErrObservedWindowMismatch             = errors.New("enterprise observed window does not match upstream")
+	ErrKeyGenerationRevoked               = errors.New("enterprise api key generation was revoked")
+	ErrKeyAlreadyAssigned                 = errors.New("enterprise api key is assigned to another employee")
+	ErrUsageAttributionMismatch           = errors.New("enterprise usage attribution snapshot mismatch")
+	ErrInvalidWindowType                  = errors.New("invalid enterprise allocation window type")
+	ErrInvalidWindowAnchor                = errors.New("invalid enterprise allocation window anchor")
+	ErrEnterpriseAccessDenied             = errors.New("enterprise allocation access denied")
+	ErrEmployeeAllocationLimitUnavailable = errors.New("enterprise allocation limit is unavailable; refresh the active subscription before increasing employee allocation")
+	ErrEmployeeAllocationTotalExceeded    = errors.New("employee allocation total exceeds the enterprise pool; reduce another employee allocation or enable over-allocation")
 )
 
 const (
@@ -58,6 +60,17 @@ type Allocation struct {
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 	ActorRef           string    `json:"actor_ref,omitempty"`
+}
+
+type AllocationPolicy struct {
+	EnterpriseID                      int64 `json:"enterprise_id"`
+	AllowEmployeeAllocationOvercommit bool  `json:"allow_employee_allocation_overcommit"`
+}
+
+type UpdateAllocationPolicyParams struct {
+	RequesterUserID                   int64
+	EnterpriseID                      int64
+	AllowEmployeeAllocationOvercommit bool
 }
 
 type CreateAllocationParams struct {
@@ -280,6 +293,72 @@ func ValidateAllocationWindow(windowType string, windowAnchor time.Time) error {
 	return nil
 }
 
+func (r *Repository) GetAllocationPolicy(ctx context.Context, requesterUserID, enterpriseID int64) (*AllocationPolicy, error) {
+	policy := &AllocationPolicy{EnterpriseID: enterpriseID}
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COALESCE(allow_employee_allocation_overcommit, FALSE)
+		FROM enterprises
+		WHERE id = $1 AND status = 'active'
+		  AND ($2 = 0 OR dedicated_upstream_user_id = $2)
+	`, enterpriseID, requesterUserID).Scan(&policy.AllowEmployeeAllocationOvercommit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEnterpriseAccessDenied
+	}
+	if err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
+func (r *Repository) UpdateAllocationPolicy(ctx context.Context, params UpdateAllocationPolicyParams) (*AllocationPolicy, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	policy := &AllocationPolicy{EnterpriseID: params.EnterpriseID}
+	var previous bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT COALESCE(allow_employee_allocation_overcommit, FALSE)
+		FROM enterprises
+		WHERE id = $1 AND status = 'active'
+		  AND ($2 = 0 OR dedicated_upstream_user_id = $2)
+		FOR UPDATE
+	`, params.EnterpriseID, params.RequesterUserID).Scan(&previous)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEnterpriseAccessDenied
+	}
+	if err != nil {
+		return nil, err
+	}
+	if previous != params.AllowEmployeeAllocationOvercommit {
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE enterprises SET allow_employee_allocation_overcommit = $2, updated_at = NOW() WHERE id = $1
+		`, params.EnterpriseID, params.AllowEmployeeAllocationOvercommit); err != nil {
+			return nil, err
+		}
+		payload, marshalErr := json.Marshal(map[string]any{
+			"result": "success", "previous_allow_employee_allocation_overcommit": previous,
+			"allow_employee_allocation_overcommit": params.AllowEmployeeAllocationOvercommit,
+		})
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO enterprise_audit_events (enterprise_id, event_type, entity_type, entity_id, payload, actor_ref)
+			VALUES ($1, 'allocation.overcommit_policy_changed', 'enterprise', $1, $2::jsonb, $3)
+		`, params.EnterpriseID, payload, fmt.Sprintf("user:%d", params.RequesterUserID)); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	policy.AllowEmployeeAllocationOvercommit = params.AllowEmployeeAllocationOvercommit
+	return policy, nil
+}
+
 func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationParams) (*Allocation, error) {
 	var err error
 	params.Reason, err = NormalizeAllocationReason(params.Reason)
@@ -343,23 +422,30 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 	}
 
 	var canonicalAnchorValue sql.NullTime
+	var authoritativeLimit sql.NullString
 	err = tx.QueryRowContext(ctx, `
 			SELECT CASE $1::text
 				WHEN 'day' THEN upstream_subscription.daily_window_start
 				WHEN 'week' THEN upstream_subscription.weekly_window_start
 				WHEN 'month' THEN upstream_subscription.monthly_window_start
-			END
+			END,
+			CASE $1::text
+				WHEN 'day' THEN CASE WHEN subscription_group.daily_limit_usd > 0 THEN subscription_group.daily_limit_usd END
+				WHEN 'week' THEN CASE WHEN subscription_group.weekly_limit_usd > 0 THEN subscription_group.weekly_limit_usd END
+				WHEN 'month' THEN CASE WHEN subscription_group.monthly_limit_usd > 0 THEN subscription_group.monthly_limit_usd END
+			END::NUMERIC(20,8)::text
 			FROM enterprise_subscriptions AS enterprise_subscription
 			JOIN user_subscriptions AS upstream_subscription
 		  ON upstream_subscription.id = enterprise_subscription.upstream_user_subscription_id
 			 AND upstream_subscription.user_id = $4
-		 AND upstream_subscription.deleted_at IS NULL
+			 AND upstream_subscription.deleted_at IS NULL
+			JOIN groups AS subscription_group ON subscription_group.id = upstream_subscription.group_id
 		WHERE enterprise_subscription.enterprise_id = $2
 		  AND enterprise_subscription.id = $3
 			  AND enterprise_subscription.status = 'active'
 			FOR UPDATE OF enterprise_subscription, upstream_subscription
 		`, params.WindowType, params.EnterpriseID, params.SubscriptionID,
-		dedicatedUserID).Scan(&canonicalAnchorValue)
+		dedicatedUserID).Scan(&canonicalAnchorValue, &authoritativeLimit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrEnterpriseAccessDenied
 	}
@@ -432,6 +518,53 @@ func (r *Repository) SetAllocation(ctx context.Context, params SetAllocationPara
 	}
 	if err != nil {
 		return nil, err
+	}
+	var allowEmployeeAllocationOvercommit bool
+	if err = tx.QueryRowContext(ctx, `
+		SELECT COALESCE(allow_employee_allocation_overcommit, FALSE)
+		FROM enterprises WHERE id = $1
+	`, params.EnterpriseID).Scan(&allowEmployeeAllocationOvercommit); err != nil {
+		return nil, err
+	}
+	if !allowEmployeeAllocationOvercommit {
+		previousCredit := decimal.Zero
+		if previousAmount.Valid {
+			previousCredit, err = decimal.NewFromString(previousAmount.String)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if creditValue, parseErr := decimal.NewFromString(credit); parseErr != nil {
+			return nil, parseErr
+		} else if creditValue.GreaterThan(previousCredit) {
+			if !authoritativeLimit.Valid {
+				return nil, ErrEmployeeAllocationLimitUnavailable
+			}
+			limit, parseErr := decimal.NewFromString(authoritativeLimit.String)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			var allocatedTotalText string
+			if err = tx.QueryRowContext(ctx, `
+				WITH latest_configurations AS (
+					SELECT DISTINCT ON (employee_id) employee_id, amount
+					FROM enterprise_weekly_allocations
+					WHERE enterprise_id = $1 AND subscription_id = $2
+					  AND window_type = $3 AND window_anchor <= $4
+					ORDER BY employee_id, window_anchor DESC, version DESC
+				)
+				SELECT COALESCE(SUM(amount), 0)::NUMERIC(20,8)::text FROM latest_configurations
+			`, params.EnterpriseID, params.SubscriptionID, params.WindowType, canonicalAnchor).Scan(&allocatedTotalText); err != nil {
+				return nil, err
+			}
+			allocatedTotal, parseErr := decimal.NewFromString(allocatedTotalText)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			if allocatedTotal.GreaterThan(limit) {
+				return nil, ErrEmployeeAllocationTotalExceeded
+			}
+		}
 	}
 	if params.WindowType == WindowTypeWeek && activeKeyID.Valid {
 		if _, err = tx.ExecContext(ctx, `

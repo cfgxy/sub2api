@@ -31,6 +31,7 @@ const NAV_PATHS = [
   '/enterprise/admin/usage',
   '/enterprise/admin/audit',
   '/enterprise/admin/allocation',
+  '/enterprise/admin/allocation-settings',
   '/enterprise/admin/employees',
   '/enterprise/admin/keys',
   '/enterprise/admin/departments',
@@ -112,13 +113,35 @@ describe('EnterpriseLayout（L1 外壳重制）', () => {
     wrapper.unmount()
   })
 
-  it('管理员侧边栏渲染 9 项导航，员工渲染 5 项', () => {
+  it('管理员侧边栏将部门、品牌和系统设置收进我的会话后的可展开系统设置菜单', async () => {
     const admin = mountShell('enterprise_admin')
-    expect(admin.wrapper.findAll('nav a')).toHaveLength(9)
+    expect(admin.wrapper.findAll('nav a')).toHaveLength(7)
+    const toggle = admin.wrapper.get('[data-testid="system-settings-menu-toggle"]')
+    expect(toggle.text()).toContain('系统设置')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(admin.wrapper.find('[data-testid="system-settings-submenu"]').exists()).toBe(false)
+
+    await toggle.trigger('click')
+    const links = admin.wrapper.findAll('nav a')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(links).toHaveLength(10)
+    expect(links.map((link) => link.attributes('href'))).toEqual([
+      '/enterprise/admin/workbench',
+      '/enterprise/admin/usage',
+      '/enterprise/admin/audit',
+      '/enterprise/admin/allocation',
+      '/enterprise/admin/employees',
+      '/enterprise/admin/keys',
+      '/enterprise/admin/sessions',
+      '/enterprise/admin/departments',
+      '/enterprise/admin/brand',
+      '/enterprise/admin/allocation-settings',
+    ])
     admin.wrapper.unmount()
 
     const employee = mountShell('employee')
     expect(employee.wrapper.findAll('nav a')).toHaveLength(5)
+    expect(employee.wrapper.find('[data-testid="system-settings-menu-toggle"]').exists()).toBe(false)
     employee.wrapper.unmount()
   })
 
