@@ -836,6 +836,34 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "<!doctype html>")
 	})
 
+	t.Run("matches_security_header_nonce_for_enterprise_spa_routes", func(t *testing.T) {
+		router := gin.New()
+		router.Use(middleware.SecurityHeaders(config.CSPConfig{
+			Enabled: true,
+			Policy:  "default-src 'self'; script-src 'self' __CSP_NONCE__",
+		}, nil))
+		router.Use(ServeEmbeddedFrontend())
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/enterprise/login", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		csp := w.Header().Get("Content-Security-Policy")
+		const noncePrefix = "'nonce-"
+		start := strings.Index(csp, noncePrefix)
+		require.NotEqual(t, -1, start)
+		nonceStart := start + len(noncePrefix)
+		nonceEnd := nonceStart + strings.Index(csp[nonceStart:], "'")
+		require.Greater(t, nonceEnd, nonceStart)
+		nonce := csp[nonceStart:nonceEnd]
+
+		body := w.Body.String()
+		assert.NotContains(t, body, NonceHTMLPlaceholder)
+		assert.Contains(t, body, `<script id="enterprise-branding" nonce="`+nonce+`">`)
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	})
+
 	t.Run("serves_index_html_for_spa_routes", func(t *testing.T) {
 		middleware := ServeEmbeddedFrontend()
 

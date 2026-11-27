@@ -395,6 +395,11 @@ func serveIndexHTML(c *gin.Context, fsys fs.FS) {
 		return
 	}
 
+	// SecurityHeaders creates a per-request nonce. The legacy frontend path is
+	// still used by the setup server, so it must render inline scripts with that
+	// same nonce rather than serving the build-time placeholder.
+	content = replaceNoncePlaceholder(content, middleware.GetNonceFromContext(c))
+	c.Header("Cache-Control", "no-store")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 	c.Abort()
 }
