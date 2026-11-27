@@ -228,6 +228,68 @@ func TestEnterpriseEmployeeWeeklyLimitSyncUsesCurrentSettledAttributionSegment(t
 	require.InDelta(t, 1.25, persistedUsage, 0.000000001)
 }
 
+func TestEnterpriseEmployeeWeeklyLimitSyncRejectsStaleAssignmentGenerationAfterKeyRotation(t *testing.T) {
+	ctx := context.Background()
+	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 7)
+	apiKeyRepo := NewAPIKeyRepository(integrationEntClient, integrationDB)
+	resolver, ok := apiKeyRepo.(interface {
+		ResolveEnterpriseUsageAttributionIdentity(context.Context, int64, string, *int64) (*service.EnterpriseUsageAttributionIdentity, error)
+	})
+	require.True(t, ok)
+
+	var credential string
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		`SELECT key FROM api_keys WHERE id = $1`, fixture.apiKeyID).Scan(&credential))
+	staleIdentity, err := resolver.ResolveEnterpriseUsageAttributionIdentity(
+		ctx, fixture.apiKeyID, credential, &fixture.upstreamSubscriptionID)
+	require.NoError(t, err)
+	require.NotNil(t, staleIdentity)
+	require.NotNil(t, staleIdentity.EmployeeID)
+	require.Greater(t, staleIdentity.AssignmentGeneration, int64(0), "the pre-rotation identity must carry a real generation")
+
+	rotated, err := enterprise.NewRepository(integrationDB, enterpriseNoopAuthCacheInvalidator{}).RotateEmployeeKey(ctx, enterprise.EmployeeKeyMutationParams{
+		EnterpriseID:     fixture.enterpriseID,
+		EmployeeID:       fixture.employeeID,
+		ExpectedAPIKeyID: fixture.apiKeyID,
+		IdempotencyKey:   fmt.Sprintf("stale-sync-rotation-%d", time.Now().UnixNano()),
+		Plaintext:        fmt.Sprintf("sk-stale-sync-%d", time.Now().UnixNano()),
+		ActorRef:         "test:stale-sync",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rotated)
+	require.NotNil(t, rotated.Key)
+	require.NotEqual(t, fixture.apiKeyID, rotated.Key.ID)
+
+	var activeGeneration int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT generation FROM enterprise_key_assignments
+		WHERE api_key_id = $1 AND status = 'active'`, rotated.Key.ID).Scan(&activeGeneration))
+	require.Equal(t, staleIdentity.AssignmentGeneration+1, activeGeneration)
+
+	var rateLimitBefore, usageBefore float64
+	var windowBefore time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT rate_limit_7d, usage_7d, window_7d_start
+		FROM api_keys WHERE id = $1`, rotated.Key.ID).Scan(&rateLimitBefore, &usageBefore, &windowBefore))
+
+	synchronizer, ok := apiKeyRepo.(interface {
+		SyncEnterpriseEmployeeWeeklyLimit(context.Context, int64, *service.EnterpriseUsageAttributionIdentity) (*service.EnterpriseEmployeeWeeklyLimitState, error)
+	})
+	require.True(t, ok)
+	state, err := synchronizer.SyncEnterpriseEmployeeWeeklyLimit(ctx, rotated.Key.ID, staleIdentity)
+	require.ErrorIs(t, err, service.ErrAPIKeyNotFound)
+	require.Nil(t, state)
+
+	var rateLimitAfter, usageAfter float64
+	var windowAfter time.Time
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT rate_limit_7d, usage_7d, window_7d_start
+		FROM api_keys WHERE id = $1`, rotated.Key.ID).Scan(&rateLimitAfter, &usageAfter, &windowAfter))
+	require.Equal(t, rateLimitBefore, rateLimitAfter, "stale identity must not write the successor rate limit")
+	require.Equal(t, usageBefore, usageAfter, "stale identity must not write the successor usage")
+	require.Equal(t, windowBefore, windowAfter, "stale identity must not write the successor weekly anchor")
+}
+
 func TestEnterpriseEmployeeNewWeekInheritsAllocationForKeySyncAndReservation(t *testing.T) {
 	ctx := context.Background()
 	fixture := prepareEnterpriseEmployeeReservationFixture(t, ctx, 10, 0)
