@@ -84,14 +84,15 @@ func TestListEmployeeUsageRejectsCrossEmployeeQueryByConstruction(t *testing.T) 
 func TestGetEnterprisePoolStatusReturnsUnavailableWithoutFabricatingNumbers(t *testing.T) {
 	svc, mock := newMockService(t)
 	mock.ExpectQuery(`FROM enterprises AS enterprise`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor"}).
-			AddRow("unavailable", "0", "0", "0", false, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor", "unavailable_reason"}).
+			AddRow("unavailable", "0", "0", "0", false, nil, "no_active_subscription"))
 
 	result, err := svc.GetEnterprisePoolStatus(context.Background(), 7)
 
 	require.NoError(t, err)
 	require.Equal(t, "unavailable", result.SourceStatus)
 	require.Equal(t, "0", result.PoolLimit)
+	require.Equal(t, "no_active_subscription", result.UnavailableReason)
 	require.Nil(t, result.WindowAnchor)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -100,8 +101,8 @@ func TestGetEnterprisePoolStatusReturnsAvailablePoolFigures(t *testing.T) {
 	svc, mock := newMockService(t)
 	anchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`FROM enterprises AS enterprise`).WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor"}).
-			AddRow("available", "550.00000000", "120.00000000", "430.00000000", false, anchor))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor", "unavailable_reason"}).
+			AddRow("available", "550.00000000", "120.00000000", "430.00000000", false, anchor, nil))
 
 	result, err := svc.GetEnterprisePoolStatus(context.Background(), 7)
 
@@ -111,6 +112,21 @@ func TestGetEnterprisePoolStatusReturnsAvailablePoolFigures(t *testing.T) {
 	require.Equal(t, "430.00000000", result.PoolRemaining)
 	require.False(t, result.PoolExhausted)
 	require.NotNil(t, result.WindowAnchor)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetEnterprisePoolStatusDistinguishesExpiredSubscription(t *testing.T) {
+	svc, mock := newMockService(t)
+	mock.ExpectQuery(`FROM enterprises AS enterprise`).WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor", "unavailable_reason"}).
+			AddRow("unavailable", "0", "0", "0", false, nil, "subscription_expired"))
+
+	result, err := svc.GetEnterprisePoolStatus(context.Background(), 7)
+
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", result.SourceStatus)
+	require.Equal(t, "subscription_expired", result.UnavailableReason)
+	require.Equal(t, "0", result.PoolRemaining)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -45,7 +45,7 @@ describe('EnterpriseEmployeeHomeView', () => {
     })
   })
 
-  it('shows personal allocation alongside an available, non-exhausted enterprise pool', async () => {
+  it('shows the same-window personal allocation beside an available enterprise pool', async () => {
     getEmployeeHome.mockResolvedValue({
       usage: baseUsage,
       enterprise_pool: basePool,
@@ -55,9 +55,12 @@ describe('EnterpriseEmployeeHomeView', () => {
     const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
+    expect(wrapper.get('[data-testid="home-quota-comparison"]').classes()).toContain('grid-cols-1')
+    expect(wrapper.text()).toContain('个人配额')
+    expect(wrapper.text()).toContain('企业总池')
     expect(wrapper.text()).toContain('12.50')
-    expect(wrapper.text()).toContain('企业总池可用')
     expect(wrapper.text()).toContain('70')
+    expect(wrapper.text()).toContain('企业总池与个人配额均可用。')
     wrapper.unmount()
   })
 
@@ -71,22 +74,65 @@ describe('EnterpriseEmployeeHomeView', () => {
     const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('企业总池已耗尽')
+    expect(wrapper.text()).toContain('个人配额仍有余额，但企业总池额度不足，当前无法继续调用。')
     wrapper.unmount()
   })
 
   it('shows the pool as unavailable without fabricating limit figures when the upstream source is missing', async () => {
     getEmployeeHome.mockResolvedValue({
       usage: baseUsage,
-      enterprise_pool: { source_status: 'unavailable', pool_limit: '0', pool_used: '0', pool_remaining: '0', pool_exhausted: false },
+      enterprise_pool: { source_status: 'unavailable', unavailable_reason: 'no_active_subscription', pool_limit: '0', pool_used: '0', pool_remaining: '0', pool_exhausted: false },
       recent_trend: [],
       key: null,
     })
     const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('企业总池来源暂不可用')
-    expect(wrapper.text()).not.toContain('企业总池可用')
+    expect(wrapper.text()).toContain('企业当前没有有效订阅')
+    expect(wrapper.text()).not.toContain('企业总池与个人配额均可用。')
+    wrapper.unmount()
+  })
+
+  it('explains when the personal allocation is exhausted while the enterprise pool remains available', async () => {
+    getEmployeeHome.mockResolvedValue({
+      usage: { ...baseUsage, remaining: '0', actual_cost: '12.50' },
+      enterprise_pool: basePool,
+      recent_trend: [],
+      key: null,
+    })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('企业总池仍可用，但个人配额已耗尽，当前无法继续调用。')
+    wrapper.unmount()
+  })
+
+  it('explains when both quota layers are exhausted', async () => {
+    getEmployeeHome.mockResolvedValue({
+      usage: { ...baseUsage, remaining: '0', actual_cost: '12.50' },
+      enterprise_pool: { ...basePool, pool_remaining: '0', pool_used: '100', pool_exhausted: true },
+      recent_trend: [],
+      key: null,
+    })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('企业总池与个人配额均已耗尽，当前无法继续调用。')
+    wrapper.unmount()
+  })
+
+  it('shows an expiry-specific degradation message without rendering pool balances', async () => {
+    getEmployeeHome.mockResolvedValue({
+      usage: { ...baseUsage, source_status: 'unavailable', unavailable_reason: 'subscription_expired' },
+      enterprise_pool: { ...basePool, source_status: 'unavailable', unavailable_reason: 'subscription_expired' },
+      recent_trend: [],
+      key: null,
+    })
+    const wrapper = mount(EnterpriseEmployeeHomeView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('企业套餐已到期，当前无法确认可用额度。')
+    expect(wrapper.text()).not.toContain('70')
     wrapper.unmount()
   })
 

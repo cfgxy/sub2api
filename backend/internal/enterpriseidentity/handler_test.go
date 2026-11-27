@@ -271,7 +271,7 @@ func TestEmployeeHomeComposesPersonalPoolAndRecentTrendWithoutFabricatingData(t 
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(11)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "weekly_window_start"}))
-	mock.ExpectQuery(`SELECT CASE WHEN enterprise_subscription\.id IS NULL`).WithArgs(int64(11)).
+	mock.ExpectQuery(`SELECT CASE WHEN enterprise_subscription\.id IS NOT NULL`).WithArgs(int64(11)).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(`SELECT DATE_TRUNC\('day', attribution\.request_at\)`).
 		WithArgs(int64(11), int64(22), sqlmock.AnyArg()).
@@ -290,6 +290,31 @@ func TestEmployeeHomeComposesPersonalPoolAndRecentTrendWithoutFabricatingData(t 
 	require.Contains(t, recorder.Body.String(), `"enterprise_pool"`)
 	require.Contains(t, recorder.Body.String(), `"recent_trend"`)
 	require.Contains(t, recorder.Body.String(), `"source_status":"unavailable"`)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestEmployeeQuotaSnapshotHidesMixedWeeklyWindows(t *testing.T) {
+	svc, mock := newMockService(t)
+	usageAnchor := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	poolAnchor := usageAnchor.Add(7 * 24 * time.Hour)
+	mock.ExpectQuery(`SELECT EXISTS \(SELECT 1 FROM enterprise_employees`).WithArgs(int64(11), int64(22)).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(`SELECT enterprise_subscription\.id, upstream_subscription\.weekly_window_start`).WithArgs(int64(11)).
+		WillReturnRows(currentEnterpriseWeekRows(int64(31), usageAnchor))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(\(.*FROM enterprise_weekly_allocations`).WithArgs(int64(11), int64(31), int64(22), usageAnchor).
+		WillReturnRows(sqlmock.NewRows([]string{"allocation", "actual_cost", "requests"}).AddRow("12.00000000", "2.00000000", int64(1)))
+	mock.ExpectQuery(`FROM enterprises AS enterprise`).WithArgs(int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "limit", "used", "remaining", "exhausted", "anchor", "unavailable_reason"}).
+			AddRow("available", "100.00000000", "2.00000000", "98.00000000", false, poolAnchor, nil))
+
+	h := NewHandler(svc, nil, nil, nil)
+	usage, pool, err := h.employeeQuotaSnapshot(context.Background(), 11, 22)
+
+	require.NoError(t, err)
+	require.Equal(t, "unavailable", usage.SourceStatus)
+	require.Equal(t, "unavailable", pool.SourceStatus)
+	require.Equal(t, "window_mismatch", usage.UnavailableReason)
+	require.Equal(t, "window_mismatch", pool.UnavailableReason)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
