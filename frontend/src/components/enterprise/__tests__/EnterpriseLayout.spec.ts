@@ -22,6 +22,7 @@ const NAV_PATHS = [
   '/enterprise/admin/usage',
   '/enterprise/admin/audit',
   '/enterprise/admin/allocation',
+  '/enterprise/admin/allocation-settings',
   '/enterprise/admin/employees',
   '/enterprise/admin/keys',
   '/enterprise/admin/departments',
@@ -81,9 +82,9 @@ beforeEach(() => {
 })
 
 describe('EnterpriseLayout（L1 外壳重制）', () => {
-  it('管理员侧边栏渲染 9 项导航，员工渲染 5 项', () => {
+  it('管理员侧边栏渲染 10 项导航，员工渲染 5 项', () => {
     const admin = mountShell('enterprise_admin')
-    expect(admin.wrapper.findAll('nav a')).toHaveLength(9)
+    expect(admin.wrapper.findAll('nav a')).toHaveLength(10)
     admin.wrapper.unmount()
 
     const employee = mountShell('employee')

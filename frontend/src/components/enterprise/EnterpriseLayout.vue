@@ -197,7 +197,7 @@ const navigation = computed(() => auth.isAdmin ? [
   { path: '/enterprise/admin/usage', label: t('enterprise.shell.nav.adminUsage'), icon: 'search' as const },
   { path: '/enterprise/admin/audit', label: t('enterprise.shell.nav.adminAudit'), icon: 'clipboard' as const },
   { path: '/enterprise/admin/allocation', label: t('enterprise.shell.nav.allocation'), icon: 'grid' as const },
-  { path: '/enterprise/admin/allocation-settings', label: '额度定制', icon: 'shield' as const },
+  { path: '/enterprise/admin/allocation-settings', label: t('enterprise.shell.nav.allocationSettings'), icon: 'shield' as const },
   { path: '/enterprise/admin/employees', label: t('enterprise.shell.nav.employees'), icon: 'users' as const },
   { path: '/enterprise/admin/keys', label: t('enterprise.shell.nav.adminKeys'), icon: 'key' as const },
   { path: '/enterprise/admin/departments', label: t('enterprise.shell.nav.departments'), icon: 'grid' as const },
