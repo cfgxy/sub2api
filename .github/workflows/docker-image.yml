@@ -108,7 +108,10 @@ jobs:
             UV_INDEX_URL=https://pypi.org/simple
             APT_MIRROR=https://deb.debian.org/debian
             ALPINE_REPOSITORY=https://dl-cdn.alpinelinux.org/alpine
-          cache-from: type=gha,scope=sub2api-docker-image-${{ github.ref_name }}
+          cache-from: |
+            type=gha,scope=sub2api-docker-image-${{ github.ref_name }}
+            type=gha,scope=sub2api-docker-image-main
+            type=gha
           cache-to: type=gha,mode=max,scope=sub2api-docker-image-${{ github.ref_name }}
 
       - id: image

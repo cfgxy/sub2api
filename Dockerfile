@@ -16,7 +16,9 @@ ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
 ARG NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-ARG COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+# Empty means “follow NPM_CONFIG_REGISTRY”; callers can still override it when
+# Corepack must use a different registry.
+ARG COREPACK_NPM_REGISTRY=
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG APT_MIRROR=https://mirrors.aliyun.com/debian
@@ -35,11 +37,14 @@ WORKDIR /app/frontend
 
 # Set the registry before Corepack downloads pnpm, not only before pnpm
 # installs the application dependencies.
-ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY} \
-    COREPACK_NPM_REGISTRY=${COREPACK_NPM_REGISTRY}
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 
-# Install pnpm (pinned to v9 to match CI and keep builds reproducible)
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# Corepack downloads pnpm before pnpm can read its own registry setting. Let
+# the long-standing NPM_CONFIG_REGISTRY override cover that download too, while
+# retaining an explicit Corepack override for specialised registries.
+RUN corepack enable && \
+    COREPACK_NPM_REGISTRY="${COREPACK_NPM_REGISTRY:-${NPM_CONFIG_REGISTRY}}" \
+    corepack prepare pnpm@9 --activate
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
