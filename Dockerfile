@@ -11,9 +11,18 @@ ARG NODE_IMAGE=node:24-alpine
 ARG GOLANG_IMAGE=golang:1.27.3-alpine
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
+# Build dependency sources default to domestic mirrors for local builds. CI
+# overrides every value below with its corresponding official endpoint.
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
-ARG NPM_CONFIG_REGISTRY=
+ARG NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+# Empty means “follow NPM_CONFIG_REGISTRY”; callers can still override it when
+# Corepack must use a different registry.
+ARG COREPACK_NPM_REGISTRY=
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG APT_MIRROR=https://mirrors.aliyun.com/debian
+ARG ALPINE_REPOSITORY=https://mirrors.aliyun.com/alpine
 
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
@@ -22,16 +31,24 @@ ARG NPM_CONFIG_REGISTRY=
 # it on the native host arch instead of under QEMU emulation for the target.
 FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS frontend-builder
 ARG NPM_CONFIG_REGISTRY
+ARG COREPACK_NPM_REGISTRY
 
 WORKDIR /app/frontend
 
-# Install pnpm (pinned to v9 to match CI and keep builds reproducible)
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# Set the registry before Corepack downloads pnpm, not only before pnpm
+# installs the application dependencies.
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+
+# Corepack downloads pnpm before pnpm can read its own registry setting. Let
+# the long-standing NPM_CONFIG_REGISTRY override cover that download too, while
+# retaining an explicit Corepack override for specialised registries.
+RUN corepack enable && \
+    COREPACK_NPM_REGISTRY="${COREPACK_NPM_REGISTRY:-${NPM_CONFIG_REGISTRY}}" \
+    corepack prepare pnpm@9 --activate
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN --mount=type=cache,id=sub2api-pnpm-store,target=/root/.local/share/pnpm/store \
-    if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
     pnpm install --frozen-lockfile --prefer-offline
 
 # Copy frontend source and build.
@@ -60,15 +77,25 @@ ARG UPSTREAM_VERSION=
 ARG BUILD_SEQUENCE=
 ARG GOPROXY
 ARG GOSUMDB
+ARG PIP_INDEX_URL
+ARG UV_INDEX_URL
+ARG APT_MIRROR
+ARG ALPINE_REPOSITORY
 # Populated by buildx from the --platform target (e.g. linux/amd64).
 ARG TARGETOS
 ARG TARGETARCH
 
-ENV GOPROXY=${GOPROXY}
-ENV GOSUMDB=${GOSUMDB}
+ENV GOPROXY=${GOPROXY} \
+    GOSUMDB=${GOSUMDB} \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
+    UV_INDEX_URL=${UV_INDEX_URL} \
+    APT_MIRROR=${APT_MIRROR}
 
-# Install build dependencies
-RUN apk add --no-cache git ca-certificates tzdata python3
+# Install build dependencies. APT/PIP/uv inputs are kept in this build stage
+# for packaging hooks or derived Debian/Python builder stages; this image uses
+# Alpine and does not install Python or uv packages itself.
+RUN sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${ALPINE_REPOSITORY}#g" /etc/apk/repositories && \
+    apk add --no-cache git ca-certificates tzdata python3
 
 WORKDIR /app/backend
 
@@ -111,6 +138,7 @@ FROM ${POSTGRES_IMAGE} AS pg-client
 # Stage 4: Final Runtime Image
 # -----------------------------------------------------------------------------
 FROM ${ALPINE_IMAGE}
+ARG ALPINE_REPOSITORY
 
 # Labels
 LABEL maintainer="Wei-Shaw <github.com/Wei-Shaw>"
@@ -118,7 +146,8 @@ LABEL description="Sub2API - AI API Gateway Platform"
 LABEL org.opencontainers.image.source="https://github.com/Wei-Shaw/sub2api"
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+RUN sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${ALPINE_REPOSITORY}#g" /etc/apk/repositories && \
+    apk add --no-cache \
     ca-certificates \
     tzdata \
     su-exec \
@@ -128,6 +157,7 @@ RUN apk add --no-cache \
     krb5-libs \
     libldap \
     libedit \
+    && sed -i "s#${ALPINE_REPOSITORY}#https://dl-cdn.alpinelinux.org/alpine#g" /etc/apk/repositories \
     && rm -rf /var/cache/apk/*
 
 # Copy pg_dump and psql from the same postgres image used in docker-compose

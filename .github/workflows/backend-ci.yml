@@ -19,6 +19,7 @@ jobs:
           /bin/sh deploy/tests/docker-compose-security-test.sh
           /bin/sh deploy/tests/docker-compose-gateway-env-test.sh
           /bin/sh deploy/tests/docker-runtime-resources-test.sh
+          /bin/sh deploy/tests/docker-build-sources-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh
 
   test:
@@ -64,6 +65,38 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
+
+  docker-build-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Build final image with the official CI sources
+        run: |
+          set -euo pipefail
+          docker buildx build --load --tag sub2api:ci-build-sources \
+            --build-arg COMMIT="${GITHUB_SHA}" \
+            --build-arg DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --build-arg BUILD_SEQUENCE=1 \
+            --build-arg GOPROXY=https://proxy.golang.org,direct \
+            --build-arg GOSUMDB=sum.golang.org \
+            --build-arg NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
+            --build-arg COREPACK_NPM_REGISTRY=https://registry.npmjs.org \
+            --build-arg PIP_INDEX_URL=https://pypi.org/simple \
+            --build-arg UV_INDEX_URL=https://pypi.org/simple \
+            --build-arg APT_MIRROR=https://deb.debian.org/debian \
+            --build-arg ALPINE_REPOSITORY=https://dl-cdn.alpinelinux.org/alpine \
+            .
+      - name: Verify runtime image excludes build tools and restores Alpine source
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh sub2api:ci-build-sources -ec '
+            test ! -e /usr/local/go/bin/go
+            ! command -v node
+            ! command -v pnpm
+            grep -Fxq "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" /etc/apk/repositories
+            grep -Fxq "https://dl-cdn.alpinelinux.org/alpine/v3.21/community" /etc/apk/repositories
+          '
 
   golangci-lint:
     runs-on: ubuntu-latest
